@@ -1,4 +1,28 @@
-# Wist — Sudanese Rules
+# Engineering Intelligence  
+
+## Project Vision
+
+This repository is the first implementation of a much larger research project called **Engineering Intelligence**.
+
+The long-term goal of Engineering Intelligence is to explore how to build **general decision-making architectures** that can be applied across completely different domains, rather than creating isolated AI solutions for individual problems.
+
+## Why Sudanese Wist?
+
+Sudanese Wist provides an excellent research environment because it combines many characteristics found in real-world decision-making systems:
+
+- Hidden information
+- Team cooperation
+- Competitive strategy
+- Long-term planning
+- Short-term tactical decisions
+- Imperfect information
+- Learning from experience
+- Explainable decision making
+
+Rather than beginning with an abstract mathematical environment, this project starts with a game that is both challenging and familiar, allowing intelligence to emerge in a controlled setting before being transferred to more complex domains such as telecommunications.
+
+
+## Sudanese Wist Game Description: 
 
 Wist is a traditional Sudanese trick-taking card game for 4 players. This document describes the complete rules of the game exactly as it is played in Sudan. The rules below are precise and specific — do not add, assume, or substitute anything not described here.
 
