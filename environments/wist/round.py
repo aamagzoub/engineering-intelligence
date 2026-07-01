@@ -1,4 +1,3 @@
-from agents.random.random_agent import RandomAgent
 from environments.wist.environment import WistEnvironment
 from environments.wist.player import Player
 from environments.wist.round_state import RoundState
@@ -6,7 +5,7 @@ from environments.wist.rules import trick_winner
 from environments.wist.trick import Trick
 from intelligence.core.agent import Agent
 from intelligence.core.cards.deck import Deck
-
+from environments.wist.dak import triggers_card_based_dak
 
 class Round:
     """
@@ -88,3 +87,33 @@ class Round:
             (leader_id + offset) % 4
             for offset in range(4)
         ]
+    
+    def has_card_based_dak(self) -> bool:
+        """
+        Return True if any player has a card-based Dak hand.
+        """
+
+        if self.state is None:
+            raise ValueError("Cannot check Dak before dealing cards.")
+
+        return any(
+            triggers_card_based_dak(player.hand)
+            for player in self.players
+        )
+    
+    def first_card_based_dak_player_id(self) -> int | None:
+        """
+        Return the first player who triggers card-based Dak.
+
+        For now, this checks players in player_id order.
+        Later, we will adjust this to the correct Al-Tasmiya order.
+        """
+
+        if self.state is None:
+            raise ValueError("Cannot check Dak before dealing cards.")
+
+        for player in self.players:
+            if triggers_card_based_dak(player.hand):
+                return player.player_id
+
+        return None

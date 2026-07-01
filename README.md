@@ -71,6 +71,8 @@ In all pass-based Dak (دك) cases, Al-Qabool (القبول) moves to the next p
 
 Pass-based Dak (دك) can only happen twice per game. If the conditions for Dak (دك) arise a third time, Sahib Al-Qabool (صاحب القبول) must either play or accept — Dak (دك) is no longer an option.
 
+**Important:** If Dak (دك) happens in the very first Shota (شوتة) of the game, it does not count toward the 5 Shotas (شوتات) — the game still has all 5 remaining. However, from the second Shota (شوتة) onward, any Dak (دك) — regardless of whether it is card-based or pass-based, and regardless of whether Al-Qabool (القبول) moved or not — counts as one Shota (شوتة) out of the five.
+
 ## Al-Tasmiya (التسمية) — The Bid
 Al-Tasmiya (التسمية) starts from the player to Sahib Al-Qabool's (صاحب القبول) left and moves counter-clockwise: left of Sahib Al-Qabool (صاحب القبول) → opposite → right (dealer) → then Sahib Al-Qabool (صاحب القبول) decides last.
 
@@ -149,3 +151,85 @@ A game consists of 5 Shotas (شوتات). The first team to reach 25 points acro
 
 ## Seek (سيك)
 If a team wins all 13 tricks in a Shota (شوتة), this is called Seek (سيك) — but only after it actually happens, not during Al-Tasmiya (التسمية). 13 is just a number during the bid. If Seek (سيك) happens at any point, even in the very first Shota (شوتة), the game ends immediately and the team that achieved Seek (سيك) is declared the winner of the game — regardless of the score or how many Shotas (شوتات) have been played. No points are counted.
+
+## Wist Game Lifecycle
+
+```text
+                         ┌──────────────────────────────────────────┐
+                         │                START GAME                │
+                         └──────────────────────────────────────────┘
+                                             │
+                                             ▼
+                         Determine first Sahib Al-Qabool
+                              (Each player draws one card)
+                                             │
+                                             ▼
+                         ┌──────────────────────────────────────────┐
+                         │               START SHOTA                │
+                         └──────────────────────────────────────────┘
+                                             │
+                                             ▼
+                                      Shuffle Deck
+                                             │
+                                             ▼
+                                        Cut Deck
+                                             │
+                                             ▼
+                                      Deal 52 Cards
+                                             │
+                                             ▼
+                                   Card-based Dak?
+                                  ┌──────────┴──────────┐
+                                  │                     │
+                                 Yes                    No
+                                  │                     │
+                                  ▼                     ▼
+                        Re-deal Same Shota       Start Bidding
+                      (Same Sahib Al-Qabool)           │
+                                                       ▼
+                                                Bid / Pass
+                                                       │
+                                                       ▼
+                                           Pass-based Dak?
+                                  ┌──────────┴──────────┐
+                                  │                     │
+                                 Yes                    No
+                                  │                     │
+                                  ▼                     ▼
+                         Rotate Sahib Al-Qabool    Sahib Al-Qabool
+                                  │                 Decision
+                                  │             (Accept / Play)
+                                  │                     │
+                                  ▼                     ▼
+                           START NEW SHOTA      Trump Revealed
+                                                      │
+                                                      ▼
+                                                 Play 13 Tricks
+                                                      │
+                                                      ▼
+                                                 Count Tricks
+                                                      │
+                                                      ▼
+                                                  Seek (13)?
+                                  ┌──────────┴──────────┐
+                                  │                     │
+                                 Yes                    No
+                                  │                     │
+                                  ▼                     ▼
+                              END GAME            Score Shota
+                                                       │
+                                                       ▼
+                                                  Update Game
+                                                       │
+                                                       ▼
+                                             Game Finished?
+                                  ┌──────────┴──────────┐
+                                  │                     │
+                                 Yes                    No
+                                  │                     │
+                                  ▼                     ▼
+                              END GAME        Rotate Sahib Al-Qabool
+                                                       │
+                                                       ▼
+                                                 START NEW SHOTA
+```
