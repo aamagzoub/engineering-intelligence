@@ -53,7 +53,7 @@ There are two completely different situations that trigger Dak (دك):
 ### Situation 1 — Card-based Dak (دك)
 A player must declare Dak (دك) before it is their turn in Al-Tasmiya (التسمية). They cannot declare it after they have already bid. Since play moves counter-clockwise, players declare in turn — if one player declares card-based Dak (دك), the deal stops and re-starts immediately. No other players get a chance to declare. It is triggered if they hold either:
 - No picture cards at all in their hand (Ace, King, Queen, and Jack are all considered picture cards) — the player must show their entire hand as proof, or
-- 8 or more cards of one suit — the player must show those 8 or more cards to all other players as proof. In this case they may still bid using a different suit, but they cannot bid with the 8-card suit
+- 8 or more cards of one suit — the player must show those 8 or more cards to all other players as proof. Holding 8 or more cards in any suit always triggers card-based Dak (دك) with no exceptions — no one, including Sahib Al-Qabool (صاحب القبول), may play when holding 8 or more cards in a suit
 
 When card-based Dak (دك) is declared, Al-Qabool (القبول) stays with the same Sahib Al-Qabool (صاحب القبول) and the cards are simply re-dealt from scratch. No one loses Al-Qabool (القبول).
 
@@ -79,25 +79,24 @@ Each player bids a number only — no suit is named. A player may say pass inste
 **Al-Tasmiya (التسمية) rules:**
 - Each bid must be higher than the previous bid — no equal bids allowed between regular players
 - You cannot bid higher than the number of cards you hold in your strongest suit
-- You cannot bid Marboota (مربوطة) — which is 7 — if you hold 8 or more cards in a suit
+- The opening bid — the first bid made by any player, not a pass — cannot exceed 11. Subsequent bids can go up to 13
+- The trump suit — Al-Ato (الأتو) — cannot come from a suit with 8 or more cards. Holding 8 or more cards in a suit means card-based Dak (دك) must be declared
 - Sahib Al-Qabool (صاحب القبول) is the only one who can match the highest bid — he does not have to go higher
-- Both restrictions on bidding limits are lifted for Sahib Al-Qabool (صاحب القبول) — he can bid anything he wants
+- Both restrictions on bidding limits are lifted for Sahib Al-Qabool (صاحب القبول) — he can bid anything he wants, except he also cannot play with 8 or more cards in a suit
 
 If any player bids 13, Al-Tasmiya (التسمية) stops immediately — no further players may bid. The remaining players in the bidding order are skipped and it goes straight to Sahib Al-Qabool (صاحب القبول) to accept or match. This applies whether it is the first player or Sahib Al-Qabool's (صاحب القبول) partner who bids 13.
 
-The bid does not have to come from one suit. It can be based on your strongest cards across all suits. However, Al-Ato (الأتو) — the trump suit — must be the suit the bidder holds the most cards in.
+The bid does not have to come from one suit. It can be based on your strongest cards across all suits. However, Al-Ato (الأتو) — the trump suit — must be the suit the bidder holds the most cards in, and that suit must have 7 or fewer cards.
 
 **Standard Al-Tasmiya (التسمية) reference:**
 
-| Cards in strongest suit | Bid |
-|---|---|
-| 4 | 7 — Marboota (مربوطة) |
-| 5 | 8 |
-| 6 | 9 |
-| 7 | 10 |
-| 8 | 11 |
-| 9 | 12 |
-| 10 | 13 |
+| Cards in strongest suit | Bid | Notes |
+|---|---|---|
+| 4 | 7 — Marboota (مربوطة) | |
+| 5 | 8 | |
+| 6 | 9 | |
+| 7 | 10 | Maximum for Al-Ato (الأتو) suit |
+| 8+ | — | Must declare card-based Dak (دك) |
 
 ## Sahib Al-Qabool's (صاحب القبول) Decision
 After the other three have bid or passed (or Al-Tasmiya (التسمية) stopped at 13), Sahib Al-Qabool (صاحب القبول) chooses one of the following:
@@ -106,7 +105,7 @@ After the other three have bid or passed (or Al-Tasmiya (التسمية) stopped
 
 **Option 2 — Match or outbid:** Sahib Al-Qabool (صاحب القبول) matches or exceeds the highest bid. His team plays, the other team defends. No further discussion. Sahib Al-Qabool (صاحب القبول) himself leads the first card. He declares his bid number but does not declare whether he used the extra card advantage — unless all three players before him passed, in which case he must declare whether he is using the extra card advantage or not.
 
-When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula:
+When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula. The trump suit must still have 7 or fewer cards — holding 8 or more cards in any suit means card-based Dak (دك) must be declared, even for Sahib Al-Qabool (صاحب القبول):
 
 | Cards in strongest suit | Standard bid | With advantage |
 |---|---|---|
@@ -114,9 +113,7 @@ When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can
 | 5 | 8 | 7 or 8 |
 | 6 | 9 | 8 or 9 |
 | 7 | 10 | 9 or 10 |
-| 8 | 11 | 10 or 11 |
-| 9 | 12 | 11 or 12 |
-| 10 | 13 | 12 or 13 |
+| 8+ | — | Must declare card-based Dak (دك) |
 
 If all three passed and he does not declare the advantage, the standard Al-Tasmiya (التسمية) formula applies.
 
