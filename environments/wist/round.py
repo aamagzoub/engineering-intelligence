@@ -7,6 +7,7 @@ from intelligence.core.agent import Agent
 from intelligence.core.cards.deck import Deck
 from environments.wist.dak import triggers_card_based_dak
 
+
 class Round:
     """
     Controls one round of Wist.
@@ -45,7 +46,23 @@ class Round:
         agents: list[Agent],
     ) -> int:
         """
-        Play one complete trick and return the winning player id.
+        Play one complete trick and return only the winning player id.
+        """
+
+        trick_details = self.play_one_trick_details(
+            environment=environment,
+            agents=agents,
+        )
+
+        return trick_details["winner"]
+
+    def play_one_trick_details(
+        self,
+        environment: WistEnvironment,
+        agents: list[Agent],
+    ) -> dict:
+        """
+        Play one complete trick and return full trick information.
         """
 
         if self.state is None:
@@ -54,12 +71,14 @@ class Round:
         if self.state.trump_suit is None:
             raise ValueError("Cannot play a trick before trump suit is set.")
 
+        leader_id = self.next_leading_player_id
+
         self.state.current_trick = Trick(
-            leading_player_id=self.next_leading_player_id
+            leading_player_id=leader_id
         )
 
         play_order = self._play_order_from_leader(
-            self.next_leading_player_id
+            leader_id
         )
 
         for player_id in play_order:
@@ -67,16 +86,23 @@ class Round:
             action = agents[player_id].act(observation)
             environment.apply_action(action)
 
+        completed_trick = self.state.current_trick
+
         winner = trick_winner(
-            trick=self.state.current_trick,
+            trick=completed_trick,
             trump_suit=self.state.trump_suit,
         )
 
-        self.state.completed_tricks.append(self.state.current_trick)
+        self.state.completed_tricks.append(completed_trick)
         self.state.current_trick = None
         self.next_leading_player_id = winner
 
-        return winner
+        return {
+            "winner": winner,
+            "leader": leader_id,
+            "play_order": play_order,
+            "trick": completed_trick,
+        }
 
     def _play_order_from_leader(self, leader_id: int) -> list[int]:
         """
@@ -87,7 +113,7 @@ class Round:
             (leader_id + offset) % 4
             for offset in range(4)
         ]
-    
+
     def has_card_based_dak(self) -> bool:
         """
         Return True if any player has a card-based Dak hand.
@@ -100,7 +126,7 @@ class Round:
             triggers_card_based_dak(player.hand)
             for player in self.players
         )
-    
+
     def first_card_based_dak_player_id(self) -> int | None:
         """
         Return the first player who triggers card-based Dak.
