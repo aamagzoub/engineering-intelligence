@@ -12,3 +12,22 @@ class PlayCardAction(Action):
 
     player_id: int
     card: Card
+
+
+@dataclass(frozen=True)
+class BidAction(Action):
+    """
+    Action representing a player placing a bid during Al-Tasmiya.
+    """
+
+    player_id: int
+    value: int
+
+
+@dataclass(frozen=True)
+class PassAction(Action):
+    """
+    Action representing a player passing during Al-Tasmiya.
+    """
+
+    player_id: int

@@ -21,7 +21,29 @@ WIST_RANK_VALUES = {
 }
 
 
-def legal_cards(hand: list[Card], leading_suit: Suit | None) -> list[Card]:
+def legal_cards(
+    hand: list[Card],
+    leading_suit: Suit | None,
+    must_lead_trump: Suit | None = None,
+) -> list[Card]:
+    """
+    Return the list of cards a player is legally allowed to play.
+
+    Rules:
+    - If must_lead_trump is set (first trick, bidder leading),
+      the player MUST play a card from the trump suit.
+    - If a leading suit is set, the player must follow suit if able.
+    - Otherwise the player may play any card.
+    """
+
+    if must_lead_trump is not None:
+        trump_cards = [card for card in hand if card.suit == must_lead_trump]
+        if trump_cards:
+            return trump_cards
+        # Fallback: should not happen in a valid game state,
+        # but return full hand to avoid crash.
+        return hand
+
     if leading_suit is None:
         return hand
 

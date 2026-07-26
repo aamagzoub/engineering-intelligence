@@ -37,4 +37,16 @@ class GameState:
         self.winner_team_id = team_id
 
     def is_finished(self) -> bool:
-        return self.winner_team_id is not None or self.completed_shotas >= 5
+        if self.winner_team_id is not None:
+            return True
+
+        if self.completed_shotas >= 5:
+            # 5 Shotas done — higher score wins.
+            if self.team_scores[0] > self.team_scores[1]:
+                self.winner_team_id = 0
+            elif self.team_scores[1] > self.team_scores[0]:
+                self.winner_team_id = 1
+            # If truly tied, game is finished but no winner (extremely rare).
+            return True
+
+        return False

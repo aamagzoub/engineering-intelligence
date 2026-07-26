@@ -18,12 +18,21 @@ class WistEnvironment(Environment):
     def observe(self, player_id: int) -> WistObservation:
         player = self.state.get_player(player_id)
 
+        # The winning bidder must lead with a trump card on the first trick.
+        must_lead_trump = (
+            self.state.is_first_trick
+            and self.state.winning_bidder_id == player_id
+            and self.state.current_trick is not None
+            and len(self.state.current_trick.played_cards) == 0
+        )
+
         return WistObservation(
             player_id=player.player_id,
             hand=list(player.hand),
             current_trick=self.state.current_trick,
             trump_suit=self.state.trump_suit,
             played_cards=list(self.state.played_cards),
+            must_lead_trump=must_lead_trump,
         )
 
     def apply_action(self, action: Action) -> None:
