@@ -26,7 +26,8 @@ class WistAILabApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("Sudanese Wist — AI Laboratory")
-        self.root.geometry("1200x820")
+        self.root.state("zoomed")  # Maximize window.
+        self.root.resizable(False, False)  # Prevent resizing.
         self.root.configure(bg=COLORS["table_border"])
         self.root.minsize(1050, 720)
 
@@ -218,42 +219,29 @@ class WistAILabApp:
     # ----------------------------------------------------------
 
     def _build_centre(self, parent) -> None:
+        from gui.card_widget import draw_card, parse_card_text, CARD_LARGE_WIDTH, CARD_LARGE_HEIGHT
+
         frame = tk.Frame(parent, bg=COLORS["centre_bg"], bd=2, relief="sunken",
-                         width=280, height=200)
+                         width=320, height=240)
         frame.grid(row=1, column=1, sticky="nsew", padx=8, pady=8)
-        frame.grid_propagate(False)  # Fixed size — no jumping.
+        frame.grid_propagate(False)
 
-        frame.columnconfigure(0, weight=1)
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(2, weight=1)
-        frame.rowconfigure(0, weight=1)
-        frame.rowconfigure(1, weight=1)
-        frame.rowconfigure(2, weight=1)
+        # Use a single Canvas for the centre trick area.
+        self._centre_canvas = tk.Canvas(frame, bg=COLORS["centre_bg"],
+                                        highlightthickness=0)
+        self._centre_canvas.pack(fill="both", expand=True)
 
-        # Trick status in centre
+        # Trick status label (over the canvas).
         self.current_trick_label = tk.Label(
             frame, text="Waiting to start",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 9, "bold"),
             fg=COLORS["text_light"], bg=COLORS["centre_bg"],
             justify="center",
         )
-        self.current_trick_label.grid(row=1, column=1, padx=4, pady=4)
+        self.current_trick_label.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Played card positions: top, right, bottom, left
-        positions = [(0, 1), (1, 2), (2, 1), (1, 0)]
-        for player_id, (r, c) in enumerate(positions):
-            card_frame = tk.Frame(frame, bg=COLORS["card_bg"], bd=2, relief="raised",
-                                  padx=4, pady=2)
-            card_frame.grid(row=r, column=c, padx=8, pady=6)
-
-            lbl = tk.Label(
-                card_frame, text=f"P{player_id+1}\n—",
-                font=("Consolas", 13, "bold"),
-                fg=COLORS["text_dim"], bg=COLORS["card_bg"],
-                justify="center", width=5, height=2,
-            )
-            lbl.pack()
-            self.played_card_labels[player_id] = lbl
+        # Store card data for redrawing.
+        self._centre_cards: dict[int, str] = {}  # player_id → card_text
 
     # ----------------------------------------------------------
     # Player area
@@ -915,7 +903,19 @@ class WistAILabApp:
         }
         for key, val in mapping.items():
             if key in self.shota_info_labels:
-                self.shota_info_labels[key].config(text=val if val != "-" else "—")
+                display = val if val != "-" else "—"
+                self.shota_info_labels[key].config(text=display)
+
+                # Color the trump label by suit.
+                if key == "trump" and val != "-":
+                    if "♥" in val or "♦" in val:
+                        self.shota_info_labels[key].config(fg="#ff5252")
+                    elif "♠" in val or "♣" in val:
+                        self.shota_info_labels[key].config(fg="#ffffff")
+                    else:
+                        self.shota_info_labels[key].config(fg=COLORS["gold"])
+                elif key == "trump":
+                    self.shota_info_labels[key].config(fg=COLORS["gold"])
 
     def set_game_score(self, team_1: int, team_2: int, shotas: int) -> None:
         """Update the game score display."""
@@ -1018,10 +1018,9 @@ class WistAILabApp:
                     lbl.config(text="", fg=COLORS["text_dim"])
 
     def set_player_hand(self, player_index: int, cards) -> None:
-        """
-        Display cards grouped by suit, one row per suit.
-        Suit order: ♠ (black), ♥ (red), ♦ (red), ♣ (black).
-        """
+        """Display cards as drawn mini-cards grouped by suit."""
+        from gui.card_widget import draw_card, parse_card_text, CARD_MINI_WIDTH, CARD_MINI_HEIGHT
+
         if isinstance(cards, str):
             cards = [cards]
 
@@ -1040,61 +1039,84 @@ class WistAILabApp:
                      fg=COLORS["text_dim"], bg=frame.cget("bg")).pack(anchor="w")
             return
 
-        # Group cards by suit
-        suit_groups = {"♠": [], "♥": [], "♦": [], "♣": []}
-        for card_text in cards:
-            placed = False
-            for symbol in suit_groups:
-                if symbol in card_text:
-                    suit_groups[symbol].append(card_text)
-                    placed = True
+        # Group by suit: ♠ ♥ ♣ ♦
+        suit_groups = {"♠": [], "♥": [], "♣": [], "♦": []}
+        for ct in cards:
+            for sym in suit_groups:
+                if sym in ct:
+                    suit_groups[sym].append(ct)
                     break
-            if not placed:
-                suit_groups["♠"].append(card_text)
 
-        # Display order and colors: ♠ ♥ ♣ ♦
-        suit_display = [
-            ("♠", "#303030"),
-            ("♥", "#c62828"),
-            ("♣", "#303030"),
-            ("♦", "#c62828"),
-        ]
-
-        for symbol, fg_color in suit_display:
-            group = suit_groups.get(symbol, [])
+        # Draw each suit row as a canvas.
+        for sym in ["♠", "♥", "♣", "♦"]:
+            group = suit_groups.get(sym, [])
             if not group:
                 continue
 
-            row_frame = tk.Frame(frame, bg=frame.cget("bg"))
-            row_frame.pack(fill="x", pady=1)
+            # Canvas for this suit row.
+            row_canvas = tk.Canvas(frame, bg=frame.cget("bg"),
+                                   height=CARD_MINI_HEIGHT + 4,
+                                   highlightthickness=0)
+            row_canvas.pack(fill="x", pady=1)
 
-            for card_text in group:
-                tk.Label(
-                    row_frame, text=card_text,
-                    font=("Consolas", 9, "bold"),
-                    fg=fg_color, bg=COLORS["card_bg"],
-                    relief="solid", bd=1, padx=2, pady=0, width=3,
-                ).pack(side="left", padx=1)
+            spacing = min(CARD_MINI_WIDTH + 2, 26)
+            for i, ct in enumerate(group):
+                rank, suit = parse_card_text(ct)
+                draw_card(row_canvas, 2 + i * spacing, 2, rank, suit,
+                          width=CARD_MINI_WIDTH, height=CARD_MINI_HEIGHT)
 
     def set_played_cards(self, played_cards) -> None:
-        self.clear_played_cards()
-        for player_id, card_text in played_cards:
-            if player_id in self.played_card_labels:
-                # Color by suit
-                fg = "#303030"
-                if "♥" in card_text or "♦" in card_text:
-                    fg = "#c62828"
+        from gui.card_widget import draw_card, parse_card_text, CARD_LARGE_WIDTH, CARD_LARGE_HEIGHT
 
-                self.played_card_labels[player_id].config(
-                    text=f"P{player_id+1}\n{card_text}",
-                    fg=fg, bg=COLORS["card_bg"],
-                    font=("Consolas", 13, "bold"),
-                )
+        self._centre_cards = {}
+        for player_id, card_text in played_cards:
+            self._centre_cards[player_id] = card_text
+
+        self._redraw_centre_cards()
 
     def clear_played_cards(self) -> None:
-        for pid, lbl in self.played_card_labels.items():
-            lbl.config(text=f"P{pid+1}\n—", fg=COLORS["text_dim"],
-                       bg=COLORS["card_bg"], font=("Consolas", 13, "bold"))
+        self._centre_cards = {}
+        if hasattr(self, "_centre_canvas"):
+            self._centre_canvas.delete("all")
+
+    def _redraw_centre_cards(self) -> None:
+        """Redraw the centre trick area with card graphics."""
+        from gui.card_widget import draw_card, draw_card_back, parse_card_text, CARD_LARGE_WIDTH, CARD_LARGE_HEIGHT
+
+        canvas = self._centre_canvas
+        canvas.delete("all")
+
+        w = canvas.winfo_width() or 300
+        h = canvas.winfo_height() or 220
+
+        cw = CARD_LARGE_WIDTH
+        ch = CARD_LARGE_HEIGHT
+
+        # Card positions: P1=top, P2=right, P3=bottom, P4=left.
+        positions = {
+            0: (w // 2 - cw // 2, 8),                    # top centre
+            1: (w - cw - 12, h // 2 - ch // 2),         # right
+            2: (w // 2 - cw // 2, h - ch - 8),          # bottom centre
+            3: (12, h // 2 - ch // 2),                   # left
+        }
+
+        for player_id, (x, y) in positions.items():
+            if player_id in self._centre_cards:
+                ct = self._centre_cards[player_id]
+                rank, suit = parse_card_text(ct)
+                draw_card(canvas, x, y, rank, suit,
+                          width=cw, height=ch)
+                # Player label above/below card.
+                canvas.create_text(x + cw // 2, y - 6 if player_id == 2 else y + ch + 10,
+                                   text=f"P{player_id + 1}", fill="#aaaaaa",
+                                   font=("Segoe UI", 7))
+            else:
+                # Empty slot — show placeholder.
+                canvas.create_rectangle(x, y, x + cw, y + ch,
+                                        fill="#2a4a2a", outline="#3a5a3a", dash=(3, 3))
+                canvas.create_text(x + cw // 2, y + ch // 2,
+                                   text=f"P{player_id + 1}", fill="#5a8a5a",
+                                   font=("Segoe UI", 9))
 
     def set_tricks_won(self, player_tricks: list[int]) -> None:
         """Show face-down won trick piles as stacked rectangles."""

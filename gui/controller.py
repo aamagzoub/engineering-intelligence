@@ -1641,7 +1641,7 @@ class SimulationController:
         return f"{rank_text} of {suit_text}"
 
     def _format_trump(self, trump_suit) -> str:
-        """Format trump suit with symbol for display."""
+        """Format trump suit with large symbol for display."""
         if trump_suit is None:
             return "-"
         suit_symbols = {
@@ -1649,7 +1649,10 @@ class SimulationController:
         }
         name = getattr(trump_suit, "name", str(trump_suit))
         symbol = suit_symbols.get(name.upper(), "")
-        return f"{name} {symbol}"
+        # Show just the big symbol + short name for maximum visibility.
+        short_names = {"SPADES": "Spd", "HEARTS": "Hrt", "CLUBS": "Clb", "DIAMONDS": "Dmd"}
+        short = short_names.get(name.upper(), name)
+        return f"{symbol} {short}"
 
     def format_card_short(self, card) -> str:
         rank = getattr(card, "rank", None)
