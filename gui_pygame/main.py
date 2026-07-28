@@ -62,11 +62,24 @@ class WistApp:
                         self.state = "menu"
                 elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
                     if self.state == "menu":
-                        self.state = "playing"
-                        self.game_screen.start_game()
+                        self._start_playing()
+
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.state == "menu":
+                    # Check Start Game button click.
+                    cx = SCREEN_WIDTH // 2
+                    cy = SCREEN_HEIGHT // 2
+                    btn_rect = pygame.Rect(cx - 120, cy + 130, 240, 55)
+                    if btn_rect.collidepoint(event.pos):
+                        self._start_playing()
 
             if self.state == "playing":
                 self.game_screen.handle_event(event)
+
+    def _start_playing(self):
+        """Start the game from menu."""
+        self.state = "playing"
+        self.game_screen.start_game()
 
     def _update(self):
         if self.state == "playing":
@@ -105,15 +118,20 @@ class WistApp:
             y = cy - 40 - rotated.get_height() // 2
             self.screen.blit(rotated, (x, y))
 
-        # Start button area.
-        btn_rect = pygame.Rect(cx - 100, cy + 120, 200, 50)
-        pygame.draw.rect(self.screen, BUTTON_GREEN, btn_rect, border_radius=8)
-        btn_text = self.fonts["large"].render("Start Game", True, TEXT_WHITE)
+        # Start button with hover.
+        btn_rect = pygame.Rect(cx - 120, cy + 130, 240, 55)
+        mx, my = pygame.mouse.get_pos()
+        hover = btn_rect.collidepoint(mx, my)
+        bg = (56, 142, 60) if hover else BUTTON_GREEN
+        pygame.draw.rect(self.screen, bg, btn_rect, border_radius=10)
+        if hover:
+            pygame.draw.rect(self.screen, (100, 200, 100), btn_rect, width=2, border_radius=10)
+        btn_text = self.fonts["large"].render("▶  Start Game", True, TEXT_WHITE)
         self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
 
         # Instructions.
-        inst = self.fonts["medium"].render("SPACE or ENTER to start  |  ESC to quit", True, TEXT_DIM)
-        self.screen.blit(inst, inst.get_rect(centerx=cx, y=SCREEN_HEIGHT - 130))
+        inst = self.fonts["medium"].render("Click button or press ENTER  |  ESC to quit", True, TEXT_DIM)
+        self.screen.blit(inst, inst.get_rect(centerx=cx, y=SCREEN_HEIGHT - 120))
 
 
 if __name__ == "__main__":

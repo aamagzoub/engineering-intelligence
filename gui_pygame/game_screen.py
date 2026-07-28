@@ -671,42 +671,54 @@ class GameScreen:
 
     def _render_player_labels(self, cx, cy):
         """Render player names, teams, and role indicators."""
-        # Player positions and info.
-        players_info = [
-            (0, cx, 65, "P3 (Partner)", "Team 1", True),    # Top
-            (3, 40, cy + 55, "P4", "Team 2", False),        # Left
-            (1, SCREEN_WIDTH - 90, cy + 55, "P2", "Team 2", False),  # Right
+        # Player positions: (pid, x, y, name, team, align).
+        labels = [
+            (0, cx, 155, "Partner (P3)", "Team 1"),      # Top (below cards)
+            (3, 40, cy + 65, "P4", "Team 2"),            # Left (below cards)
+            (1, SCREEN_WIDTH - 100, cy + 65, "P2", "Team 2"),  # Right
         ]
 
-        for pid, x, y, name, team, is_top in players_info:
-            # Role indicator.
-            role = ""
-            role_color = TEXT_DIM
+        for pid, x, y, name, team in labels:
+            # Role.
+            role_parts = []
             if pid == self.qabool_id:
-                role = "👑 Qabool"
-                role_color = TEXT_GOLD
+                role_parts.append("👑")
             if pid == self.shooter_id:
-                role = "🎯 Shooter" if not role else role + " | 🎯"
-                role_color = TEXT_GREEN if pid != self.qabool_id else TEXT_GOLD
+                role_parts.append("🎯")
+            role = " ".join(role_parts)
 
-            # Team color.
+            # Team color badge.
             team_color = TEAM1_BLUE if "1" in team else TEAM2_ORANGE
 
-            # Name.
-            name_surf = self.fonts["small"].render(name, True, TEXT_WHITE)
-            team_surf = self.fonts["small"].render(f"({team})", True, team_color)
+            # Render name + role.
+            name_surf = self.fonts["medium"].render(f"{name} {role}", True, TEXT_WHITE)
+            self.screen.blit(name_surf, (x, y))
 
-            if is_top:
-                self.screen.blit(name_surf, (x, y))
-                self.screen.blit(team_surf, (x + name_surf.get_width() + 4, y))
-            else:
-                self.screen.blit(name_surf, (x, y))
-                self.screen.blit(team_surf, (x, y + 14))
+            # Team indicator (small colored dot + text).
+            team_surf = self.fonts["small"].render(team, True, team_color)
+            self.screen.blit(team_surf, (x, y + 16))
 
-            # Role below.
-            if role:
-                role_surf = self.fonts["small"].render(role, True, role_color)
-                self.screen.blit(role_surf, (x, y + (14 if is_top else 28)))
+            # Bid display (if available).
+            bid_text = self._player_bids_display.get(pid, "") if hasattr(self, "_player_bids_display") else ""
+            if bid_text:
+                bid_color = TEXT_GOLD if "Bid" in bid_text else TEXT_DIM
+                bid_surf = self.fonts["small"].render(bid_text, True, bid_color)
+                self.screen.blit(bid_surf, (x, y + 30))
+
+        # Human label (bottom).
+        human_y = SCREEN_HEIGHT - CARD_HEIGHT - 75
+        role_parts = []
+        if HUMAN_ID == self.qabool_id:
+            role_parts.append("👑 Qabool")
+        if HUMAN_ID == self.shooter_id:
+            role_parts.append("🎯 Shooter")
+        role = " | ".join(role_parts)
+
+        you_text = f"YOU (P1) — Team 1"
+        if role:
+            you_text += f"  {role}"
+        you_surf = self.fonts["medium"].render(you_text, True, TEXT_GOLD)
+        self.screen.blit(you_surf, you_surf.get_rect(centerx=cx, y=human_y))
 
     def _render_tricks_won(self, cx, cy):
         """Render won tricks as small face-down piles near each team."""
