@@ -109,25 +109,227 @@ class GameScreen:
         self._run_bidding()
 
     def _run_bidding(self):
-        """Run bidding with AI (simplified for now)."""
-        engine = TasmiyaEngine()
-        temp_agents = [RuleBasedAgent(), RuleBasedAgent(), RuleBasedAgent(), RuleBasedAgent()]
-        result = engine.run(players=self.players, agents=temp_agents,
-                            sahib_al_qabool_id=self.qabool_id)
+        """Run bidding step by step — AI bids instantly, human gets UI."""
+        from environments.wist.tasmiya_engine import tasmiya_order
+        from environments.wist.bidding_engine import BiddingEngine
+        from environments.wist.bidding import Bid, Pass
+        from environments.wist.observation import BiddingObservation
 
-        if result.is_dak:
-            self._message = "Dak! Re-dealing..."
-            self._message_timer = 60
+        self._bidding_engine = BiddingEngine()
+        self._bid_history = []
+        self._bid_order = tasmiya_order(self.qabool_id)
+        self._bid_index = 0
+        self._has_opening_bid = False
+        self._human_trump_choice = None
+        self._bidding_done = False
+
+        # Player bids display (persists).
+        self._player_bids_display = {0: "", 1: "", 2: "", 3: ""}
+
+        self.phase = "bidding"
+        self._ai_timer = 30  # Small delay before first bid.
+
+    def _update_bidding(self):
+        """Process bidding one player at a time."""
+        if self._bidding_done:
+            return
+
+        if self._ai_timer > 0:
+            self._ai_timer -= 1
+            return
+
+        # All regular players done → Qabool decides.
+        if self._bid_index >= len(self._bid_order):
+            self._bid_qabool()
+            return
+
+        pid = self._bid_order[self._bid_index]
+
+        if pid == HUMAN_ID:
+            # Wait for human — handled in _handle_click during bidding.
+            pass
+        else:
+            # AI bids.
+            from environments.wist.observation import BiddingObservation
+            from environments.wist.bidding import Bid, Pass
+
+            obs = BiddingObservation(
+                player_id=pid,
+                hand=list(self.players[pid].hand),
+                previous_bids=list(self._bid_history),
+                current_highest_bid=(self._bidding_engine.highest_bid.value
+                                     if self._bidding_engine.highest_bid else None),
+                is_sahib_al_qabool=False,
+                is_opening_bid=(not self._has_opening_bid),
+            )
+            action = self.agents[pid].act(obs)
+
+            from environments.wist.actions import BidAction, PassAction
+            if isinstance(action, BidAction):
+                bid = Bid(player_id=pid, value=action.value)
+                self._bidding_engine.apply_bid(bid)
+                self._bid_history.append((pid, action.value))
+                self._has_opening_bid = True
+                self._player_bids_display[pid] = f"Bid {action.value}"
+                self._message = f"P{pid+1} bids {action.value}"
+            else:
+                self._bidding_engine.apply_pass(Pass(player_id=pid))
+                self._bid_history.append((pid, None))
+                self._player_bids_display[pid] = "Pass"
+                self._message = f"P{pid+1} passes"
+
+            self._message_timer = 25
+            self._bid_index += 1
+            self._ai_timer = 25
+
+    def _bid_qabool(self):
+        """Sahib Al-Qabool decides."""
+        from environments.wist.observation import BiddingObservation
+        from environments.wist.actions import BidAction, PassAction
+        from environments.wist.bidding import Bid, Pass
+
+        qid = self.qabool_id
+
+        if qid == HUMAN_ID:
+            # Human is Qabool — wait for their click.
+            self._message = "YOU are Qabool! Select trump + confirm."
+            self._message_timer = 999
+            return
+
+        obs = BiddingObservation(
+            player_id=qid, hand=list(self.players[qid].hand),
+            previous_bids=list(self._bid_history),
+            current_highest_bid=(self._bidding_engine.highest_bid.value
+                                 if self._bidding_engine.highest_bid else None),
+            is_sahib_al_qabool=True,
+            is_opening_bid=(not self._has_opening_bid),
+        )
+        action = self.agents[qid].act(obs)
+
+        if isinstance(action, BidAction):
+            bid = Bid(player_id=qid, value=action.value)
+            self._bidding_engine.apply_bid(bid, is_sahib_al_qabool=True)
+            self._bid_history.append((qid, action.value))
+            self._player_bids_display[qid] = f"Bid {action.value}"
+        else:
+            self._bidding_engine.apply_pass(Pass(player_id=qid))
+            self._bid_history.append((qid, None))
+            if self._bidding_engine.highest_bid is None:
+                self._message = "All passed — Dak!"
+                self._message_timer = 60
+                self._bidding_done = True
+                self._ai_timer = 60
+                return
+            self._player_bids_display[qid] = "Accepts"
+
+        self._finalize_bidding()
+
+    def _human_bid_action(self, suit_idx: int):
+        """Human selects a trump suit and bids."""
+        suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
+        chosen_suit = suits[suit_idx]
+        count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == chosen_suit)
+
+        if count < 4:
+            self._message = "Need 4+ cards in that suit!"
+            self._message_timer = 40
+            return
+
+        bid_value = count + 3
+        current_highest = (self._bidding_engine.highest_bid.value
+                           if self._bidding_engine.highest_bid else None)
+
+        # Validate.
+        if not self._has_opening_bid and bid_value > 11:
+            self._message = "Opening bid max 11!"
+            self._message_timer = 40
+            return
+        if current_highest and bid_value <= current_highest and self.qabool_id != HUMAN_ID:
+            self._message = f"Must beat {current_highest}!"
+            self._message_timer = 40
+            return
+
+        from environments.wist.bidding import Bid
+        is_qabool = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
+        bid = Bid(player_id=HUMAN_ID, value=bid_value)
+        self._bidding_engine.apply_bid(bid, is_sahib_al_qabool=is_qabool)
+        self._bid_history.append((HUMAN_ID, bid_value))
+        self._has_opening_bid = True
+        self._human_trump_choice = chosen_suit
+        self._player_bids_display[HUMAN_ID] = f"Bid {bid_value}"
+        self._message = f"You bid {bid_value} ({SUIT_SYMBOLS[chosen_suit]})"
+        self._message_timer = 30
+
+        if is_qabool:
+            self._finalize_bidding()
+        else:
+            self._bid_index += 1
+            self._ai_timer = 25
+
+    def _human_pass_action(self):
+        """Human passes."""
+        from environments.wist.bidding import Pass
+        is_qabool = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
+
+        self._bidding_engine.apply_pass(Pass(player_id=HUMAN_ID))
+        self._bid_history.append((HUMAN_ID, None))
+        self._player_bids_display[HUMAN_ID] = "Pass"
+
+        if is_qabool:
+            if self._bidding_engine.highest_bid is None:
+                self._message = "Dak!"
+                self._message_timer = 60
+                self._bidding_done = True
+                self._ai_timer = 60
+                return
+            self._player_bids_display[HUMAN_ID] = "Accepts"
+            self._finalize_bidding()
+        else:
+            self._bid_index += 1
+            self._ai_timer = 25
+
+    def _finalize_bidding(self):
+        """Bidding resolved — set up for play."""
+        winning_bid = self._bidding_engine.highest_bid
+        if winning_bid is None:
             self._start_new_shota()
             return
 
-        self.trump_suit = result.trump_suit
-        self.bid_value = result.winning_bid_value
-        self.shooter_id = result.winning_bidder_id
+        self.shooter_id = winning_bid.player_id
+        self.bid_value = winning_bid.value
+        self._bidding_done = True
+
+        if self.shooter_id == HUMAN_ID and self._human_trump_choice:
+            self.trump_suit = self._human_trump_choice
+        else:
+            self.trump_suit = determine_trump_suit(self.players[self.shooter_id].hand)
 
         self.round.state.trump_suit = self.trump_suit
         self.round.state.winning_bidder_id = self.shooter_id
         self.round.next_leading_player_id = self.shooter_id
+        self.environment = WistEnvironment(self.round.state)
+
+        self._message = f"P{self.shooter_id+1} shoots! Trump: {SUIT_SYMBOLS.get(self.trump_suit, '?')}"
+        self._message_timer = 50
+        self._ai_timer = 50
+
+        self.phase = "playing"
+        pygame.time.set_timer(pygame.USEREVENT + 2, 800, loops=1)
+
+    # Bidding buttons (suit rects for click detection).
+    def _get_bid_suit_rects(self) -> list[pygame.Rect]:
+        """Get clickable rectangles for suit selection during bidding."""
+        cx = SCREEN_WIDTH // 2
+        y = SCREEN_HEIGHT // 2 + 40
+        rects = []
+        for i in range(4):
+            rects.append(pygame.Rect(cx - 120 + i * 65, y, 55, 55))
+        return rects
+
+    def _get_pass_rect(self) -> pygame.Rect:
+        """Get clickable pass button rect."""
+        cx = SCREEN_WIDTH // 2
+        return pygame.Rect(cx - 50, SCREEN_HEIGHT // 2 + 110, 100, 35)
         self.environment = WistEnvironment(self.round.state)
 
         self.phase = "playing"
@@ -177,7 +379,9 @@ class GameScreen:
         if self._message_timer > 0:
             self._message_timer -= 1
 
-        if self.phase == "playing":
+        if self.phase == "bidding":
+            self._update_bidding()
+        elif self.phase == "playing":
             self._update_playing()
         elif self.phase == "shota_end":
             self._ai_timer -= 1
@@ -236,6 +440,11 @@ class GameScreen:
             if self.phase == "playing":
                 self._start_next_trick()
 
+        if event.type == pygame.USEREVENT + 2:
+            # Transition from bidding to first trick.
+            if self.phase == "playing":
+                self._start_next_trick()
+
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE and self.phase == "game_over":
                 self.start_game()
@@ -244,11 +453,32 @@ class GameScreen:
             self._handle_click(event.pos)
 
     def _handle_click(self, pos):
-        """Handle mouse click — card selection during human turn."""
+        """Handle mouse click — card selection or bidding."""
+        # Bidding phase — suit selection.
+        if self.phase == "bidding":
+            # Check if it's human's turn.
+            is_human_turn = False
+            if self._bid_index < len(self._bid_order) and self._bid_order[self._bid_index] == HUMAN_ID:
+                is_human_turn = True
+            if self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order):
+                is_human_turn = True
+
+            if is_human_turn:
+                # Check suit buttons.
+                rects = self._get_bid_suit_rects()
+                for i, rect in enumerate(rects):
+                    if rect.collidepoint(pos):
+                        self._human_bid_action(i)
+                        return
+                # Check pass button.
+                if self._get_pass_rect().collidepoint(pos):
+                    self._human_pass_action()
+                    return
+
+        # Playing phase — card selection.
         if self.phase == "playing" and self._play_idx < 4:
             pid = self._play_order[self._play_idx]
             if pid == HUMAN_ID:
-                # Check if click is on a card in human's hand.
                 card = self._get_clicked_card(pos)
                 if card:
                     self._human_play(card)
@@ -348,6 +578,10 @@ class GameScreen:
             if self._play_order[self._play_idx] == HUMAN_ID:
                 turn_surf = self.fonts["large"].render("▶ Your Turn — Click a card!", True, TEXT_GREEN)
                 self.screen.blit(turn_surf, turn_surf.get_rect(centerx=cx, y=SCREEN_HEIGHT - 175))
+
+        # Bidding UI (suit buttons + pass).
+        if self.phase == "bidding":
+            self._render_bidding_ui(cx, cy)
 
         # Message.
         if self._message_timer > 0 and self._message:
@@ -518,6 +752,67 @@ class GameScreen:
         # "TRUMP" label below.
         label = self.fonts["small"].render("TRUMP", True, TEXT_GOLD)
         self.screen.blit(label, label.get_rect(centerx=x + 30, y=y + 88))
+
+    def _render_bidding_ui(self, cx, cy):
+        """Render bidding interface — suit buttons + pass for human."""
+        # Check if it's human's turn.
+        is_human_turn = False
+        if self._bid_index < len(self._bid_order) and self._bid_order[self._bid_index] == HUMAN_ID:
+            is_human_turn = True
+        if self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order):
+            is_human_turn = True
+
+        # Show all bids so far.
+        bid_y = cy - 80
+        for pid, text in self._player_bids_display.items():
+            if text:
+                color = TEXT_GOLD if "Bid" in text else TEXT_DIM
+                surf = self.fonts["medium"].render(f"P{pid+1}: {text}", True, color)
+                self.screen.blit(surf, (cx - 100, bid_y))
+                bid_y += 20
+
+        if not is_human_turn:
+            # Waiting for AI.
+            wait = self.fonts["medium"].render("AI bidding...", True, TEXT_DIM)
+            self.screen.blit(wait, wait.get_rect(centerx=cx, y=cy + 30))
+            return
+
+        # Title.
+        title = self.fonts["large"].render("Select Trump Suit (click):", True, TEXT_WHITE)
+        self.screen.blit(title, title.get_rect(centerx=cx, y=cy + 15))
+
+        # Suit buttons.
+        suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
+        rects = self._get_bid_suit_rects()
+        mx, my = pygame.mouse.get_pos()
+
+        for i, (suit, rect) in enumerate(zip(suits, rects)):
+            sym = SUIT_SYMBOLS[suit]
+            count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == suit)
+            color = RED_SUIT if suit in (Suit.HEARTS, Suit.DIAMONDS) else BLACK_SUIT
+
+            # Button background.
+            hover = rect.collidepoint(mx, my)
+            bg = (255, 255, 240) if hover else CARD_WHITE
+            pygame.draw.rect(self.screen, bg, rect, border_radius=8)
+            pygame.draw.rect(self.screen, (150, 150, 150) if not hover else HIGHLIGHT_GREEN,
+                             rect, width=2, border_radius=8)
+
+            # Suit symbol + count.
+            sym_font = pygame.font.SysFont("Segoe UI", 22, bold=True)
+            sym_surf = sym_font.render(sym, True, color)
+            self.screen.blit(sym_surf, sym_surf.get_rect(centerx=rect.centerx, y=rect.y + 5))
+
+            count_surf = self.fonts["small"].render(f"({count})", True, TEXT_DIM)
+            self.screen.blit(count_surf, count_surf.get_rect(centerx=rect.centerx, y=rect.y + 35))
+
+        # Pass button.
+        pass_rect = self._get_pass_rect()
+        hover = pass_rect.collidepoint(mx, my)
+        bg = (80, 80, 80) if hover else BUTTON_GREY
+        pygame.draw.rect(self.screen, bg, pass_rect, border_radius=6)
+        pass_surf = self.fonts["medium"].render("Pass", True, TEXT_WHITE)
+        self.screen.blit(pass_surf, pass_surf.get_rect(center=pass_rect.center))
 
     def _render_info_bar(self):
         """Render the top information bar."""
