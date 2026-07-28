@@ -30,7 +30,10 @@ from intelligence.core.cards.suit import Suit
 
 SUIT_SYMBOLS = {Suit.SPADES: "♠", Suit.HEARTS: "♥", Suit.CLUBS: "♣", Suit.DIAMONDS: "♦"}
 RANK_SYMBOLS = {r: s for r, s in zip(Rank, ["2","3","4","5","6","7","8","9","10","J","Q","K","A"])}
-HUMAN_ID = 2  # Player 3, Team 1.
+HUMAN_ID = 2  # Internal index 2 = Team 1 (you).
+
+# Display names: You=P1, right=P2, top=P3, left=P4.
+DISPLAY_NAMES = {2: "P1 (You)", 1: "P2", 0: "P3", 3: "P4"}
 
 
 def card_str(card: Card) -> str:
@@ -56,6 +59,11 @@ class HumanTab:
         self.bid_value = 0
         self.trick_number = 0
         self.team_tricks = [0, 0]
+
+        # Game-level (across 5 Shotas).
+        self.game_scores = [0, 0]  # Accumulated scores.
+        self.shota_number = 0
+        self.playing_team_id = None
 
         self._build()
 
@@ -101,8 +109,9 @@ class HumanTab:
         self._player_frames = {}
         self._player_canvases = {}
         self._player_status = {}
+        self._player_bid_labels = {}
 
-        self._create_opponent_area(table, 0, "Player 1 (AI)", "Team 1", row=0, col=1)
+        self._create_opponent_area(table, 0, "Player 3 (AI)", "Team 1", row=0, col=1)
         self._create_opponent_area(table, 3, "Player 4 (AI)", "Team 2", row=1, col=0)
         self._create_opponent_area(table, 1, "Player 2 (AI)", "Team 2", row=1, col=2)
 
@@ -143,7 +152,6 @@ class HumanTab:
 
     def _create_opponent_area(self, parent, pid, name, team, row, col):
         """Create an opponent player area — no dark box, just on the felt."""
-        # Use sticky to centre: top/bottom=ew (horizontal centre), left/right=ns (vertical centre).
         sticky = "ew" if row in (0, 2) else "ns"
 
         frame = tk.Frame(parent, bg=COLORS["table_felt"], padx=4, pady=3)
@@ -157,12 +165,21 @@ class HumanTab:
         tk.Label(header, text=f"  ({team})", font=("Segoe UI", 8),
                  fg=team_color, bg=COLORS["table_felt"]).pack(side="left")
 
+        # Status (role: Qabool/Shooter/Won).
         status = tk.Label(frame, text="", font=("Segoe UI", 8),
                           fg=COLORS["text_muted"], bg=COLORS["table_felt"], anchor="w")
-        status.pack(fill="x", pady=(0, 2))
+        status.pack(fill="x", pady=(0, 1))
         self._player_status[pid] = status
 
-        # Side players (P2, P4) need more vertical space to centre with the middle.
+        # Bid label (persists through the game).
+        bid_lbl = tk.Label(frame, text="", font=("Consolas", 9, "bold"),
+                           fg=COLORS["text_dim"], bg=COLORS["table_felt"], anchor="w")
+        bid_lbl.pack(fill="x", pady=(0, 2))
+        if not hasattr(self, "_player_bid_labels"):
+            self._player_bid_labels = {}
+        self._player_bid_labels[pid] = bid_lbl
+
+        # Side players need more vertical space.
         canvas_height = CARD_MINI_HEIGHT + 6 if row in (0, 2) else CARD_MINI_HEIGHT + 30
 
         canvas = tk.Canvas(frame, bg=COLORS["table_felt"], height=canvas_height,
@@ -173,12 +190,14 @@ class HumanTab:
 
     def _create_human_area(self, parent):
         """Create the human player area (bottom, face-up, clickable)."""
-        frame = tk.Frame(parent, bg=COLORS["table_felt"], padx=6, pady=4)
+        frame = tk.Frame(parent, bg=COLORS["table_felt"], padx=6, pady=4,
+                         height=180)
         frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(0, 4))
+        frame.pack_propagate(False)
 
         header = tk.Frame(frame, bg=COLORS["table_felt"])
         header.pack(fill="x", pady=(0, 4))
-        tk.Label(header, text="🧑 YOU — Player 3",
+        tk.Label(header, text="🧑 YOU — Player 1",
                  font=("Segoe UI", 10, "bold"),
                  fg=COLORS["gold"], bg=COLORS["table_felt"]).pack(side="left")
         tk.Label(header, text="  (Team 1)",
@@ -347,12 +366,25 @@ class HumanTab:
         self._trick_played = {}
         self._human_chosen_trump = None
         self._human_trump_choice = None
+        self.game_scores = [0, 0]
+        self.shota_number = 0
+        self.playing_team_id = None
+
+        self._start_new_shota()
+
+    def _start_new_shota(self):
+        """Start a new Shota (deal, bid, play 13 tricks)."""
+        self.shota_number += 1
+        self.trick_number = 0
+        self.team_tricks = [0, 0]
+        self._trick_played = {}
+        self._human_chosen_trump = None
+        self._human_trump_choice = None
 
         self.players = create_standard_players()
         self.round = Round(self.players)
         self.round.deal()
 
-        # Redeal on Dak.
         attempts = 0
         while self.round.has_card_based_dak() and attempts < 10:
             self.round = Round(self.players)
@@ -360,17 +392,63 @@ class HumanTab:
             attempts += 1
 
         self.agents = [RuleBasedAgent(), RuleBasedAgent(), None, RuleBasedAgent()]
-        self.qabool_id = determine_first_shota_qabool()
 
-        self._update_info(shota="1", deal="1", qabool=f"P{self.qabool_id+1}")
+        if self.shota_number == 1:
+            self.qabool_id = determine_first_shota_qabool()
+        else:
+            self.qabool_id = (self.qabool_id + 1) % 4
+
+        # Show Qabool immediately.
+        self._update_info(shota=f"{self.shota_number}/5", deal="1", qabool=f"P{self.qabool_id+1}",
+                          t1_won="0", t2_won="0")
+
+        for pid in [0, 1, 3]:
+            if pid == self.qabool_id:
+                self._player_status[pid].config(text="👑 Sahib Al-Qabool", fg=COLORS["gold"])
+                self._player_frames[pid].config(highlightbackground=COLORS["gold"],
+                                                highlightthickness=3)
+            else:
+                self._player_status[pid].config(text="")
+                self._player_frames[pid].config(highlightthickness=0)
+
+        # Also highlight the human player frame if they're Qabool or Shooter.
+        human_frame = self._player_frames[HUMAN_ID]
+        if self.qabool_id == HUMAN_ID:
+            human_frame.config(highlightbackground=COLORS["gold"], highlightthickness=3)
+
         self._show_all_hands()
-        self._set_status("Bidding...")
+        self._centre_canvas.delete("all")
 
-        self.root.after(500, self._run_bidding)
+        if self.qabool_id == HUMAN_ID:
+            self._set_status(f"Shota {self.shota_number} — YOU are Sahib Al-Qabool! 👑")
+        else:
+            self._set_status(f"Shota {self.shota_number} — P{self.qabool_id+1} is Sahib Al-Qabool. Bidding...")
+
+        self.root.after(800, self._run_bidding)
 
     def _stop_game(self):
         self.game_running = False
         self._set_status("Stopped")
+
+    def _show_trump_in_shooter_area(self):
+        """Show trump card in the top-right corner of the table (not inside shooter box)."""
+        trump_sym = SUIT_SYMBOLS.get(self.trump_suit, "?")
+        fg = "#c62828" if self.trump_suit in (Suit.HEARTS, Suit.DIAMONDS) else "#1a1a1a"
+
+        # Remove old trump display if exists.
+        if hasattr(self, "_trump_display_label") and self._trump_display_label:
+            self._trump_display_label.destroy()
+
+        # Place in the table's top-right area using place() for absolute positioning.
+        table = self._centre_canvas.master  # The table frame.
+        self._trump_display_label = tk.Label(
+            table,
+            text=f" {trump_sym} ",
+            font=("Segoe UI", 28, "bold"),
+            fg=fg, bg=COLORS["card_bg"],
+            relief="raised", bd=2, padx=6, pady=4,
+        )
+        self._trump_display_label.place(relx=0.95, rely=0.05, anchor="ne")
 
     def _show_all_hands(self):
         """Show all opponent hands face-down, human hand face-up."""
@@ -587,7 +665,8 @@ class HumanTab:
 
         if value is not None:
             bid = Bid(player_id=HUMAN_ID, value=value)
-            self._bidding_engine.apply_bid(bid)
+            is_qabool_bidding = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
+            self._bidding_engine.apply_bid(bid, is_sahib_al_qabool=is_qabool_bidding)
             self._bid_history.append((HUMAN_ID, value))
             self._has_opening_bid = True
             self._set_status(f"You bid {value}")
@@ -596,9 +675,22 @@ class HumanTab:
             self._bid_history.append((HUMAN_ID, None))
             self._set_status("You pass")
 
-        self._bid_index += 1
         self._show_human_hand(clickable=False)
-        self.root.after(600, self._bid_next_player)
+
+        # If this was the Qabool decision (all regular players done), finalize.
+        if self._bid_index >= len(self._bid_order):
+            # Qabool just decided (accept/bid/dak).
+            all_passed = self._bidding_engine.highest_bid is None
+            if all_passed and value is None:
+                self._set_status("Dak!")
+                self.game_running = False
+                self.root.after(1000, self._start_game)
+                return
+            self.root.after(600, self._finalize_bidding)
+        else:
+            # Regular player bid — continue to next bidder.
+            self._bid_index += 1
+            self.root.after(600, self._bid_next_player)
 
     def _bid_qabool_turn(self):
         """Sahib Al-Qabool makes the final decision."""
@@ -791,6 +883,7 @@ class HumanTab:
 
         self.shooter_id = winning_bid.player_id
         self.bid_value = winning_bid.value
+        self.playing_team_id = self.players[self.shooter_id].team_id
 
         # Use human's chosen trump if human won the bid.
         if self.shooter_id == HUMAN_ID and hasattr(self, "_human_chosen_trump") and self._human_chosen_trump:
@@ -812,12 +905,46 @@ class HumanTab:
 
         for pid in [0, 1, 3]:
             s = self._player_status[pid]
-            if pid == self.qabool_id:
-                s.config(text="👑 Qabool", fg=COLORS["gold"])
+            # Show bid persistently.
+            if hasattr(self, "_player_bid_labels") and pid in self._player_bid_labels:
+                bid_text = "Pass"
+                for bpid, bval in self._bid_history:
+                    if bpid == pid:
+                        bid_text = f"Bid: {bval}" if bval else "Pass"
+                self._player_bid_labels[pid].config(text=bid_text,
+                    fg=COLORS["gold"] if bid_text.startswith("Bid") else COLORS["text_dim"])
+
+            # Highlight roles.
+            if pid == self.shooter_id and pid == self.qabool_id:
+                s.config(text="👑 Qabool | 🎯 SHOOTER", fg="#66ff66")
+                self._player_frames[pid].config(highlightbackground=COLORS["gold"],
+                                                highlightthickness=3, bd=2, relief="solid")
             elif pid == self.shooter_id:
-                s.config(text="🎯 Shooter", fg="#66bb6a")
+                s.config(text="🎯 SHOOTER — First to play", fg="#66ff66")
+                self._player_frames[pid].config(highlightbackground="#66ff66",
+                                                highlightthickness=2)
+            elif pid == self.qabool_id:
+                s.config(text="👑 Qabool", fg=COLORS["gold"])
+                self._player_frames[pid].config(highlightbackground=COLORS["gold"],
+                                                highlightthickness=3)
             else:
                 s.config(text="")
+                self._player_frames[pid].config(highlightthickness=0)
+
+        # Also highlight human frame if they're shooter or qabool.
+        human_frame = self._player_frames[HUMAN_ID]
+        if self.shooter_id == HUMAN_ID and self.qabool_id == HUMAN_ID:
+            human_frame.config(highlightbackground=COLORS["gold"], highlightthickness=3,
+                               bd=2, relief="solid")
+        elif self.shooter_id == HUMAN_ID:
+            human_frame.config(highlightbackground="#66ff66", highlightthickness=2)
+        elif self.qabool_id == HUMAN_ID:
+            human_frame.config(highlightbackground=COLORS["gold"], highlightthickness=3)
+        else:
+            human_frame.config(highlightthickness=0)
+
+        # Draw trump card inside the shooter's area.
+        self._show_trump_in_shooter_area()
 
         self._set_status(f"Bidding done! P{self.shooter_id+1} plays. Trump revealed on first card.")
         self._show_all_hands()
@@ -900,42 +1027,86 @@ class HumanTab:
         who = "YOU" if winner == HUMAN_ID else f"P{winner+1}"
         self._set_status(f"Trick {self.trick_number} — {who} won! (T1:{self.team_tricks[0]} T2:{self.team_tricks[1]})")
 
-        # Update opponent status.
+        # Update opponent status — keep Qabool + Shooter visible always.
         for pid in [0, 1, 3]:
+            roles = []
+            if pid == self.qabool_id:
+                roles.append("👑 Qabool")
+            if pid == self.shooter_id:
+                roles.append("🎯 Shooter")
             if pid == winner:
-                self._player_status[pid].config(text="🏆 Won", fg="#ffd54f")
+                roles.append("🏆 Won")
+
+            lbl = self._player_status[pid]
+            if roles:
+                lbl.config(text=" | ".join(roles),
+                           fg="#ffd54f" if pid == winner else
+                           (COLORS["gold"] if pid == self.qabool_id else "#66bb6a"))
             else:
-                lbl = self._player_status[pid]
-                if pid == self.qabool_id:
-                    lbl.config(text="👑 Qabool", fg=COLORS["gold"])
-                elif pid == self.shooter_id:
-                    lbl.config(text="🎯 Shooter", fg="#66bb6a")
-                else:
-                    lbl.config(text="")
+                lbl.config(text="")
 
         self._show_all_hands()
         self.root.after(1200, self._play_next_trick)
 
     def _finish_game(self):
-        self.game_running = False
-        winner = "YOUR TEAM (Team 1)" if self.team_tricks[0] > self.team_tricks[1] else "Team 2"
+        """End of a Shota — score it and either start next or end game."""
+        from environments.wist.scoring import score_shota
 
-        # Clear the centre and show winner announcement.
+        # Score this Shota.
+        if self.playing_team_id is not None:
+            defending = 1 if self.playing_team_id == 0 else 0
+            score_delta = score_shota(
+                playing_team_id=self.playing_team_id,
+                defending_team_id=defending,
+                bid=self.bid_value,
+                playing_team_tricks=self.team_tricks[self.playing_team_id],
+                defending_team_tricks=self.team_tricks[defending],
+            )
+            self.game_scores[0] += score_delta.get(0, 0)
+            self.game_scores[1] += score_delta.get(1, 0)
+
+        # Check if game is over (5 Shotas or 25 points).
+        game_over = self.shota_number >= 5 or self.game_scores[0] >= 25 or self.game_scores[1] >= 25
+
+        # Show Shota result in centre.
         canvas = self._centre_canvas
         canvas.delete("all")
-        w = 270
-        h = 190
-        canvas.create_text(w // 2, h // 2 - 20,
-                           text="🏆  GAME OVER  🏆",
-                           fill=COLORS["gold"], font=("Segoe UI", 14, "bold"))
-        canvas.create_text(w // 2, h // 2 + 10,
-                           text=f"{winner} wins!",
-                           fill="#ffffff", font=("Segoe UI", 12, "bold"))
-        canvas.create_text(w // 2, h // 2 + 40,
-                           text=f"Team 1: {self.team_tricks[0]}  │  Team 2: {self.team_tricks[1]}",
-                           fill="#aaaaaa", font=("Segoe UI", 10))
+        w, h = 270, 190
 
-        self._set_status("Game over! Press Start Game to play again.")
+        if game_over:
+            # Determine winner.
+            if self.game_scores[0] > self.game_scores[1]:
+                winner_text = "YOUR TEAM Wins! 🏆"
+            elif self.game_scores[1] > self.game_scores[0]:
+                winner_text = "Team 2 Wins!"
+            else:
+                winner_text = "Draw!"
+
+            canvas.create_text(w // 2, h // 2 - 30, text="🏆 GAME OVER 🏆",
+                               fill=COLORS["gold"], font=("Segoe UI", 14, "bold"))
+            canvas.create_text(w // 2, h // 2, text=winner_text,
+                               fill="#ffffff", font=("Segoe UI", 12, "bold"))
+            canvas.create_text(w // 2, h // 2 + 30,
+                               text=f"Final: Team 1: {self.game_scores[0]} │ Team 2: {self.game_scores[1]}",
+                               fill="#aaaaaa", font=("Segoe UI", 10))
+            self._set_status("Game over! Press Start Game to play again.")
+            self.game_running = False
+        else:
+            # Show Shota result, then start next Shota.
+            bid_met = self.team_tricks[self.playing_team_id] >= self.bid_value if self.playing_team_id is not None else False
+            result_text = "Bid SUCCESS ✓" if bid_met else "Bid FAILED ✗"
+
+            canvas.create_text(w // 2, h // 2 - 30, text=f"Shota {self.shota_number} Complete",
+                               fill="#ffffff", font=("Segoe UI", 12, "bold"))
+            canvas.create_text(w // 2, h // 2,
+                               text=f"{result_text}  |  T1: {self.team_tricks[0]} – T2: {self.team_tricks[1]}",
+                               fill=COLORS["gold"] if bid_met else "#ff6666", font=("Segoe UI", 10))
+            canvas.create_text(w // 2, h // 2 + 30,
+                               text=f"Score: Team 1: {self.game_scores[0]} │ Team 2: {self.game_scores[1]}",
+                               fill="#aaaaaa", font=("Segoe UI", 10))
+
+            self._set_status(f"Shota {self.shota_number} done. Next Shota starting...")
+            self.root.after(2500, self._start_new_shota)
 
     def _reset_table(self):
         """Reset all visual elements for a fresh game."""

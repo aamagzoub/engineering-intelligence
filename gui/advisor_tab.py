@@ -52,8 +52,9 @@ class AdvisorTab:
         self.mode = "hand"
 
         # AI agent for recommendations.
-        self._agent = None  # Will be created on first use.
+        self._agent = None
         self._agent_type = "rule_based"
+        self._last_recommended_card = None
 
         self._build()
 
@@ -132,15 +133,18 @@ class AdvisorTab:
         right = tk.Frame(main, bg="#252525", bd=1, relief="groove", padx=12, pady=8)
         right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
-        # Trick area.
+        # Trick area — cards drawn left to right.
         tk.Label(right, text="CURRENT TRICK", font=("Segoe UI", 10, "bold"),
                  fg="#ffffff", bg="#252525").pack(anchor="w", pady=(0, 6))
 
-        self._trick_display = tk.Label(
-            right, text="Select hand + trump first, then start trick",
-            font=("Consolas", 10), fg="#cccccc", bg="#1a1a1a",
-            justify="left", anchor="w", padx=10, pady=8, width=28, height=5)
-        self._trick_display.pack(fill="x", pady=4)
+        from gui.card_widget import CARD_WIDTH, CARD_HEIGHT
+        self._trick_canvas = tk.Canvas(right, bg="#1a1a1a", height=CARD_HEIGHT + 16,
+                                       highlightthickness=0)
+        self._trick_canvas.pack(fill="x", pady=4)
+
+        self._trick_status = tk.Label(right, text="Select hand + trump, then Start Trick",
+                                      font=("Segoe UI", 8), fg="#888888", bg="#252525")
+        self._trick_status.pack(anchor="w")
 
         # Trick control buttons.
         trick_ctrl = tk.Frame(right, bg="#252525")
@@ -168,9 +172,16 @@ class AdvisorTab:
             padx=12, pady=12, anchor="center")
         self._rec_label.pack(fill="x", pady=4)
 
-        tk.Button(right, text="🤖 Get Recommendation", command=self._get_recommendation,
-                  font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
-                  bd=0, padx=12, pady=6, cursor="hand2").pack(fill="x", pady=(8, 4))
+        rec_btns = tk.Frame(right, bg="#252525")
+        rec_btns.pack(fill="x", pady=(4, 4))
+
+        tk.Button(rec_btns, text="🤖 Get Recommendation", command=self._get_recommendation,
+                  font=("Segoe UI", 9, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                  bd=0, padx=10, pady=5, cursor="hand2").pack(side="left", padx=3)
+
+        tk.Button(rec_btns, text="▶ Play It", command=self._play_recommendation,
+                  font=("Segoe UI", 9, "bold"), fg="#fff", bg=COLORS["btn_orange"],
+                  bd=0, padx=10, pady=5, cursor="hand2").pack(side="left", padx=3)
 
         # Info.
         self._info_label = tk.Label(right, text="Trick: 0 | Hand: 0 cards",
@@ -345,12 +356,14 @@ class AdvisorTab:
             card = action.card
             sym = card_str(card)
             self._rec_label.config(text=f"▶ Play: {sym}")
+            self._last_recommended_card = card
 
             # Highlight the recommended card in green.
             if card in self.my_hand:
                 self._card_buttons[card].config(bg="#ffd54f", fg="#000000")
         else:
             self._rec_label.config(text="No recommendation")
+            self._last_recommended_card = None
 
     def _get_agent(self):
         """Get or create the AI agent."""
@@ -382,15 +395,48 @@ class AdvisorTab:
             self._instruction_label.config(text=f"✓ Model loaded: {self._agent.q_table_size} entries")
 
     def _update_trick_display(self) -> None:
+        """Draw trick cards on the canvas left to right."""
+        from gui.card_widget import draw_card, parse_card_text, CARD_WIDTH, CARD_HEIGHT
+
+        canvas = self._trick_canvas
+        canvas.delete("all")
+
         if not self.trick_cards:
-            self._trick_display.config(text=f"Trick {self.trick_number}\nWaiting for cards...")
+            self._trick_status.config(text=f"Trick {self.trick_number} — waiting for cards...")
+            canvas.create_text(10, (CARD_HEIGHT + 16) // 2, text="No cards yet",
+                               anchor="w", fill="#555555", font=("Segoe UI", 9))
             return
 
-        lines = [f"Trick {self.trick_number}"]
-        for pid, card in self.trick_cards:
-            lines.append(f"  P{pid+1}: {card_str(card)}")
-        lines.append(f"  → Your turn ({len(self.trick_cards)}/3 played)")
-        self._trick_display.config(text="\n".join(lines))
+        spacing = CARD_WIDTH + 10
+        for i, (pid, card) in enumerate(self.trick_cards):
+            x = 10 + i * spacing
+            y = 8
+            ct = card_str(card)
+            rank, suit = parse_card_text(ct)
+            draw_card(canvas, x, y, rank, suit, width=CARD_WIDTH, height=CARD_HEIGHT)
+            # Player label below.
+            canvas.create_text(x + CARD_WIDTH // 2, y + CARD_HEIGHT + 6,
+                               text=f"P{pid+1}", fill="#aaaaaa", font=("Segoe UI", 7))
+
+        self._trick_status.config(text=f"Trick {self.trick_number} — {len(self.trick_cards)}/3 others played")
+
+    def _play_recommendation(self) -> None:
+        """Get recommendation and immediately play it (remove from hand)."""
+        self._get_recommendation()
+        # If a recommendation was made, play it.
+        if hasattr(self, "_last_recommended_card") and self._last_recommended_card:
+            card = self._last_recommended_card
+            if card in self.my_hand:
+                self.my_hand.remove(card)
+                btn = self._card_buttons[card]
+                btn.config(bg="#666666", fg="#999999", relief="flat")
+                # Clear trick for next.
+                self._clear_trick()
+                self.mode = "hand"
+                self._mode_label.config(text=f"YOUR HAND — {len(self.my_hand)} cards remaining")
+                self._instruction_label.config(text="Click 'Start Trick' for next trick")
+                self._update_info()
+                self._rec_label.config(text=f"✓ Played: {card_str(card)}")
 
     def _update_info(self) -> None:
         self._info_label.config(

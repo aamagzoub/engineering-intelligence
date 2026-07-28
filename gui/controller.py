@@ -264,6 +264,21 @@ class SimulationController(ControllerHelpersMixin):
 
         self.phase = "dealt"
 
+        # Highlight Sahib Al-Qabool from the very start.
+        for i in range(4):
+            self.set_player_status_safe(
+                i, "Waiting",
+                is_qabool=(i == self.sahib_al_qabool_id),
+            )
+
+        # Show Qabool in the top bar immediately.
+        self.set_shota_info_safe(
+            trump="-",
+            qabool=f"Player {self.sahib_al_qabool_id + 1}",
+            bid="-",
+            first_shooter="-",
+        )
+
         # Show current Shota number from the start.
         try:
             current_shota = self.game_state.completed_shotas + 1

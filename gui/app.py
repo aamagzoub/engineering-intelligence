@@ -26,8 +26,14 @@ class WistAILabApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("Sudanese Wist — AI Laboratory")
-        self.root.state("zoomed")  # Maximize window.
-        self.root.resizable(False, False)  # Prevent resizing.
+        # Fixed size, centred on screen.
+        win_w, win_h = 1280, 800
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2 - 30
+        self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.root.resizable(False, False)
         self.root.configure(bg=COLORS["table_border"])
         self.root.minsize(1050, 720)
 
@@ -362,6 +368,26 @@ class WistAILabApp:
     # PUBLIC API (called by controller)
     # ==========================================================
 
+    def _load_model_for_game(self) -> None:
+        """Load a trained model for use in the Game Table."""
+        from tkinter import filedialog
+        from agents.learning.learning_agent import LearningAgent
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json")],
+            title="Load Learning Agent for Game Table",
+        )
+        if path:
+            agent = LearningAgent.load(path, training=False)
+            self.controller._learning_agent_cache = agent
+            self.set_current_trick(f"Model loaded ({agent.q_table_size} entries)")
+
+    def _apply_agent_selection(self) -> None:
+        """Apply the agent type dropdowns to the controller."""
+        if hasattr(self, "_game_agent_vars"):
+            type_map = {"Rule-Based": "rule_based", "Random": "random", "Learning": "learning"}
+            for i, var in enumerate(self._game_agent_vars):
+                self.controller.agent_types[i] = type_map.get(var.get(), "rule_based")
+
     def set_status(self, message: str) -> None:
         """No-op — status removed from UI. Info shown on table only."""
         pass
@@ -447,7 +473,7 @@ class WistAILabApp:
         name_lbl = self.player_name_labels[player_index]
         frame = self.player_frames[player_index]
 
-        # Build role text
+        # Build role text — Qabool is ALWAYS shown.
         roles = []
         if is_qabool:
             roles.append("👑 Qabool")
@@ -462,33 +488,50 @@ class WistAILabApp:
             role_lbl.config(text=role_text)
             if "won" in message.lower():
                 role_lbl.config(fg="#ffd54f")
-            elif is_qabool:
-                role_lbl.config(fg=COLORS["gold"])
             elif is_first_shooter:
                 role_lbl.config(fg="#66bb6a")
+            elif is_qabool:
+                role_lbl.config(fg=COLORS["gold"])
             else:
                 role_lbl.config(fg=COLORS["text_muted"])
 
-        # Highlight frame on win
+        # Highlight frame based on role — Qabool = outer gold border, Shooter = inner green border.
         if frame:
             if "won" in message.lower():
-                frame.config(bg=COLORS["player_winner"])
+                frame.config(bg=COLORS["player_winner"], highlightthickness=0, bd=0)
                 self._recolor_frame(frame, COLORS["player_winner"])
+            elif is_first_shooter and is_qabool:
+                # Both! Outer gold (highlightbackground) + inner green (bd).
+                frame.config(bg="#1a4a1a",
+                             highlightbackground=COLORS["gold"], highlightthickness=3,
+                             bd=2, relief="solid")
+                self._recolor_frame(frame, "#1a4a1a")
+            elif is_first_shooter:
+                # Green border only.
+                frame.config(bg="#1a4a1a",
+                             highlightbackground="#66bb6a", highlightthickness=2,
+                             bd=0)
+                self._recolor_frame(frame, "#1a4a1a")
             elif is_qabool:
-                frame.config(bg=COLORS["player_active"])
+                # Gold border only.
+                frame.config(bg=COLORS["player_active"],
+                             highlightbackground=COLORS["gold"], highlightthickness=3,
+                             bd=0)
                 self._recolor_frame(frame, COLORS["player_active"])
             else:
-                frame.config(bg=COLORS["player_bg"])
+                frame.config(bg=COLORS["player_bg"], highlightthickness=0, bd=0)
                 self._recolor_frame(frame, COLORS["player_bg"])
 
     def set_player_bid(self, player_index: int, bid: str) -> None:
         if 0 <= player_index < 4:
             lbl = self.player_bid_labels[player_index]
             if lbl:
-                if bid and bid != "-":
-                    lbl.config(text=f"Bid: {bid}", fg=COLORS["gold"])
-                else:
+                if not bid or bid == "-":
                     lbl.config(text="", fg=COLORS["text_dim"])
+                elif bid.lower() == "pass":
+                    lbl.config(text="Pass", fg=COLORS["text_dim"])
+                else:
+                    lbl.config(text=f"Bid: {bid}", fg=COLORS["gold"])
 
     def set_player_hand(self, player_index: int, cards) -> None:
         """Display cards as drawn mini-cards grouped by suit."""
