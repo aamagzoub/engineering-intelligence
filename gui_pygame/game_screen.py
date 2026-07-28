@@ -236,6 +236,10 @@ class GameScreen:
             if self.phase == "playing":
                 self._start_next_trick()
 
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE and self.phase == "game_over":
+                self.start_game()
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self._handle_click(event.pos)
 
@@ -302,6 +306,14 @@ class GameScreen:
 
     def render(self):
         """Render the full game screen."""
+        if self.phase == "game_over":
+            self._render_game_over()
+            return
+
+        if self.phase == "shota_end":
+            self._render_shota_end()
+            return
+
         # Table.
         table_rect = pygame.Rect(20, 50, SCREEN_WIDTH - 40, SCREEN_HEIGHT - 100)
         pygame.draw.rect(self.screen, TABLE_FELT, table_rect, border_radius=12)
@@ -310,11 +322,20 @@ class GameScreen:
         # Top info bar.
         self._render_info_bar()
 
-        # Opponent cards (face-down).
+        # Opponent cards (face-down) with labels.
         cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
-        self._render_opponent(0, cx, 80, horizontal=True)   # Top
-        self._render_opponent(3, 50, cy, horizontal=False)   # Left
-        self._render_opponent(1, SCREEN_WIDTH - 50 - CARD_MINI_W, cy, horizontal=False)  # Right
+        self._render_opponent(0, cx - 80, 75, horizontal=True)   # Top
+        self._render_opponent(3, 45, cy - 60, horizontal=False)  # Left
+        self._render_opponent(1, SCREEN_WIDTH - 45 - CARD_MINI_W, cy - 60, horizontal=False)  # Right
+
+        # Player labels with roles.
+        self._render_player_labels(cx, cy)
+
+        # Won tricks piles.
+        self._render_tricks_won(cx, cy)
+
+        # Trump display (top-right).
+        self._render_trump_display()
 
         # Centre trick.
         self._render_centre_trick(cx, cy)
@@ -322,10 +343,181 @@ class GameScreen:
         # Human hand.
         self._render_human_hand()
 
+        # "Your turn" indicator.
+        if self.phase == "playing" and self._play_idx < len(self._play_order):
+            if self._play_order[self._play_idx] == HUMAN_ID:
+                turn_surf = self.fonts["large"].render("▶ Your Turn — Click a card!", True, TEXT_GREEN)
+                self.screen.blit(turn_surf, turn_surf.get_rect(centerx=cx, y=SCREEN_HEIGHT - 175))
+
         # Message.
         if self._message_timer > 0 and self._message:
             msg_surf = self.fonts["large"].render(self._message, True, TEXT_GOLD)
-            self.screen.blit(msg_surf, msg_surf.get_rect(centerx=cx, y=SCREEN_HEIGHT - 180))
+            self.screen.blit(msg_surf, msg_surf.get_rect(centerx=cx, y=SCREEN_HEIGHT - 195))
+
+    def _render_game_over(self):
+        """Render game over screen."""
+        cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+
+        # Dark overlay.
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        # Winner text.
+        if self.game_scores[0] > self.game_scores[1]:
+            winner_text = "YOUR TEAM WINS!"
+            color = HIGHLIGHT_GREEN
+        elif self.game_scores[1] > self.game_scores[0]:
+            winner_text = "TEAM 2 WINS!"
+            color = TEAM2_ORANGE
+        else:
+            winner_text = "IT'S A DRAW!"
+            color = TEXT_WHITE
+
+        # Trophy.
+        trophy_font = pygame.font.SysFont("Segoe UI", 60)
+        trophy = trophy_font.render("🏆", True, TEXT_GOLD)
+        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 120))
+
+        # Game Over.
+        go_font = pygame.font.SysFont("Segoe UI", 36, bold=True)
+        go = go_font.render("GAME OVER", True, TEXT_WHITE)
+        self.screen.blit(go, go.get_rect(centerx=cx, y=cy - 50))
+
+        # Winner.
+        win_font = pygame.font.SysFont("Segoe UI", 28, bold=True)
+        win = win_font.render(winner_text, True, color)
+        self.screen.blit(win, win.get_rect(centerx=cx, y=cy + 10))
+
+        # Scores.
+        score_font = pygame.font.SysFont("Segoe UI", 20)
+        score = score_font.render(
+            f"Team 1 (You): {self.game_scores[0]}  │  Team 2: {self.game_scores[1]}",
+            True, TEXT_LIGHT)
+        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 60))
+
+        # Restart hint.
+        hint = self.fonts["medium"].render("Press SPACE for new game  |  ESC for menu", True, TEXT_DIM)
+        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 120))
+
+    def _render_shota_end(self):
+        """Render Shota end summary (brief pause between Shotas)."""
+        cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+
+        # Semi-transparent overlay.
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        self.screen.blit(overlay, (0, 0))
+
+        # Shota result.
+        playing_team = self.players[self.shooter_id].team_id
+        bid_met = self.team_tricks[playing_team] >= self.bid_value
+
+        title_font = pygame.font.SysFont("Segoe UI", 24, bold=True)
+        title = title_font.render(f"Shota {self.shota_number} Complete", True, TEXT_WHITE)
+        self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 60))
+
+        result_color = HIGHLIGHT_GREEN if bid_met else (229, 57, 53)
+        result_text = "Bid SUCCESS ✓" if bid_met else "Bid FAILED ✗"
+        result = self.fonts["large"].render(result_text, True, result_color)
+        self.screen.blit(result, result.get_rect(centerx=cx, y=cy - 20))
+
+        tricks = self.fonts["medium"].render(
+            f"Tricks — Team 1: {self.team_tricks[0]}  |  Team 2: {self.team_tricks[1]}",
+            True, TEXT_LIGHT)
+        self.screen.blit(tricks, tricks.get_rect(centerx=cx, y=cy + 15))
+
+        score = self.fonts["large"].render(
+            f"Score — Team 1: {self.game_scores[0]}  |  Team 2: {self.game_scores[1]}",
+            True, TEXT_GOLD)
+        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 50))
+
+        next_txt = self.fonts["small"].render("Next Shota starting...", True, TEXT_DIM)
+        self.screen.blit(next_txt, next_txt.get_rect(centerx=cx, y=cy + 90))
+
+    def _render_player_labels(self, cx, cy):
+        """Render player names, teams, and role indicators."""
+        # Player positions and info.
+        players_info = [
+            (0, cx, 65, "P3 (Partner)", "Team 1", True),    # Top
+            (3, 40, cy + 55, "P4", "Team 2", False),        # Left
+            (1, SCREEN_WIDTH - 90, cy + 55, "P2", "Team 2", False),  # Right
+        ]
+
+        for pid, x, y, name, team, is_top in players_info:
+            # Role indicator.
+            role = ""
+            role_color = TEXT_DIM
+            if pid == self.qabool_id:
+                role = "👑 Qabool"
+                role_color = TEXT_GOLD
+            if pid == self.shooter_id:
+                role = "🎯 Shooter" if not role else role + " | 🎯"
+                role_color = TEXT_GREEN if pid != self.qabool_id else TEXT_GOLD
+
+            # Team color.
+            team_color = TEAM1_BLUE if "1" in team else TEAM2_ORANGE
+
+            # Name.
+            name_surf = self.fonts["small"].render(name, True, TEXT_WHITE)
+            team_surf = self.fonts["small"].render(f"({team})", True, team_color)
+
+            if is_top:
+                self.screen.blit(name_surf, (x, y))
+                self.screen.blit(team_surf, (x + name_surf.get_width() + 4, y))
+            else:
+                self.screen.blit(name_surf, (x, y))
+                self.screen.blit(team_surf, (x, y + 14))
+
+            # Role below.
+            if role:
+                role_surf = self.fonts["small"].render(role, True, role_color)
+                self.screen.blit(role_surf, (x, y + (14 if is_top else 28)))
+
+    def _render_tricks_won(self, cx, cy):
+        """Render won tricks as small face-down piles near each team."""
+        # Team 1 (left side of centre).
+        t1_count = self.team_tricks[0]
+        if t1_count > 0:
+            x, y = cx - 180, cy - 20
+            for i in range(t1_count):
+                self.screen.blit(self._card_back_mini, (x + i * 4, y + i * 2))
+            count_surf = self.fonts["small"].render(str(t1_count), True, TEAM1_BLUE)
+            self.screen.blit(count_surf, (x + t1_count * 4 + CARD_MINI_W + 4, y + 20))
+
+        # Team 2 (right side of centre).
+        t2_count = self.team_tricks[1]
+        if t2_count > 0:
+            x, y = cx + 130, cy - 20
+            for i in range(t2_count):
+                self.screen.blit(self._card_back_mini, (x + i * 4, y + i * 2))
+            count_surf = self.fonts["small"].render(str(t2_count), True, TEAM2_ORANGE)
+            self.screen.blit(count_surf, (x + t2_count * 4 + CARD_MINI_W + 4, y + 20))
+
+    def _render_trump_display(self):
+        """Render trump suit card in top-right corner."""
+        if self.trump_suit is None:
+            return
+
+        sym = SUIT_SYMBOLS.get(self.trump_suit, "?")
+        color = RED_SUIT if self.trump_suit in (Suit.HEARTS, Suit.DIAMONDS) else BLACK_SUIT
+
+        # Draw a card with the trump symbol.
+        x, y = SCREEN_WIDTH - 100, 60
+        card_surf = pygame.Surface((60, 85), pygame.SRCALPHA)
+        pygame.draw.rect(card_surf, CARD_WHITE, card_surf.get_rect(), border_radius=6)
+        pygame.draw.rect(card_surf, (180, 180, 180), card_surf.get_rect(), width=1, border_radius=6)
+
+        # Big suit symbol.
+        big_font = pygame.font.SysFont("Segoe UI", 36)
+        suit_surf = big_font.render(sym, True, color)
+        card_surf.blit(suit_surf, suit_surf.get_rect(center=(30, 42)))
+
+        self.screen.blit(card_surf, (x, y))
+
+        # "TRUMP" label below.
+        label = self.fonts["small"].render("TRUMP", True, TEXT_GOLD)
+        self.screen.blit(label, label.get_rect(centerx=x + 30, y=y + 88))
 
     def _render_info_bar(self):
         """Render the top information bar."""
