@@ -58,8 +58,6 @@ class WistApp:
                 if event.key == pygame.K_ESCAPE:
                     if self.state == "menu":
                         self.running = False
-                    elif self.state == "rules":
-                        self.state = "menu"
                     # When playing, ESC is handled by game_screen (quit overlay).
                     # Don't go back to menu directly.
                 elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
@@ -68,16 +66,12 @@ class WistApp:
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.state == "menu":
+                    # Check Start Game button click.
                     cx = SCREEN_WIDTH // 2
                     cy = SCREEN_HEIGHT // 2
                     btn_rect = pygame.Rect(cx - 120, cy + 130, 240, 55)
                     if btn_rect.collidepoint(event.pos):
                         self._start_playing()
-                    help_rect = pygame.Rect(cx - 120, cy + 200, 240, 40)
-                    if help_rect.collidepoint(event.pos):
-                        self.state = "rules"
-                elif self.state == "rules":
-                    self.state = "menu"
 
             if self.state == "playing":
                 self.game_screen.handle_event(event)
@@ -99,56 +93,10 @@ class WistApp:
 
         if self.state == "menu":
             self._render_menu()
-        elif self.state == "rules":
-            self._render_rules()
         elif self.state == "playing":
             self.game_screen.render()
 
         pygame.display.flip()
-
-    def _render_rules(self):
-        """Render How to Play screen."""
-        cx = SCREEN_WIDTH // 2
-        self.screen.fill(BG_DARK)
-
-        title_font = pygame.font.SysFont("Segoe UI", 24, bold=True)
-        title = title_font.render("How to Play — Sudanese Wist", True, TEXT_GOLD)
-        self.screen.blit(title, title.get_rect(centerx=cx, y=40))
-
-        rules = [
-            "",
-            "TEAMS: You + Hima (Team 1) vs Gaafar + Musaab (Team 2)",
-            "GAME: 5 Shotas (rounds). Each Shota = bidding + 13 tricks.",
-            "",
-            "BIDDING (Al-Tasmiya):",
-            "  • Players bid 7–13 or pass. Bid = how many tricks your team will win.",
-            "  • Sahib Al-Qabool (rotates each Shota) decides last — can match or accept.",
-            "  • Pick a bid number, then choose your trump suit, then confirm.",
-            "  • If all pass: Dak (re-deal). Max 2 Daks per game.",
-            "",
-            "PLAYING:",
-            "  • Highest bidder (Shooter) leads first. Must play trump on first card.",
-            "  • Follow suit if you can. If void, play anything (including trump).",
-            "  • Highest trump wins. If no trump, highest of led suit wins.",
-            "  • Trump is hidden until the first card is played.",
-            "",
-            "SCORING:",
-            "  • If Shooter's team makes their bid: they score tricks won.",
-            "  • If they fail: they LOSE the bid amount. Opponents score their tricks.",
-            "  • Seek (all 13 tricks): special bonus!",
-            "",
-            "Click anywhere or press ESC to return to menu.",
-        ]
-
-        font = pygame.font.SysFont("Segoe UI", 14)
-        y = 90
-        for line in rules:
-            color = TEXT_WHITE if line and not line.startswith(" ") else TEXT_LIGHT
-            if line.endswith(":"):
-                color = TEXT_GOLD
-            surf = font.render(line, True, color)
-            self.screen.blit(surf, (120, y))
-            y += 24
 
     def _render_menu(self):
         cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
@@ -183,16 +131,6 @@ class WistApp:
             pygame.draw.rect(self.screen, (100, 200, 100), btn_rect, width=2, border_radius=10)
         btn_text = self.fonts["large"].render("▶  Start Game", True, TEXT_WHITE)
         self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
-
-        # How to Play button.
-        help_rect = pygame.Rect(cx - 120, cy + 200, 240, 40)
-        hover_help = help_rect.collidepoint(mx, my)
-        bg_help = (50, 50, 80) if hover_help else (40, 40, 60)
-        pygame.draw.rect(self.screen, bg_help, help_rect, border_radius=8)
-        if hover_help:
-            pygame.draw.rect(self.screen, (100, 100, 180), help_rect, width=1, border_radius=8)
-        help_text = self.fonts["medium"].render("📖  How to Play", True, TEXT_LIGHT)
-        self.screen.blit(help_text, help_text.get_rect(center=help_rect.center))
 
         # Instructions.
         inst = self.fonts["medium"].render("Click button or press ENTER  |  ESC to quit", True, TEXT_DIM)

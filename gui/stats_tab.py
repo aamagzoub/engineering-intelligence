@@ -20,7 +20,10 @@ class StatsTab:
         self.stats = stats
 
         self._learning_win_history: list[float] = []
-        self._learning_agent_instance = None
+
+        # Auto-create a learning agent so it's ready immediately.
+        from agents.learning.learning_agent import LearningAgent
+        self._learning_agent_instance = LearningAgent(training=True)
 
         self._build()
 
@@ -119,8 +122,8 @@ class StatsTab:
         self._chart_canvas.pack(fill="both", expand=True, pady=4)
 
         self._learning_info_label = tk.Label(
-            chart_box, text="No learning agent active",
-            font=("Segoe UI", 9), fg="#888888", bg="#252525")
+            chart_box, text=f"Learning agent ready (Q-table: {self._learning_agent_instance.q_table_size} entries)",
+            font=("Segoe UI", 9), fg="#66bb6a", bg="#252525")
         self._learning_info_label.pack(anchor="w", pady=(4, 6))
 
         model_row = tk.Frame(chart_box, bg="#252525")
@@ -281,32 +284,35 @@ class StatsTab:
         t1_name = self._agent_t1_var.get()
         t2_name = self._agent_t2_var.get()
 
-        if self._learning_agent_instance is None:
-            self._learning_agent_instance = LearningAgent(training=True)
-
         self.root.after(0, lambda: self._learning_info_label.config(
             text=f"Training... Q-table: {self._learning_agent_instance.q_table_size} entries"))
 
-        def make_agent(name):
+        def make_agent(name, is_learning_team=False):
             if name == "Rule-Based": return RuleBasedAgent()
             elif name == "Learning": return self._learning_agent_instance
             return RandomAgent()
+
+        # Only Team 1 uses the learning agent (single learner).
+        t1_agent = make_agent(t1_name, is_learning_team=True)
+        t2_agent = make_agent(t2_name)
+
+        # Track which team has the learner for win rate.
+        learning_team = 0 if t1_name == "Learning" else (1 if t2_name == "Learning" else None)
 
         tasmiya = TasmiyaEngine()
         w_wins, w_total, done = 0, 0, 0
 
         while done < count:
             players = create_standard_players()
-            t1, t2 = make_agent(t1_name), make_agent(t2_name)
-            agents = [t1, t2, t1, t2]
+            # Team 1 = players 0, 2. Team 2 = players 1, 3.
+            agents = [t1_agent, t2_agent, t1_agent, t2_agent]
             r = Round(players); r.deal()
             if r.has_card_based_dak(): continue
 
             res = tasmiya.run(players=players, agents=agents, sahib_al_qabool_id=0)
             if res.is_dak:
                 self.stats.record_dak()
-                if isinstance(t1, LearningAgent): t1.reset_episode()
-                if isinstance(t2, LearningAgent) and t2 is not t1: t2.reset_episode()
+                if isinstance(t1_agent, LearningAgent): t1_agent.reset_episode()
                 continue
 
             r.state.trump_suit = res.trump_suit
@@ -328,22 +334,27 @@ class StatsTab:
                 r.state.current_trick = None
                 r.next_leading_player_id = winner
                 tt[players[winner].team_id] += 1
-                if isinstance(t1, LearningAgent): t1.reward_trick(won=(players[winner].team_id == 0))
-                if isinstance(t2, LearningAgent) and t2 is not t1: t2.reward_trick(won=(players[winner].team_id == 1))
+                if isinstance(t1_agent, LearningAgent):
+                    t1_agent.reward_trick(won=(players[winner].team_id == 0))
 
-            bid_met_t1 = (tt[0] >= res.winning_bid_value) if res.playing_team_id == 0 else False
-            bid_met_t2 = (tt[1] >= res.winning_bid_value) if res.playing_team_id == 1 else False
-            if isinstance(t1, LearningAgent): t1.reward_shota(team_won_shota=(tt[0] > tt[1]), bid_met=bid_met_t1); t1.decay_epsilon()
-            if isinstance(t2, LearningAgent) and t2 is not t1: t2.reward_shota(team_won_shota=(tt[1] > tt[0]), bid_met=bid_met_t2); t2.decay_epsilon()
+            bid_met = (tt.get(res.playing_team_id, 0) >= res.winning_bid_value)
+            if isinstance(t1_agent, LearningAgent):
+                t1_agent.reward_shota(team_won_shota=(tt[0] > tt[1]), bid_met=(bid_met and res.playing_team_id == 0))
+                t1_agent.decay_epsilon()
 
             wt = 0 if tt[0] > tt[1] else (1 if tt[1] > tt[0] else None)
             self.stats.record_game(winner_team=wt, score_1=tt[0], score_2=tt[1])
             self.stats.record_shota(team_1_tricks=tt[0], team_2_tricks=tt[1],
                                     bid=res.winning_bid_value, playing_team_id=res.playing_team_id,
-                                    bid_met=tt.get(res.playing_team_id, 0) >= res.winning_bid_value)
+                                    bid_met=bid_met)
 
+            # Track learning team wins for chart.
             w_total += 1
-            if wt == 0: w_wins += 1
+            if learning_team is not None and wt == learning_team:
+                w_wins += 1
+            elif learning_team is None and wt == 0:
+                w_wins += 1
+
             if w_total >= 10:
                 self._learning_win_history.append(w_wins / w_total * 100)
                 w_wins, w_total = 0, 0
@@ -352,8 +363,8 @@ class StatsTab:
             if done % 50 == 0 or done == count:
                 self.root.after(0, self._progress_update, done, count)
 
-        if isinstance(t1, LearningAgent):
-            size, eps = t1.q_table_size, t1.epsilon
+        if isinstance(t1_agent, LearningAgent):
+            size, eps = t1_agent.q_table_size, t1_agent.epsilon
             self.root.after(0, lambda: self._learning_info_label.config(
                 text=f"✓ Done | Q-table: {size} entries | ε: {eps:.3f}"))
         self.root.after(0, self._done, count)
@@ -397,5 +408,5 @@ class StatsTab:
         from agents.learning.learning_agent import LearningAgent
         self._learning_agent_instance = LearningAgent(training=True)
         self._learning_win_history.clear()
-        self._learning_info_label.config(text="Brain reset.")
+        self._learning_info_label.config(text="Brain reset — ready to learn.", fg="#66bb6a")
         self._draw_chart()

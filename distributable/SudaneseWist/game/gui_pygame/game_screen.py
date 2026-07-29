@@ -59,7 +59,7 @@ RANK_SYMBOLS = {r: s for r, s in zip(Rank, ["2","3","4","5","6","7","8","9","10"
 HUMAN_ID = 2  # Internal ID for human player.
 
 # Display names.
-DISPLAY_NAMES = {2: "Abubakr", 1: "Gaafar", 0: "Hima", 3: "Musaab"}
+DISPLAY_NAMES = {2: "Abubakr", 1: "Gaafar", 0: "Tarig", 3: "Musaab"}
 
 # Game log panel width.
 LOG_PANEL_WIDTH = 200
@@ -269,21 +269,8 @@ class GameScreen:
             self._game_log = self._game_log[-200:]
 
     def _start_new_shota(self):
-        """Deal and start bidding for a NEW shota (increments number + rotates Qabool)."""
+        """Deal and start bidding."""
         self.shota_number += 1
-        # Rotate Qabool for new shotas (not for Dak re-deals).
-        if self.shota_number == 1:
-            self.qabool_id = determine_first_shota_qabool()
-        else:
-            self.qabool_id = (self.qabool_id + 1) % 4
-        self._start_shota_common()
-
-    def _redeal_after_dak(self):
-        """Re-deal after Dak — same shota number, same Qabool."""
-        self._start_shota_common()
-
-    def _start_shota_common(self):
-        """Common shota setup (shared between new shota and re-deal)."""
         self.trick_number = 0
         self.team_tricks = [0, 0]
         self._trick_played = {}
@@ -309,6 +296,11 @@ class GameScreen:
             self._log_game_event("Card Dak detected — re-dealt")
 
         self.agents = [RuleBasedAgent(), RuleBasedAgent(), None, RuleBasedAgent()]
+
+        if self.shota_number == 1:
+            self.qabool_id = determine_first_shota_qabool()
+        else:
+            self.qabool_id = (self.qabool_id + 1) % 4
 
         self._log_game_event(f"--- Shota {self.shota_number} ---")
         self._log_game_event(f"Qabool: {DISPLAY_NAMES[self.qabool_id]}")
@@ -567,8 +559,8 @@ class GameScreen:
         """Bidding resolved — set up for play."""
         winning_bid = self._bidding_engine.highest_bid
         if winning_bid is None:
-            # Dak — re-deal same shota.
-            self._redeal_after_dak()
+            # Dak — re-deal.
+            self._start_new_shota()
             return
 
         self.shooter_id = winning_bid.player_id
@@ -594,9 +586,7 @@ class GameScreen:
         self._log_game_event(f"Shooter: {DISPLAY_NAMES[self.shooter_id]}, Bid: {self.bid_value}")
 
         self.phase = "playing"
-        # Use frame-based timer instead of OS timer.
-        self._play_idx = 99
-        self._ai_timer = 50  # ~0.8s at 60fps, then _start_next_trick fires.
+        pygame.time.set_timer(pygame.USEREVENT + 2, 800, loops=1)
 
     def _start_next_trick(self):
         """Start a new trick."""
@@ -614,26 +604,17 @@ class GameScreen:
         self._play_order = [(leader + i) % 4 for i in range(4)]
         self._play_idx = 0
         self._ai_timer = 30
-        print(f"[Trick {self.trick_number}] Leader: {DISPLAY_NAMES[leader]}, Order: {[DISPLAY_NAMES[p] for p in self._play_order]}")
 
         # Feature 18: Play "your_turn" sound if human leads.
         # (Sounds removed)
 
     def _end_shota(self):
         """Score the Shota and start next or end game."""
-        from environments.wist.scoring import score_shota, detect_seek
+        from environments.wist.scoring import score_shota
 
         playing_team = self.players[self.shooter_id].team_id
         defending = 1 if playing_team == 0 else 0
         total = self.team_tricks[0] + self.team_tricks[1]
-
-        # Seek detection.
-        self._seek_team = None
-        team_tricks_dict = {0: self.team_tricks[0], 1: self.team_tricks[1]}
-        seek_team = detect_seek(team_tricks_dict)
-        if seek_team is not None:
-            self._seek_team = seek_team
-            self._log_game_event(f"  ★★★ SEEK! Team {seek_team + 1} won all 13! ★★★")
 
         shota_score_t1 = 0
         shota_score_t2 = 0
@@ -656,17 +637,8 @@ class GameScreen:
         except Exception:
             pass
 
-        # Track stats.
-        if not hasattr(self, '_game_stats'):
-            self._game_stats = {"shotas_played": 0, "seeks": 0, "daks": 0, "bids_met": 0}
-        self._game_stats["shotas_played"] += 1
-        if seek_team is not None:
-            self._game_stats["seeks"] += 1
+        # Feature 12: Score breakdown in game log.
         bid_met = self.team_tricks[playing_team] >= self.bid_value
-        if bid_met:
-            self._game_stats["bids_met"] += 1
-
-        # Score breakdown in game log.
         result_str = "SUCCESS" if bid_met else "FAILED"
         self._log_game_event(f"Shota {self.shota_number}: Bid {self.bid_value} → {result_str}")
         self._log_game_event(f"  Tricks: T1={self.team_tricks[0]} T2={self.team_tricks[1]}")
@@ -678,7 +650,7 @@ class GameScreen:
             self._log_game_event("=== GAME OVER ===")
         else:
             self.phase = "shota_end"
-            self._ai_timer = 120  # Longer pause for shota transition animation.
+            self._ai_timer = 90
 
     # ----------------------------------------------------------
     # Update (called each frame)
@@ -713,11 +685,11 @@ class GameScreen:
                 self._run_bidding()
         elif self.phase == "bidding":
             self._update_bidding()
-            # After bidding done and Dak, re-deal same shota.
+            # After bidding done and Dak, re-deal.
             if self._bidding_done and self._bidding_engine.highest_bid is None:
                 self._ai_timer -= 1
                 if self._ai_timer <= 0:
-                    self._redeal_after_dak()
+                    self._start_new_shota()
         elif self.phase == "playing":
             self._update_playing()
         elif self.phase == "shota_end":
@@ -731,40 +703,16 @@ class GameScreen:
             self._ai_timer -= 1
             return
 
-        # State 99 = waiting to start next trick (not a real play index).
-        if self._play_idx == 99:
-            self._start_next_trick()
-            return
-
         if self._play_idx >= 4:
             # Trick complete — resolve.
             self._resolve_trick()
             return
 
-        # Safety: if no play order or index out of bounds, skip to resolve.
-        if not self._play_order or self._play_idx >= len(self._play_order):
-            self._play_idx = 4
-            return
-
         pid = self._play_order[self._play_idx]
 
         if pid == HUMAN_ID:
-            # Safety checks — if state is broken, skip human turn.
-            if self.round.state.current_trick is None:
-                print(f"[Trick {self.trick_number}] No current trick — skipping {DISPLAY_NAMES[pid]}")
-                self._play_idx += 1
-                self._ai_timer = 5
-                return
-            if not self.players[HUMAN_ID].hand:
-                print(f"[Trick {self.trick_number}] {DISPLAY_NAMES[pid]} has no cards — skipping")
-                self._play_idx += 1
-                self._ai_timer = 5
-                return
-            # Show "your turn" message so player knows game isn't frozen.
-            if self._message_timer <= 0:
-                self._message = "Your turn — click a card"
-                self._message_timer = 30
-            # Otherwise wait for click.
+            # Wait for human click. Feature 18: sound.
+            pass
         else:
             # AI plays.
             try:
@@ -782,24 +730,8 @@ class GameScreen:
                 self._start_play_animation(pid, r, s)
             except Exception as e:
                 print(f"[PyGame AI Error] {DISPLAY_NAMES.get(pid, pid)}: {e}")
-                # Fallback: try to play any legal card.
-                try:
-                    hand = self.players[pid].hand
-                    if hand and self.round.state.current_trick is not None:
-                        leading = self.round.state.current_trick.leading_suit
-                        playable = legal_cards(hand, leading, None)
-                        if playable:
-                            fallback_card = playable[0]
-                            fb_action = PlayCardAction(player_id=pid, card=fallback_card)
-                            self.environment.apply_action(fb_action)
-                            r, s = card_key(fallback_card)
-                            self._trick_played[pid] = (r, s)
-                            if not self._trump_revealed:
-                                self._trump_revealed = True
-                except Exception:
-                    pass
             self._play_idx += 1
-            self._ai_timer = 15
+            self._ai_timer = 20
 
     def _start_play_animation(self, pid: int, rank: str, suit: str):
         """Start a card play animation (Feature 17)."""
@@ -825,8 +757,9 @@ class GameScreen:
         trick = self.round.state.current_trick
         if trick is None or len(trick.played_cards) < 4:
             self.round.state.current_trick = None
-            self._ai_timer = 20
+            self._ai_timer = 30
             self._play_idx = 99
+            pygame.time.set_timer(pygame.USEREVENT + 1, 600, loops=1)
             return
 
         winner = trick_winner(trick, self.trump_suit)
@@ -839,18 +772,15 @@ class GameScreen:
 
         # Feature 9: Highlight winner.
         self._trick_winner_id = winner
-        self._trick_winner_timer = 50
+        self._trick_winner_timer = 60  # ~1 second at 60fps.
 
-        # Clear winner announcement.
-        winner_name = DISPLAY_NAMES[winner]
-        team_name = "Team 1" if team == 0 else "Team 2"
-        self._message = f"🏆 {winner_name} wins! ({team_name}: {self.team_tricks[team]})"
-        self._message_timer = 50
-        self._ai_timer = 50
+        self._message = f"{DISPLAY_NAMES[winner]} won trick {self.trick_number}!"
+        self._message_timer = 40
+        self._ai_timer = 60
         self._play_idx = 99
         self._log_game_event(f"Trick {self.trick_number}: {DISPLAY_NAMES[winner]} wins")
 
-        # Frame-based delay — _ai_timer counts down, then update loop calls _start_next_trick.
+        pygame.time.set_timer(pygame.USEREVENT + 1, 1000, loops=1)
 
     # ----------------------------------------------------------
     # Event handling
@@ -858,6 +788,14 @@ class GameScreen:
 
     def handle_event(self, event):
         """Handle PyGame events."""
+        if event.type == pygame.USEREVENT + 1:
+            if self.phase == "playing":
+                self._start_next_trick()
+
+        if event.type == pygame.USEREVENT + 2:
+            if self.phase == "playing":
+                self._start_next_trick()
+
         # Feature 21: ESC quit overlay.
         if event.type == pygame.KEYDOWN:
             if self._show_quit_overlay:
@@ -988,24 +926,18 @@ class GameScreen:
 
     def _human_play(self, card: Card):
         """Human plays a card."""
-        # Guard: must have an active trick.
-        if self.round.state.current_trick is None:
-            return
-        if card not in self.players[HUMAN_ID].hand:
-            return
-
         try:
             action = PlayCardAction(player_id=HUMAN_ID, card=card)
             self.environment.apply_action(action)
         except Exception as e:
-            self._message = f"Can't play that card"
+            self._message = f"Can't play: {e}"
             self._message_timer = 40
             return
 
         self._play_idx += 1
         r, s = card_key(card)
         self._trick_played[HUMAN_ID] = (r, s)
-        self._ai_timer = 15
+        self._ai_timer = 20
 
         # Feature 1: Reveal trump on first card.
         if not self._trump_revealed:
@@ -1101,9 +1033,6 @@ class GameScreen:
         # Player labels with roles.
         self._render_player_labels(cx, cy)
 
-        # Persistent "Sahib Al-Qabool" label — always visible during shota.
-        self._render_qabool_label(cx, cy)
-
         # Won tricks piles.
         self._render_tricks_won(cx, cy)
 
@@ -1123,82 +1052,45 @@ class GameScreen:
         if self.phase == "bidding":
             self._render_bidding_ui(cx, cy)
 
-        # Deal animation removed — was causing small boxes to linger.
-        # if self.phase == "dealing":
-        #     for anim in self._deal_animations:
-        #         anim.render(self.screen)
+        # Deal animation (Feature 16).
+        if self.phase == "dealing":
+            for anim in self._deal_animations:
+                anim.render(self.screen)
 
         # Play animations (Feature 17).
         for anim in self._play_animations:
             anim.render(self.screen)
 
-        # Message — removed entirely.
+        # Message.
+        if self._message_timer > 0 and self._message:
+            msg_surf = self.fonts["large"].render(self._message, True, TEXT_GOLD)
+            self.screen.blit(msg_surf, msg_surf.get_rect(centerx=cx, y=SCREEN_HEIGHT - 195))
 
         # Feature 8: Game log panel.
         self._render_game_log()
 
-        # Feature 7: Bid display persistence — show during bidding AND playing.
-        if self.phase in ("bidding", "playing"):
+        # Feature 7: Bid display persistence during play.
+        if self.phase == "playing":
             self._render_bid_labels(cx, cy)
 
     def _render_bid_labels(self, cx, cy):
-        """Render bid badges — uniform size, aligned horizontally for side players,
-        vertically for top/bottom players."""
+        """Show bid labels just below each player's name."""
+        font = pygame.font.SysFont("Segoe UI", 11)
         cx_table = TABLE_WIDTH // 2
         right_x = TABLE_WIDTH - 45 - CARD_MINI_W + CARD_MINI_W // 2
 
-        # Fixed chip size for all players.
-        CHIP_W = 110
-        CHIP_H = 26
-
-        # Positions — Musaab & Gaafar on SAME horizontal line (cy + 130).
-        # Push Musaab lower to avoid card overlap (his cards stack taller on left).
-        # Hima & You on SAME vertical centre line (cx_table).
         positions = {
-            0: (cx_table, 162),                        # Hima: centred below his cards
-            3: (45 + CARD_MINI_W // 2, cy + 130),     # Musaab: further below card stack
-            1: (right_x, cy + 130),                    # Gaafar: same Y as Musaab
-            2: (cx_table, SCREEN_HEIGHT - 210),        # You: above "your turn"
+            0: (cx_table, 73),                    # Below Tarig name (centred)
+            3: (45 + CARD_MINI_W // 2, cy - 64),  # Below Musaab name (centred)
+            1: (right_x, cy - 64),                 # Below Gaafar name (centred)
+            2: (cx_table, SCREEN_HEIGHT - CARD_HEIGHT - 55),  # Below Abubakr name (centred)
         }
-
-        bid_font = pygame.font.SysFont("Consolas", 12, bold=True)
-
         for pid, text in self._player_bids_display.items():
-            if not text or pid not in positions:
-                continue
-            px, py = positions[pid]
-
-            is_bid = "Bid" in text
-            is_shooter = (pid == self.shooter_id)
-
-            if is_shooter:
-                bg_color = (40, 80, 40)
-                border_color = HIGHLIGHT_GREEN
-                text_color = TEXT_GREEN
-                icon = "🎯 "
-            else:
-                bg_color = (50, 40, 10)
-                border_color = TEXT_GOLD
-                text_color = TEXT_GOLD
-                icon = "💬 " if is_bid else ""
-
-            display_text = f"{icon}{text}"
-            surf = bid_font.render(display_text, True, text_color)
-
-            # Fixed-size chip centred at position.
-            chip_rect = pygame.Rect(0, 0, CHIP_W, CHIP_H)
-            chip_rect.center = (px, py)
-
-            chip_surf = pygame.Surface((CHIP_W, CHIP_H), pygame.SRCALPHA)
-            pygame.draw.rect(chip_surf, (*bg_color, 220), chip_surf.get_rect(),
-                             border_radius=10)
-            pygame.draw.rect(chip_surf, border_color, chip_surf.get_rect(),
-                             width=2, border_radius=10)
-            self.screen.blit(chip_surf, chip_rect.topleft)
-
-            # Text centred inside chip.
-            text_rect = surf.get_rect(center=chip_rect.center)
-            self.screen.blit(surf, text_rect)
+            if text and pid in positions:
+                color = TEXT_GOLD if "Bid" in text else TEXT_DIM
+                surf = font.render(text, True, color)
+                px, py = positions[pid]
+                self.screen.blit(surf, surf.get_rect(centerx=px, y=py))
 
     def _render_game_log(self):
         """Feature 8: Right-side game log panel (200px wide, dark bg)."""
@@ -1253,7 +1145,7 @@ class GameScreen:
         self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 10))
 
     def _render_game_over(self):
-        """Render game over screen with stats."""
+        """Render game over screen."""
         cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
 
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -1270,42 +1162,28 @@ class GameScreen:
             winner_text = "IT'S A DRAW!"
             color = TEXT_WHITE
 
-        trophy_font = pygame.font.SysFont("Segoe UI", 48)
+        trophy_font = pygame.font.SysFont("Segoe UI", 60)
         trophy = trophy_font.render("🏆", True, TEXT_GOLD)
-        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 140))
+        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 120))
 
-        go_font = pygame.font.SysFont("Segoe UI", 32, bold=True)
+        go_font = pygame.font.SysFont("Segoe UI", 36, bold=True)
         go = go_font.render("GAME OVER", True, TEXT_WHITE)
-        self.screen.blit(go, go.get_rect(centerx=cx, y=cy - 80))
+        self.screen.blit(go, go.get_rect(centerx=cx, y=cy - 50))
 
-        win_font = pygame.font.SysFont("Segoe UI", 24, bold=True)
+        win_font = pygame.font.SysFont("Segoe UI", 28, bold=True)
         win = win_font.render(winner_text, True, color)
-        self.screen.blit(win, win.get_rect(centerx=cx, y=cy - 40))
+        self.screen.blit(win, win.get_rect(centerx=cx, y=cy + 10))
 
-        score_font = pygame.font.SysFont("Segoe UI", 18)
+        score_font = pygame.font.SysFont("Segoe UI", 20)
         score = score_font.render(
-            f"Team 1 (You + Hima): {self.game_scores[0]}  │  Team 2 (Gaafar + Musaab): {self.game_scores[1]}",
+            f"Team 1 (You): {self.game_scores[0]}  │  Team 2: {self.game_scores[1]}",
             True, TEXT_LIGHT)
-        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 5))
-
-        # End-of-game stats.
-        stats = getattr(self, '_game_stats', {})
-        stat_font = pygame.font.SysFont("Segoe UI", 14)
-        stats_lines = [
-            f"Shotas: {stats.get('shotas_played', self.shota_number)}  │  "
-            f"Daks: {self._dak_count}  │  "
-            f"Seeks: {stats.get('seeks', 0)}  │  "
-            f"Bids Met: {stats.get('bids_met', 0)}",
-        ]
-        y_stat = cy + 40
-        for line in stats_lines:
-            surf = stat_font.render(line, True, TEXT_DIM)
-            self.screen.blit(surf, surf.get_rect(centerx=cx, y=y_stat))
-            y_stat += 22
+        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 60))
 
         hint = self.fonts["medium"].render("Press SPACE for new game  |  ESC for menu", True, TEXT_DIM)
-        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 90))
+        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 120))
 
+        # Still show game log.
         self._render_game_log()
 
     def _render_shota_end(self):
@@ -1328,107 +1206,74 @@ class GameScreen:
         result = self.fonts["large"].render(result_text, True, result_color)
         self.screen.blit(result, result.get_rect(centerx=cx, y=cy - 20))
 
-        # Seek announcement.
-        if hasattr(self, '_seek_team') and self._seek_team is not None:
-            seek_font = pygame.font.SysFont("Segoe UI", 20, bold=True)
-            seek_text = f"★ SEEK! Team {self._seek_team + 1} won all 13 tricks! ★"
-            seek_surf = seek_font.render(seek_text, True, TEXT_GOLD)
-            self.screen.blit(seek_surf, seek_surf.get_rect(centerx=cx, y=cy + 5))
-            y_offset = 35
-        else:
-            y_offset = 5
-
         tricks = self.fonts["medium"].render(
             f"Tricks — Team 1: {self.team_tricks[0]}  |  Team 2: {self.team_tricks[1]}",
             True, TEXT_LIGHT)
-        self.screen.blit(tricks, tricks.get_rect(centerx=cx, y=cy + y_offset + 10))
+        self.screen.blit(tricks, tricks.get_rect(centerx=cx, y=cy + 15))
 
         score = self.fonts["large"].render(
             f"Score — Team 1: {self.game_scores[0]}  |  Team 2: {self.game_scores[1]}",
             True, TEXT_GOLD)
-        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + y_offset + 40))
-
-        # Fade-in animation (based on _ai_timer countdown).
-        progress = max(0, min(1.0, 1 - self._ai_timer / 120))
-        bar_w = int(400 * progress)
-        bar_rect = pygame.Rect(cx - 200, cy + y_offset + 75, bar_w, 4)
-        pygame.draw.rect(self.screen, HIGHLIGHT_GREEN, bar_rect, border_radius=2)
+        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 50))
 
         next_txt = self.fonts["small"].render("Next Shota starting...", True, TEXT_DIM)
-        self.screen.blit(next_txt, next_txt.get_rect(centerx=cx, y=cy + y_offset + 85))
+        self.screen.blit(next_txt, next_txt.get_rect(centerx=cx, y=cy + 90))
 
         self._render_game_log()
 
     def _render_player_labels(self, cx, cy):
-        """Render player names, roles, and partnership indicators."""
+        """Render player names and roles — consistently above each player's area."""
         font = pygame.font.SysFont("Segoe UI", 13, bold=True)
-        team_font = pygame.font.SysFont("Segoe UI", 9)
 
         cx_table = TABLE_WIDTH // 2
 
-        # Top player (pid 0 = Hima) — YOUR PARTNER.
+        # Top player (pid 0 = Tarig) — cards start at (cx-80, 75).
         role_0 = " 👑" if 0 == self.qabool_id else ""
         role_0 += " 🎯" if 0 == self.shooter_id else ""
         surf = font.render(f"{DISPLAY_NAMES[0]}{role_0}", True, TEAM1_BLUE)
         self.screen.blit(surf, surf.get_rect(centerx=cx_table, y=57))
-        partner_lbl = team_font.render("(Your Partner · Team 1)", True, (80, 140, 200))
-        self.screen.blit(partner_lbl, partner_lbl.get_rect(centerx=cx_table, y=73))
 
-        # Left player (pid 3 = Musaab) — OPPONENT.
+        # Left player (pid 3 = Musaab) — cards at (45, cy-60) vertical.
         role_3 = " 👑" if 3 == self.qabool_id else ""
         role_3 += " 🎯" if 3 == self.shooter_id else ""
         surf = font.render(f"{DISPLAY_NAMES[3]}{role_3}", True, TEAM2_ORANGE)
         self.screen.blit(surf, surf.get_rect(centerx=45 + CARD_MINI_W // 2, y=cy - 80))
-        opp_lbl = team_font.render("Team 2", True, (180, 100, 60))
-        self.screen.blit(opp_lbl, opp_lbl.get_rect(centerx=45 + CARD_MINI_W // 2, y=cy - 66))
 
-        # Right player (pid 1 = Gaafar) — OPPONENT.
+        # Right player (pid 1 = Gaafar) — cards at (TABLE_WIDTH-45-CARD_MINI_W, cy-60) vertical.
         role_1 = " 👑" if 1 == self.qabool_id else ""
         role_1 += " 🎯" if 1 == self.shooter_id else ""
         surf = font.render(f"{DISPLAY_NAMES[1]}{role_1}", True, TEAM2_ORANGE)
         right_x = TABLE_WIDTH - 45 - CARD_MINI_W + CARD_MINI_W // 2
         self.screen.blit(surf, surf.get_rect(centerx=right_x, y=cy - 80))
-        opp_lbl2 = team_font.render("Team 2", True, (180, 100, 60))
-        self.screen.blit(opp_lbl2, opp_lbl2.get_rect(centerx=right_x, y=cy - 66))
 
-        # Human (pid 2 = Abubakr) — YOUR area.
+        # Human (pid 2 = Abubakr) — centred above hand.
         role_2 = ""
         if HUMAN_ID == self.qabool_id:
             role_2 += "  👑 Qabool"
         if HUMAN_ID == self.shooter_id:
             role_2 += "  🎯 Shooter"
-        surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) · Team 1{role_2}", True, TEXT_GOLD)
+        surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) — Team 1{role_2}", True, TEXT_GOLD)
         self.screen.blit(surf, surf.get_rect(centerx=cx_table, y=SCREEN_HEIGHT - CARD_HEIGHT - 70))
 
-    def _render_qabool_label(self, cx, cy):
-        """Render 'Qabool: Name' directly beneath the trump card."""
-        qabool_font = pygame.font.SysFont("Segoe UI", 11, bold=True)
-        qabool_name = DISPLAY_NAMES.get(self.qabool_id, "?")
-        text = f"Qabool: {qabool_name}"
-        surf = qabool_font.render(text, True, TEXT_GOLD)
-        # Position: beneath trump display (trump is at TABLE_WIDTH-100, y=60, height ~85+label).
-        x = TABLE_WIDTH - 100 + 30  # centred with trump card (trump card is 60px wide)
-        y = 160
-        self.screen.blit(surf, surf.get_rect(centerx=x, y=y))
-
     def _render_tricks_won(self, cx, cy):
-        """Render won tricks count — on the table, top-left corner, big font."""
+        """Render won tricks count top-left corner, well away from player areas."""
+        x, y = 30, 155
+
+        # Team 1 count.
         count_font = pygame.font.SysFont("Segoe UI", 20, bold=True)
-        label_font = pygame.font.SysFont("Segoe UI", 10)
+        label_font = self.fonts["small"]
 
-        # Top-left of table area.
-        x = 35
-        y = 55
+        t1_text = count_font.render(str(self.team_tricks[0]), True, TEAM1_BLUE)
+        t1_label = label_font.render("Team 1", True, TEAM1_BLUE)
+        self.screen.blit(t1_label, (x, y))
+        self.screen.blit(t1_text, (x + 5, y + 14))
 
-        l1 = label_font.render("Team 1", True, TEAM1_BLUE)
-        t1 = count_font.render(str(self.team_tricks[0]), True, TEAM1_BLUE)
-        self.screen.blit(l1, (x, y))
-        self.screen.blit(t1, (x + 2, y + 14))
-
-        l2 = label_font.render("Team 2", True, TEAM2_ORANGE)
-        t2 = count_font.render(str(self.team_tricks[1]), True, TEAM2_ORANGE)
-        self.screen.blit(l2, (x + 70, y))
-        self.screen.blit(t2, (x + 72, y + 14))
+        # Team 2 count.
+        x2 = x + 65
+        t2_text = count_font.render(str(self.team_tricks[1]), True, TEAM2_ORANGE)
+        t2_label = label_font.render("Team 2", True, TEAM2_ORANGE)
+        self.screen.blit(t2_label, (x2, y))
+        self.screen.blit(t2_text, (x2 + 5, y + 14))
 
     def _render_trump_display(self):
         """Feature 1: Trump hidden until first card played in trick 1."""
@@ -1598,7 +1443,22 @@ class GameScreen:
         if self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order):
             is_human_turn = True
 
-        # Bids are shown by _render_bid_labels (called after this).
+        # Show previous bids near each player (same positions as during play).
+        bid_font = pygame.font.SysFont("Segoe UI", 11)
+        cx_table = TABLE_WIDTH // 2
+        right_x = TABLE_WIDTH - 45 - CARD_MINI_W + CARD_MINI_W // 2
+        bid_positions = {
+            0: (cx_table, 73),
+            3: (45 + CARD_MINI_W // 2, cy - 64),
+            1: (right_x, cy - 64),
+            2: (cx_table, SCREEN_HEIGHT - CARD_HEIGHT - 55),
+        }
+        for pid, text in self._player_bids_display.items():
+            if text and pid in bid_positions:
+                color = TEXT_GOLD if "Bid" in text else TEXT_DIM
+                surf = bid_font.render(text, True, color)
+                px, py = bid_positions[pid]
+                self.screen.blit(surf, surf.get_rect(centerx=px, y=py))
 
         if not is_human_turn:
             wait = self.fonts["large"].render("Bidding...", True, TEXT_DIM)
@@ -1652,21 +1512,12 @@ class GameScreen:
                 num_surf = btn_font.render(str(val), True, TEXT_WHITE if is_valid else TEXT_DIM)
                 self.screen.blit(num_surf, num_surf.get_rect(center=rect.center))
 
-            # Pass / Dak button — labelled "Dak" when you're Qabool and no one bid.
-            is_qabool_turn = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
-            no_bids = (self._bidding_engine.highest_bid is None)
-            if is_qabool_turn and no_bids:
-                pass_label = "Dak!"
-                pass_bg = BUTTON_RED
-            else:
-                pass_label = "Pass"
-                pass_bg = BUTTON_GREY
-
+            # Pass button.
             pass_rect = pygame.Rect(cx - 50, cy + 70, 100, 38)
             hover = pass_rect.collidepoint(mx, my)
-            bg = (100, 50, 50) if (hover and pass_label == "Dak!") else ((80, 80, 80) if hover else pass_bg)
+            bg = (80, 80, 80) if hover else BUTTON_GREY
             pygame.draw.rect(self.screen, bg, pass_rect, border_radius=6)
-            pass_surf = btn_font.render(pass_label, True, TEXT_WHITE)
+            pass_surf = btn_font.render("Pass", True, TEXT_WHITE)
             self.screen.blit(pass_surf, pass_surf.get_rect(center=pass_rect.center))
 
         elif self._bid_step == "trump":
