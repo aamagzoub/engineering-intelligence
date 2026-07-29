@@ -162,6 +162,12 @@ class GameScreen:
         self._sounds: dict[str, pygame.mixer.Sound] = {}
         self._init_sounds()
 
+        # Player rating/points (persistent JSON).
+        self._player_points = 0
+        self._player_stats_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "player_stats.json")
+        self._load_player_stats()
+
         # Game state.
         self.phase = "idle"  # idle, dealing, bidding, playing, shota_end, game_over
         self.players = None
@@ -248,6 +254,98 @@ class GameScreen:
                 pass
 
     # ----------------------------------------------------------
+    # Player Points (persistent)
+    # ----------------------------------------------------------
+
+    def _load_player_stats(self):
+        """Load player stats from JSON file."""
+        import json
+        try:
+            if os.path.exists(self._player_stats_file):
+                with open(self._player_stats_file, 'r') as f:
+                    data = json.load(f)
+                self._player_points = data.get("points", 0)
+                self._player_games_played = data.get("games_played", 0)
+                self._player_games_won = data.get("games_won", 0)
+            else:
+                self._player_points = 0
+                self._player_games_played = 0
+                self._player_games_won = 0
+        except Exception:
+            self._player_points = 0
+            self._player_games_played = 0
+            self._player_games_won = 0
+
+    def _save_player_stats(self):
+        """Save player stats to JSON file."""
+        import json
+        data = {
+            "name": DISPLAY_NAMES.get(HUMAN_ID, "Player"),
+            "points": self._player_points,
+            "games_played": self._player_games_played,
+            "games_won": self._player_games_won,
+        }
+        try:
+            with open(self._player_stats_file, 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _award_points(self, event: str, value: int = 0):
+        """Award points based on game events."""
+        pts = 0
+        if event == "game_won":
+            pts = 10
+        elif event == "game_lost":
+            pts = 2  # Participation.
+        elif event == "bid_met":
+            pts = 3
+        elif event == "shooter_bid_met":
+            pts = 5
+        elif event == "seek":
+            pts = 15
+        elif event == "seek_against":
+            pts = -5
+        self._player_points += pts
+        self._save_player_stats()
+
+    def _get_rank_name(self) -> str:
+        """Get military rank based on points."""
+        ranks = [
+            (8000, "Field Marshal"),
+            (6000, "General"),
+            (4500, "Lt. General"),
+            (3500, "Major General"),
+            (2700, "Brigadier"),
+            (2100, "Colonel"),
+            (1600, "Lt. Colonel"),
+            (1200, "Major"),
+            (900, "Captain"),
+            (650, "1st Lieutenant"),
+            (450, "2nd Lieutenant"),
+            (300, "Warrant Officer"),
+            (200, "Staff Sergeant"),
+            (120, "Sergeant"),
+            (60, "Corporal"),
+            (25, "Private 1st Class"),
+            (0, "Private"),
+        ]
+        for threshold, name in ranks:
+            if self._player_points >= threshold:
+                return name
+        return "Private"
+
+    def _shape_arabic(self, text: str) -> str:
+        """Reshape Arabic text for proper RTL connected rendering."""
+        try:
+            import arabic_reshaper
+            from bidi.algorithm import get_display
+            reshaped = arabic_reshaper.reshape(text)
+            return get_display(reshaped)
+        except ImportError:
+            return text
+
+    # ----------------------------------------------------------
     # Game lifecycle
     # ----------------------------------------------------------
 
@@ -279,7 +377,13 @@ class GameScreen:
         self._start_shota_common()
 
     def _redeal_after_dak(self):
-        """Re-deal after Dak — same shota number, same Qabool."""
+        """Re-deal after pass-based Dak — Qabool moves to next player.
+        From 2nd shota onward, Dak counts as a shota."""
+        # Pass-based Dak: Qabool rotates.
+        self.qabool_id = (self.qabool_id + 1) % 4
+        # From 2nd shota onward, Dak counts as one of the 5.
+        if self.shota_number >= 2:
+            self.shota_number += 1
         self._start_shota_common()
 
     def _start_shota_common(self):
@@ -633,7 +737,7 @@ class GameScreen:
         seek_team = detect_seek(team_tricks_dict)
         if seek_team is not None:
             self._seek_team = seek_team
-            self._log_game_event(f"  ★★★ SEEK! Team {seek_team + 1} won all 13! ★★★")
+            self._log_game_event(f"  *** SEEK! Team {seek_team + 1} won all 13! ***")
 
         shota_score_t1 = 0
         shota_score_t2 = 0
@@ -666,6 +770,17 @@ class GameScreen:
         if bid_met:
             self._game_stats["bids_met"] += 1
 
+        # Award player points.
+        human_team = 0  # Human is on team 0 (players 0, 2).
+        if bid_met and playing_team == human_team:
+            self._award_points("bid_met")
+            if self.shooter_id == HUMAN_ID:
+                self._award_points("shooter_bid_met")
+        if seek_team == human_team:
+            self._award_points("seek")
+        elif seek_team is not None:
+            self._award_points("seek_against")
+
         # Score breakdown in game log.
         result_str = "SUCCESS" if bid_met else "FAILED"
         self._log_game_event(f"Shota {self.shota_number}: Bid {self.bid_value} → {result_str}")
@@ -674,11 +789,20 @@ class GameScreen:
         self._log_game_event(f"  Total: T1={self.game_scores[0]} T2={self.game_scores[1]}")
 
         if self.shota_number >= 5 or self.game_scores[0] >= 25 or self.game_scores[1] >= 25:
+            # Award game-level points.
+            self._player_games_played += 1
+            if self.game_scores[0] > self.game_scores[1]:
+                self._award_points("game_won")
+                self._player_games_won += 1
+            else:
+                self._award_points("game_lost")
+            self._save_player_stats()
+
             self.phase = "game_over"
             self._log_game_event("=== GAME OVER ===")
         else:
             self.phase = "shota_end"
-            self._ai_timer = 120  # Longer pause for shota transition animation.
+            self._ai_timer = 120
 
     # ----------------------------------------------------------
     # Update (called each frame)
@@ -721,9 +845,7 @@ class GameScreen:
         elif self.phase == "playing":
             self._update_playing()
         elif self.phase == "shota_end":
-            self._ai_timer -= 1
-            if self._ai_timer <= 0:
-                self._start_new_shota()
+            pass  # Wait for player to click "Next Shota" button.
 
     def _update_playing(self):
         """Handle AI turns and timing."""
@@ -844,7 +966,7 @@ class GameScreen:
         # Clear winner announcement.
         winner_name = DISPLAY_NAMES[winner]
         team_name = "Team 1" if team == 0 else "Team 2"
-        self._message = f"🏆 {winner_name} wins! ({team_name}: {self.team_tricks[team]})"
+        self._message = f"{winner_name} wins! ({team_name}: {self.team_tricks[team]})"
         self._message_timer = 50
         self._ai_timer = 50
         self._play_idx = 99
@@ -886,7 +1008,7 @@ class GameScreen:
             mx, my = pygame.mouse.get_pos()
             log_x = TABLE_WIDTH
             if mx >= log_x:
-                self._log_scroll_offset -= event.y * 2
+                self._log_scroll_offset -= event.y * 42
                 max_scroll = max(0, len(self._game_log) * 14 - (SCREEN_HEIGHT - 80))
                 self._log_scroll_offset = max(0, min(self._log_scroll_offset, max_scroll))
 
@@ -896,6 +1018,15 @@ class GameScreen:
         load_btn = pygame.Rect(TABLE_WIDTH - 130, 5, 120, 28)
         if load_btn.collidepoint(pos):
             self._open_model_dialog()
+            return
+
+        # Shota end — "Next Shota" button.
+        if self.phase == "shota_end":
+            cx = TABLE_WIDTH // 2
+            cy = SCREEN_HEIGHT // 2
+            btn_rect = pygame.Rect(cx - 90, cy + 100, 180, 45)
+            if btn_rect.collidepoint(pos):
+                self._start_new_shota()
             return
 
         # Bidding phase.
@@ -1270,8 +1401,8 @@ class GameScreen:
             winner_text = "IT'S A DRAW!"
             color = TEXT_WHITE
 
-        trophy_font = pygame.font.SysFont("Segoe UI", 48)
-        trophy = trophy_font.render("🏆", True, TEXT_GOLD)
+        trophy_font = pygame.font.SysFont("Segoe UI", 48, bold=True)
+        trophy = trophy_font.render("GAME OVER", True, TEXT_GOLD)
         self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 140))
 
         go_font = pygame.font.SysFont("Segoe UI", 32, bold=True)
@@ -1324,14 +1455,22 @@ class GameScreen:
         self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 60))
 
         result_color = HIGHLIGHT_GREEN if bid_met else BUTTON_RED
-        result_text = "Bid SUCCESS ✓" if bid_met else "Bid FAILED ✗"
+        human_team = 0  # Players 0, 2 = Team 1.
+        playing_won = self.team_tricks[playing_team] >= self.bid_value
+        your_team_won = self.team_tricks[0] > self.team_tricks[1]
+        if your_team_won:
+            result_text = "Your Team WON"
+            result_color = HIGHLIGHT_GREEN
+        else:
+            result_text = "Your Team LOST"
+            result_color = BUTTON_RED
         result = self.fonts["large"].render(result_text, True, result_color)
         self.screen.blit(result, result.get_rect(centerx=cx, y=cy - 20))
 
         # Seek announcement.
         if hasattr(self, '_seek_team') and self._seek_team is not None:
             seek_font = pygame.font.SysFont("Segoe UI", 20, bold=True)
-            seek_text = f"★ SEEK! Team {self._seek_team + 1} won all 13 tricks! ★"
+            seek_text = f"* SEEK! Team {self._seek_team + 1} won all 13 tricks! *"
             seek_surf = seek_font.render(seek_text, True, TEXT_GOLD)
             self.screen.blit(seek_surf, seek_surf.get_rect(centerx=cx, y=cy + 5))
             y_offset = 35
@@ -1348,14 +1487,17 @@ class GameScreen:
             True, TEXT_GOLD)
         self.screen.blit(score, score.get_rect(centerx=cx, y=cy + y_offset + 40))
 
-        # Fade-in animation (based on _ai_timer countdown).
-        progress = max(0, min(1.0, 1 - self._ai_timer / 120))
-        bar_w = int(400 * progress)
-        bar_rect = pygame.Rect(cx - 200, cy + y_offset + 75, bar_w, 4)
-        pygame.draw.rect(self.screen, HIGHLIGHT_GREEN, bar_rect, border_radius=2)
-
-        next_txt = self.fonts["small"].render("Next Shota starting...", True, TEXT_DIM)
-        self.screen.blit(next_txt, next_txt.get_rect(centerx=cx, y=cy + y_offset + 85))
+        # "Next Shota" button.
+        btn_rect = pygame.Rect(cx - 90, cy + 100, 180, 45)
+        mx, my = pygame.mouse.get_pos()
+        hover = btn_rect.collidepoint(mx, my)
+        bg = (56, 142, 60) if hover else BUTTON_GREEN
+        pygame.draw.rect(self.screen, bg, btn_rect, border_radius=10)
+        if hover:
+            pygame.draw.rect(self.screen, (100, 200, 100), btn_rect, width=2, border_radius=10)
+        btn_font = pygame.font.SysFont("Segoe UI", 16, bold=True)
+        btn_text = btn_font.render("Next Shota", True, TEXT_WHITE)
+        self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
 
         self._render_game_log()
 
@@ -1367,24 +1509,24 @@ class GameScreen:
         cx_table = TABLE_WIDTH // 2
 
         # Top player (pid 0 = Hima) — YOUR PARTNER.
-        role_0 = " 👑" if 0 == self.qabool_id else ""
-        role_0 += " 🎯" if 0 == self.shooter_id else ""
+        role_0 = " [Q]" if 0 == self.qabool_id else ""
+        role_0 += " [S]" if 0 == self.shooter_id else ""
         surf = font.render(f"{DISPLAY_NAMES[0]}{role_0}", True, TEAM1_BLUE)
         self.screen.blit(surf, surf.get_rect(centerx=cx_table, y=57))
-        partner_lbl = team_font.render("(Your Partner · Team 1)", True, (80, 140, 200))
+        partner_lbl = team_font.render("(Your Partner - Team 1)", True, (80, 140, 200))
         self.screen.blit(partner_lbl, partner_lbl.get_rect(centerx=cx_table, y=73))
 
         # Left player (pid 3 = Musaab) — OPPONENT.
-        role_3 = " 👑" if 3 == self.qabool_id else ""
-        role_3 += " 🎯" if 3 == self.shooter_id else ""
+        role_3 = " [Q]" if 3 == self.qabool_id else ""
+        role_3 += " [S]" if 3 == self.shooter_id else ""
         surf = font.render(f"{DISPLAY_NAMES[3]}{role_3}", True, TEAM2_ORANGE)
         self.screen.blit(surf, surf.get_rect(centerx=45 + CARD_MINI_W // 2, y=cy - 80))
         opp_lbl = team_font.render("Team 2", True, (180, 100, 60))
         self.screen.blit(opp_lbl, opp_lbl.get_rect(centerx=45 + CARD_MINI_W // 2, y=cy - 66))
 
         # Right player (pid 1 = Gaafar) — OPPONENT.
-        role_1 = " 👑" if 1 == self.qabool_id else ""
-        role_1 += " 🎯" if 1 == self.shooter_id else ""
+        role_1 = " [Q]" if 1 == self.qabool_id else ""
+        role_1 += " [S]" if 1 == self.shooter_id else ""
         surf = font.render(f"{DISPLAY_NAMES[1]}{role_1}", True, TEAM2_ORANGE)
         right_x = TABLE_WIDTH - 45 - CARD_MINI_W + CARD_MINI_W // 2
         self.screen.blit(surf, surf.get_rect(centerx=right_x, y=cy - 80))
@@ -1394,10 +1536,10 @@ class GameScreen:
         # Human (pid 2 = Abubakr) — YOUR area.
         role_2 = ""
         if HUMAN_ID == self.qabool_id:
-            role_2 += "  👑 Qabool"
+            role_2 += "  [Qabool]"
         if HUMAN_ID == self.shooter_id:
-            role_2 += "  🎯 Shooter"
-        surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) · Team 1{role_2}", True, TEXT_GOLD)
+            role_2 += "  [Shooter]"
+        surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) - Team 1{role_2}", True, TEXT_GOLD)
         self.screen.blit(surf, surf.get_rect(centerx=cx_table, y=SCREEN_HEIGHT - CARD_HEIGHT - 70))
 
     def _render_qabool_label(self, cx, cy):
@@ -1611,21 +1753,10 @@ class GameScreen:
         mx, my = pygame.mouse.get_pos()
 
         if self._bid_step == "number":
-            title = title_font.render("Step 1: Choose your bid (7-13)", True, TEXT_WHITE)
-            self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 30))
-
-            # Feature 19: Validation feedback.
-            current_highest = (self._bidding_engine.highest_bid.value
-                               if self._bidding_engine.highest_bid else None)
-            hint_text = "Select a number. "
-            if current_highest:
-                hint_text += f"Must beat {current_highest}."
-            else:
-                hint_text += "Opening bid max 11."
-            hint = self.fonts["small"].render(hint_text, True, TEXT_DIM)
-            self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy - 5))
 
             # Bid number buttons: 7-13.
+            current_highest = (self._bidding_engine.highest_bid.value
+                               if self._bidding_engine.highest_bid else None)
             for i, val in enumerate(range(7, 14)):
                 rect = pygame.Rect(cx - 210 + i * 62, cy + 10, 55, 45)
                 hover = rect.collidepoint(mx, my)
@@ -1670,9 +1801,7 @@ class GameScreen:
             self.screen.blit(pass_surf, pass_surf.get_rect(center=pass_rect.center))
 
         elif self._bid_step == "trump":
-            # Step 2: Select trump suit.
-            title = title_font.render(f"Step 2: Select trump (Bid: {self._selected_bid})", True, TEXT_WHITE)
-            self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 30))
+            # Select trump suit.
 
             suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
             for i, suit in enumerate(suits):
@@ -1709,9 +1838,6 @@ class GameScreen:
             suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
             chosen_suit = suits[self._selected_trump_idx]
             sym = SUIT_SYMBOLS[chosen_suit]
-            title = title_font.render(
-                f"Confirm: Bid {self._selected_bid}, Trump {sym}?", True, TEXT_WHITE)
-            self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 30))
 
             # Confirm button.
             confirm_rect = pygame.Rect(cx - 70, cy + 10, 140, 45)
@@ -1731,16 +1857,16 @@ class GameScreen:
             back_surf = self.fonts["medium"].render("← Change", True, TEXT_WHITE)
             self.screen.blit(back_surf, back_surf.get_rect(center=back_rect.center))
 
-            # Feature 19: Validation feedback.
-            count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == chosen_suit)
-            hint = self.fonts["small"].render(
-                f"You have {count} {sym} cards. Formula: longest_suit + 3",
-                True, TEXT_DIM)
-            self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 105))
-
     def _render_info_bar(self):
-        """Render the top information bar + Feature 22 Load Model button."""
+        """Render the top information bar."""
         y = 10
+
+        # Player points + rank — yellow bold, first item.
+        pts_font = pygame.font.SysFont("Segoe UI", 14, bold=True)
+        rank_name = self._get_rank_name()
+        pts_surf = pts_font.render(f"Points: {self._player_points} | Rank: {rank_name}", True, TEXT_GOLD)
+        self.screen.blit(pts_surf, (30, y))
+
         items = [
             (f"Shota {self.shota_number}/5", TEXT_WHITE),
             (f"Trick {self.trick_number}/13", TEXT_LIGHT),
@@ -1757,13 +1883,13 @@ class GameScreen:
         else:
             items.append(("Trump: ?", TEXT_DIM))
 
-        items.append((f"Score: {self.game_scores[0]} - {self.game_scores[1]}", TEAM1_BLUE))
+        items.append((f"T1={self.game_scores[0]} | T2={self.game_scores[1]}", TEAM1_BLUE))
 
         # Feature 6: Dak counter.
         if self._dak_count > 0:
             items.append((f"Daks: {self._dak_count}/2", BUTTON_RED))
 
-        x = 30
+        x = 30 + pts_surf.get_width() + 25
         for text, color in items:
             surf = self.fonts["medium"].render(text, True, color)
             self.screen.blit(surf, (x, y))

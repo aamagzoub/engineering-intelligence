@@ -31,7 +31,11 @@ class WistApp:
             "medium": pygame.font.SysFont("Segoe UI", 13),
         }
 
-        self.state = "menu"
+        self.state = "name_entry"  # Start with name entry.
+        self._player_name = "Abubakr"
+        self._name_cursor_visible = True
+        self._name_cursor_timer = 0
+
         self.game_screen = GameScreen(self.screen)
 
         # Card cache for menu display.
@@ -55,19 +59,43 @@ class WistApp:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
+                # Name entry state.
+                if self.state == "name_entry":
+                    if event.key == pygame.K_RETURN:
+                        if not self._player_name.strip():
+                            self._player_name = "Abubakr"
+                        self._apply_player_name()
+                        self.state = "menu"
+                    elif event.key == pygame.K_BACKSPACE:
+                        self._player_name = self._player_name[:-1]
+                    elif event.key == pygame.K_ESCAPE:
+                        self._player_name = "Abubakr"
+                        self._apply_player_name()
+                        self.state = "menu"
+                    elif len(self._player_name) < 15 and event.unicode.isprintable() and event.unicode:
+                        self._player_name += event.unicode
+                    continue
+
                 if event.key == pygame.K_ESCAPE:
                     if self.state == "menu":
                         self.running = False
                     elif self.state == "rules":
                         self.state = "menu"
-                    # When playing, ESC is handled by game_screen (quit overlay).
-                    # Don't go back to menu directly.
                 elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
                     if self.state == "menu":
                         self._start_playing()
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.state == "menu":
+                if self.state == "name_entry":
+                    cx = SCREEN_WIDTH // 2
+                    cy = SCREEN_HEIGHT // 2
+                    btn_rect = pygame.Rect(cx - 80, cy + 60, 160, 45)
+                    if btn_rect.collidepoint(event.pos):
+                        if not self._player_name.strip():
+                            self._player_name = "Abubakr"
+                        self._apply_player_name()
+                        self.state = "menu"
+                elif self.state == "menu":
                     cx = SCREEN_WIDTH // 2
                     cy = SCREEN_HEIGHT // 2
                     btn_rect = pygame.Rect(cx - 120, cy + 130, 240, 55)
@@ -87,17 +115,28 @@ class WistApp:
         self.state = "playing"
         self.game_screen.start_game()
 
+    def _apply_player_name(self):
+        """Set the player name in the game screen."""
+        import gui_pygame.game_screen as gs
+        gs.DISPLAY_NAMES[2] = self._player_name
+
     def _update(self):
         if self.state == "playing":
             self.game_screen.update()
-            # If game_screen set phase to "idle" (user confirmed quit), go back to menu.
             if self.game_screen.phase == "idle":
                 self.state = "menu"
+        elif self.state == "name_entry":
+            self._name_cursor_timer += 1
+            if self._name_cursor_timer >= 30:
+                self._name_cursor_timer = 0
+                self._name_cursor_visible = not self._name_cursor_visible
 
     def _render(self):
         self.screen.fill(BG_DARK)
 
-        if self.state == "menu":
+        if self.state == "name_entry":
+            self._render_name_entry()
+        elif self.state == "menu":
             self._render_menu()
         elif self.state == "rules":
             self._render_rules()
@@ -105,6 +144,48 @@ class WistApp:
             self.game_screen.render()
 
         pygame.display.flip()
+
+    def _render_name_entry(self):
+        """Render name entry screen."""
+        cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+
+        # Background.
+        table = pygame.Rect(80, 100, SCREEN_WIDTH - 160, SCREEN_HEIGHT - 200)
+        pygame.draw.rect(self.screen, TABLE_FELT, table, border_radius=20)
+        pygame.draw.rect(self.screen, TABLE_BORDER, table, width=3, border_radius=20)
+
+        # Title.
+        title = self.fonts["title"].render("Enter Your Name", True, TEXT_WHITE)
+        self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 100))
+
+        subtitle = self.fonts["medium"].render("Type your name or press ENTER to use default", True, TEXT_DIM)
+        self.screen.blit(subtitle, subtitle.get_rect(centerx=cx, y=cy - 55))
+
+        # Name input box.
+        box_rect = pygame.Rect(cx - 150, cy - 20, 300, 50)
+        pygame.draw.rect(self.screen, (20, 40, 20), box_rect, border_radius=8)
+        pygame.draw.rect(self.screen, TEXT_GOLD, box_rect, width=2, border_radius=8)
+
+        # Name text with cursor.
+        name_font = pygame.font.SysFont("Segoe UI", 22, bold=True)
+        display_name = self._player_name
+        if self._name_cursor_visible:
+            display_name += "|"
+        name_surf = name_font.render(display_name, True, TEXT_WHITE)
+        self.screen.blit(name_surf, name_surf.get_rect(center=box_rect.center))
+
+        # Default hint.
+        hint = self.fonts["medium"].render(f"Default: Abubakr", True, TEXT_DIM)
+        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 38))
+
+        # Continue button.
+        btn_rect = pygame.Rect(cx - 80, cy + 60, 160, 45)
+        mx, my = pygame.mouse.get_pos()
+        hover = btn_rect.collidepoint(mx, my)
+        bg = (56, 142, 60) if hover else BUTTON_GREEN
+        pygame.draw.rect(self.screen, bg, btn_rect, border_radius=10)
+        btn_text = self.fonts["large"].render("Continue ▶", True, TEXT_WHITE)
+        self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
 
     def _render_rules(self):
         """Render How to Play screen."""
@@ -162,7 +243,7 @@ class WistApp:
         title = self.fonts["title"].render("Sudanese Wist", True, TEXT_WHITE)
         self.screen.blit(title, title.get_rect(centerx=cx, y=130))
 
-        sub = self.fonts["subtitle"].render("AI Laboratory — Engineering Intelligence Research", True, TEXT_DIM)
+        sub = self.fonts["subtitle"].render("Telecom-Native Intelligence Research", True, TEXT_WHITE)
         self.screen.blit(sub, sub.get_rect(centerx=cx, y=175))
 
         # Fanned cards.
