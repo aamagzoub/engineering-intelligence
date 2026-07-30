@@ -168,9 +168,14 @@ class AdvisorTab:
         tk.OptionMenu(self._right, self._qabool_var, *options).pack(anchor="w")
 
         # Start button.
-        tk.Button(self._right, text="▶  Start Bidding", command=self._start_bidding,
+        btn_row2 = tk.Frame(self._right, bg="#252525")
+        btn_row2.pack(anchor="w", pady=(20, 0))
+        tk.Button(btn_row2, text="▶  Start Bidding", command=self._start_bidding,
                   font=("Segoe UI", 11, "bold"), fg="#fff", bg=COLORS["btn_green"],
-                  bd=0, padx=16, pady=8, cursor="hand2").pack(anchor="w", pady=(20, 0))
+                  bd=0, padx=16, pady=8, cursor="hand2").pack(side="left", padx=(0, 8))
+        tk.Button(btn_row2, text="🎲 Random Hand", command=self._random_hand,
+                  font=("Segoe UI", 9, "bold"), fg="#fff", bg="#7b1fa2",
+                  bd=0, padx=10, pady=8, cursor="hand2").pack(side="left")
 
         # Info.
         self._info_label = tk.Label(self._right, text="",
@@ -830,6 +835,27 @@ class AdvisorTab:
             from agents.rule_based.rule_based_agent import RuleBasedAgent
             self._agent = RuleBasedAgent()
         return self._agent
+
+    def _random_hand(self) -> None:
+        """Populate 13 random cards for quick testing."""
+        import random as _rnd
+
+        # Clear current hand.
+        for card in list(self.ai_hand):
+            btn = self._card_buttons[card]
+            fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
+            btn.config(bg=COLORS["card_bg"], fg=fg, relief="solid")
+        self.ai_hand.clear()
+
+        # Pick 13 random cards.
+        all_cards = [Card(s, r) for s in ALL_SUITS for r in ALL_RANKS]
+        hand = _rnd.sample(all_cards, 13)
+        for card in hand:
+            self.ai_hand.append(card)
+            btn = self._card_buttons[card]
+            btn.config(bg="#4caf50", fg="#ffffff", relief="raised")
+
+        self._deck_label.config(text=f"AI HAND — Random 13 cards (13/13)")
 
     def _load_model(self) -> None:
         from agents.learning.learning_agent import LearningAgent
