@@ -271,7 +271,51 @@ class AdvisorTab:
         for w in self._right.winfo_children():
             w.destroy()
 
-        player_names = {0: "AI (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+
+        # Mini-table showing player positions and their bid status.
+        table_frame = tk.Frame(self._right, bg="#1a1a1a", padx=6, pady=6)
+        table_frame.pack(fill="x", pady=(0, 8))
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.columnconfigure(1, weight=1)
+        table_frame.columnconfigure(2, weight=1)
+
+        # Determine current bidder.
+        current_pid = None
+        if self._bid_step < 3:
+            current_pid = self._bid_order[self._bid_step]
+        else:
+            current_pid = self.qabool_id
+
+        slot_positions = {2: (0, 1), 3: (1, 0), 1: (1, 2), 0: (2, 1)}
+        for pid, (row, col) in slot_positions.items():
+            # Determine what to show in the slot.
+            bid_text = ""
+            for h_pid, h_val in self._bid_history:
+                if h_pid == pid:
+                    bid_text = "Pass" if h_val is None else f"Bid {h_val}"
+            if pid == self.qabool_id:
+                name = f"👑{player_names[pid]}"
+            else:
+                name = player_names[pid]
+
+            display = f"{name}\n{bid_text}" if bid_text else name
+
+            # Highlight active player.
+            if pid == current_pid:
+                bg, fg = "#3a5a3a", "#ffd54f"
+            elif bid_text:
+                bg, fg = "#2a3a2a", "#aaaaaa"
+            else:
+                bg, fg = "#2a3a2a", "#666666"
+
+            slot = tk.Label(table_frame, text=display,
+                            font=("Segoe UI", 9, "bold"), fg=fg, bg=bg,
+                            width=9, height=2, relief="ridge", bd=1)
+            slot.grid(row=row, column=col, padx=3, pady=3)
+
+        # Full player names reference.
+        player_names_full = {0: "AI (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
 
         # Show bid history so far.
         if self._bid_history:
