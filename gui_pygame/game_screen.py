@@ -1908,33 +1908,37 @@ class GameScreen:
             py += 21
         py += 14
 
-        # Seek: leading team tricks / 13.
+        # Seek: alive (100%) if one team has all tricks, dead (0%) otherwise.
         t1_tricks = self.team_tricks[0]
         t2_tricks = self.team_tricks[1]
-        # Only show seek if one team has all tricks so far (other has 0).
-        if t2_tricks == 0 and t1_tricks > 0:
-            seek_team = 0
-            seek_tricks = t1_tricks
-            seek_color = TEAM1_BLUE
-            seek_label = f"T1 Seek {seek_tricks}/13"
-        elif t1_tricks == 0 and t2_tricks > 0:
-            seek_team = 1
-            seek_tricks = t2_tricks
-            seek_color = TEAM2_ORANGE
-            seek_label = f"T2 Seek {seek_tricks}/13"
-        else:
-            seek_team = -1
-            seek_tricks = 0
-            seek_color = TEXT_LIGHT
+
+        if tricks_played == 0:
+            # No tricks played yet — seek is possible for both.
             seek_label = "Seek"
+            seek_status = "possible"
+            seek_color = TEXT_LIGHT
+            seek_fill = 1.0
+        elif t2_tricks == 0:
+            # T1 has all tricks — seek alive for T1.
+            seek_label = f"T1 Seek {t1_tricks}/13"
+            seek_status = "ALIVE"
+            seek_color = TEAM1_BLUE
+            seek_fill = 1.0
+        elif t1_tricks == 0:
+            # T2 has all tricks — seek alive for T2.
+            seek_label = f"T2 Seek {t2_tricks}/13"
+            seek_status = "ALIVE"
+            seek_color = TEAM2_ORANGE
+            seek_fill = 1.0
+        else:
+            # Both have tricks — seek is dead.
+            seek_label = "Seek"
+            seek_status = "DEAD"
+            seek_color = BUTTON_RED
+            seek_fill = 0.0
 
         self.screen.blit(label_font.render(seek_label, True, TEXT_LIGHT), (bar_x, py))
-        if seek_team >= 0:
-            seek_fill = seek_tricks / 13.0
-            sk_surf = value_font.render(f"{seek_tricks}/13", True, seek_color)
-        else:
-            seek_fill = 0
-            sk_surf = value_font.render("-", True, TEXT_LIGHT)
+        sk_surf = value_font.render(seek_status, True, seek_color)
         self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
         py += 21
         pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
