@@ -1,98 +1,43 @@
 """
-Card rendering for PyGame — loads PNG card images or draws fallback cards.
+Card rendering for PyGame — draws playing cards programmatically.
 """
 
-import os
 import pygame
 from gui_pygame.constants import *
 
 
-# Card image cache.
-_card_image_cache: dict[str, pygame.Surface] = {}
-_cards_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cards")
-
-# Map rank/suit symbols to filenames.
-_RANK_TO_FILE = {
-    "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7",
-    "8": "8", "9": "9", "10": "10",
-    "J": "jack", "Q": "queen", "K": "king", "A": "ace",
-}
-_SUIT_TO_FILE = {"♠": "spades", "♥": "hearts", "♣": "clubs", "♦": "diamonds"}
-
-
-def _get_card_image_path(rank: str, suit: str) -> str | None:
-    """Get the PNG file path for a card, or None if not found."""
-    rank_file = _RANK_TO_FILE.get(rank)
-    suit_file = _SUIT_TO_FILE.get(suit)
-    if not rank_file or not suit_file:
-        return None
-    path = os.path.join(_cards_dir, f"{rank_file}_of_{suit_file}.png")
-    if os.path.exists(path):
-        return path
-    return None
-
-
 def create_card_surface(rank: str, suit: str, width: int = CARD_WIDTH,
                         height: int = CARD_HEIGHT) -> pygame.Surface:
-    """Load a card PNG image scaled to size, or draw a fallback card."""
-    cache_key = f"{rank}{suit}_{width}x{height}"
-    if cache_key in _card_image_cache:
-        return _card_image_cache[cache_key]
-
-    # Try to load PNG image.
-    img_path = _get_card_image_path(rank, suit)
-    if img_path:
-        try:
-            img = pygame.image.load(img_path).convert()
-            # Create a white card background with rounded corners.
-            surf = pygame.Surface((width, height), pygame.SRCALPHA)
-            card_rect = pygame.Rect(0, 0, width, height)
-            pygame.draw.rect(surf, CARD_WHITE, card_rect, border_radius=CARD_RADIUS)
-            # Scale the PNG to fit inside with a small margin.
-            margin = 3
-            inner_w = width - margin * 2
-            inner_h = height - margin * 2
-            scaled_img = pygame.transform.smoothscale(img, (inner_w, inner_h))
-            # Replace black background pixels with white before blitting.
-            scaled_img.set_colorkey((0, 0, 0))
-            surf.blit(scaled_img, (margin, margin))
-            # Card border.
-            pygame.draw.rect(surf, (150, 150, 150), card_rect, width=1, border_radius=CARD_RADIUS)
-            _card_image_cache[cache_key] = surf
-            return surf
-        except Exception:
-            pass  # Fall through to drawn card.
-
-    # Fallback: draw the card programmatically.
-    surf = _draw_card_fallback(rank, suit, width, height)
-    _card_image_cache[cache_key] = surf
-    return surf
-
-
-def _draw_card_fallback(rank: str, suit: str, width: int, height: int) -> pygame.Surface:
-    """Draw a card programmatically (fallback when no PNG available)."""
+    """Create a card surface with proper styling."""
     surf = pygame.Surface((width, height), pygame.SRCALPHA)
+
+    # Card body (rounded rectangle).
     rect = pygame.Rect(0, 0, width, height)
     pygame.draw.rect(surf, CARD_WHITE, rect, border_radius=CARD_RADIUS)
     pygame.draw.rect(surf, (180, 180, 180), rect, width=1, border_radius=CARD_RADIUS)
 
-    suit_color = RED_SUIT if suit in ("♥", "♦") else BLACK_SUIT
+    # Suit color.
+    color = RED_SUIT if suit in ("♥", "♦") else BLACK_SUIT
 
+    # Rank in top-left.
     font_size = max(12, width // 5)
     font = pygame.font.SysFont("Consolas", font_size, bold=True)
-    rank_surf = font.render(rank, True, suit_color)
+    rank_surf = font.render(rank, True, color)
     surf.blit(rank_surf, (5, 3))
 
+    # Suit symbol in top-left (below rank).
     suit_font = pygame.font.SysFont("Segoe UI", font_size - 2)
-    suit_small = suit_font.render(suit, True, suit_color)
+    suit_small = suit_font.render(suit, True, color)
     surf.blit(suit_small, (5, 3 + font_size))
 
+    # Large suit in centre.
     big_font = pygame.font.SysFont("Segoe UI", max(20, width // 2))
-    big_suit = big_font.render(suit, True, suit_color)
+    big_suit = big_font.render(suit, True, color)
     big_rect = big_suit.get_rect(center=(width // 2, height // 2 + 5))
     surf.blit(big_suit, big_rect)
 
-    rank_br = font.render(rank, True, suit_color)
+    # Rank in bottom-right (rotated).
+    rank_br = font.render(rank, True, color)
     rank_br = pygame.transform.rotate(rank_br, 180)
     surf.blit(rank_br, (width - rank_br.get_width() - 5, height - rank_br.get_height() - 3))
 
