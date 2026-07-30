@@ -1226,7 +1226,7 @@ class GameScreen:
         btn_h = 30
 
         # Load AI Model button.
-        btn_y = SCREEN_HEIGHT - 155 + 30 + 8
+        btn_y = SCREEN_HEIGHT - 85
         load_btn = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
         if load_btn.collidepoint(pos):
             self._open_model_dialog()
@@ -1717,7 +1717,7 @@ class GameScreen:
 
         # ========== GAME INFO CARD (fixed height) ==========
         game_card_y = y
-        game_card_h = 275
+        game_card_h = 290
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, game_card_y, panel_w - 10, game_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1815,6 +1815,26 @@ class GameScreen:
             if fill_w > 0:
                 pygame.draw.rect(self.screen, bid_color, (bx, y, fill_w, 6), border_radius=3)
 
+        # Seek chip (small, inside game card).
+        y_seek = game_card_y + game_card_h - 28
+        tricks_played_s = self.team_tricks[0] + self.team_tricks[1]
+        seek_alive = (tricks_played_s == 0) or (self.team_tricks[0] == 0) or (self.team_tricks[1] == 0)
+
+        chip_w = 90
+        chip_h = 20
+        chip_x = panel_x + (panel_w - chip_w) // 2
+        chip_surf = pygame.Surface((chip_w, chip_h), pygame.SRCALPHA)
+        if seek_alive:
+            pygame.draw.rect(chip_surf, (180, 40, 40, 220), (0, 0, chip_w, chip_h), border_radius=10)
+            chip_font = pygame.font.SysFont("Segoe UI", 10, bold=True)
+            chip_text = chip_font.render("Seek Possible", True, TEXT_GOLD)
+        else:
+            pygame.draw.rect(chip_surf, (60, 60, 60, 180), (0, 0, chip_w, chip_h), border_radius=10)
+            chip_font = pygame.font.SysFont("Segoe UI", 10)
+            chip_text = chip_font.render("Seek Dead", True, (180, 180, 180))
+        chip_surf.blit(chip_text, chip_text.get_rect(center=(chip_w // 2, chip_h // 2)))
+        self.screen.blit(chip_surf, (chip_x, y_seek))
+
         # ========== STATS CARD (fixed position) ==========
         y = game_card_y + game_card_h + 8
         stats = getattr(self, '_game_stats', {})
@@ -1885,30 +1905,12 @@ class GameScreen:
                             "Bids met", met_text, TEXT_LIGHT)
 
         # ========== BUTTONS (fixed at bottom) ==========
-        btn_y = SCREEN_HEIGHT - 155
+        btn_y = SCREEN_HEIGHT - 85
         btn_w = panel_w - pad * 2
         btn_h = 30
         mx, my = pygame.mouse.get_pos()
 
-        # Seek indicator (non-clickable).
-        tricks_played = self.team_tricks[0] + self.team_tricks[1]
-        t1_t = self.team_tricks[0]
-        t2_t = self.team_tricks[1]
-        seek_possible = (tricks_played == 0) or (t1_t == 0) or (t2_t == 0)
-
-        seek_rect = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
-        if seek_possible:
-            pygame.draw.rect(self.screen, BUTTON_RED, seek_rect, border_radius=5)
-            seek_font = pygame.font.SysFont("Segoe UI", 12, bold=True)
-            seek_txt = seek_font.render("Seek Possible", True, TEXT_GOLD)
-        else:
-            pygame.draw.rect(self.screen, BUTTON_GREY, seek_rect, border_radius=5)
-            seek_font = pygame.font.SysFont("Segoe UI", 12)
-            seek_txt = seek_font.render("Seek Dead", True, TEXT_WHITE)
-        self.screen.blit(seek_txt, seek_txt.get_rect(center=seek_rect.center))
-
         # Load AI Model button.
-        btn_y += btn_h + 8
         load_rect = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
         bg = (255, 230, 50) if load_rect.collidepoint(mx, my) else (255, 213, 79)
         pygame.draw.rect(self.screen, bg, load_rect, border_radius=5)
@@ -1921,8 +1923,7 @@ class GameScreen:
                 (panel_x + pad, btn_y - 16))
 
         # Restart button.
-        btn_y += btn_h + 8
-        restart_rect = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
+        restart_rect = pygame.Rect(panel_x + pad, btn_y + btn_h + 8, btn_w, btn_h)
         rbg = (50, 120, 50) if restart_rect.collidepoint(mx, my) else (40, 95, 40)
         pygame.draw.rect(self.screen, rbg, restart_rect, border_radius=5)
         pygame.draw.rect(self.screen, (30, 70, 30), restart_rect, width=1, border_radius=5)
