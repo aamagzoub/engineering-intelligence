@@ -2662,34 +2662,37 @@ class GameScreen:
         if not hasattr(self, '_card_back_opp'):
             from gui_pygame.card_renderer import create_card_back
             self._card_back_opp = create_card_back(card_w, card_h)
+        if not hasattr(self, '_card_back_opp_landscape'):
+            self._card_back_opp_landscape = pygame.transform.rotate(self._card_back_opp, 90)
 
         # Fan parameters.
-        max_spread = 20.0  # Total arc degrees.
+        max_spread = 20.0
         fan_spread = min(max_spread, count * 2.0)
         half_spread = fan_spread / 2.0
 
         for i in range(count):
-            # Calculate angle for each card in the fan.
             if count == 1:
                 angle_deg = 0.0
             else:
                 angle_deg = -half_spread + (i / (count - 1)) * fan_spread
 
             if horizontal:
-                # Top player: fan horizontally with slight rotation.
-                spacing = min(14, (160) // max(count, 1))
+                # Top player: cards portrait, fanned horizontally.
+                spacing = min(14, 160 // max(count, 1))
                 card_x = x + i * spacing
                 card_y = y
                 rotated = pygame.transform.rotate(self._card_back_opp, -angle_deg * 0.5)
                 rect = rotated.get_rect(center=(card_x + card_w // 2, card_y + card_h // 2))
                 self.screen.blit(rotated, rect)
             else:
-                # Side players: fan vertically with slight rotation.
-                spacing = min(10, (120) // max(count, 1))
+                # Side players: cards landscape (rotated 90°), fanned vertically.
+                lw = card_h  # Landscape width = portrait height.
+                lh = card_w  # Landscape height = portrait width.
+                spacing = min(10, 120 // max(count, 1))
                 card_x = x
                 card_y = y + i * spacing
-                rotated = pygame.transform.rotate(self._card_back_opp, angle_deg * 0.5)
-                rect = rotated.get_rect(center=(card_x + card_w // 2, card_y + card_h // 2))
+                rotated = pygame.transform.rotate(self._card_back_opp_landscape, angle_deg * 0.5)
+                rect = rotated.get_rect(center=(card_x + lw // 2, card_y + lh // 2))
                 self.screen.blit(rotated, rect)
 
     def _render_turn_glow(self, cx, cy):
