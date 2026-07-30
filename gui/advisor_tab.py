@@ -157,8 +157,8 @@ class AdvisorTab:
                  font=("Segoe UI", 10, "bold"), fg="#ffffff", bg="#252525"
                  ).pack(anchor="w", pady=(12, 4))
 
-        self._qabool_var = tk.StringVar(value="P1 (You)")
-        options = ["P1 (You)", "P2 (Left)", "P3 (Opposite)", "P4 (Right)"]
+        self._qabool_var = tk.StringVar(value="AI (You)")
+        options = ["AI (You)", "P2 (Left)", "P3 (Opposite)", "P4 (Right)"]
         tk.OptionMenu(self._right, self._qabool_var, *options).pack(anchor="w")
 
         # Start button.
@@ -237,7 +237,7 @@ class AdvisorTab:
                       bd=0, padx=16, pady=8, cursor="hand2").pack(anchor="w")
             return
 
-        qabool_map = {"P1 (You)": 0, "P2 (Left)": 1, "P3 (Opposite)": 2, "P4 (Right)": 3}
+        qabool_map = {"AI (You)": 0, "P2 (Left)": 1, "P3 (Opposite)": 2, "P4 (Right)": 3}
         self.qabool_id = qabool_map.get(self._qabool_var.get(), 0)
         self.phase = "bidding"
 
@@ -260,7 +260,7 @@ class AdvisorTab:
         for w in self._right.winfo_children():
             w.destroy()
 
-        player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
+        player_names = {0: "AI (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
 
         # Show bid history so far.
         if self._bid_history:
@@ -484,7 +484,7 @@ class AdvisorTab:
 
     def _finalize_bidding(self) -> None:
         """Bidding resolved — determine trump and start play."""
-        player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
+        player_names = {0: "AI (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
 
         # If AI won the bid, AI picks trump (longest suit).
         if self.bid_winner_id == 0:
@@ -548,22 +548,39 @@ class AdvisorTab:
         pass  # Playing is started from _show_trump_and_start.
 
     def _build_playing_panel(self) -> None:
-        """Build the right panel for trick play."""
+        """Build the right panel with a visual mini-table for trick play."""
         for w in self._right.winfo_children():
             w.destroy()
 
-        tk.Label(self._right, text="TRICK", font=("Segoe UI", 11, "bold"),
-                 fg="#ffffff", bg="#252525").pack(anchor="w")
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+
+        tk.Label(self._right, text=f"Trick {self.trick_number}/13",
+                 font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#252525"
+                 ).pack(anchor="w")
 
         self._trick_info = tk.Label(self._right, text="",
-                                    font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525")
-        self._trick_info.pack(anchor="w", pady=(4, 8))
+                                    font=("Segoe UI", 9), fg="#aaaaaa", bg="#252525")
+        self._trick_info.pack(anchor="w", pady=(2, 6))
 
-        # Cards played this trick.
-        self._trick_display = tk.Label(self._right, text="",
-                                       font=("Consolas", 12), fg="#ffffff", bg="#1a1a1a",
-                                       padx=8, pady=8, anchor="w", justify="left")
-        self._trick_display.pack(fill="x", pady=4)
+        # Mini-table: 4 card slots arranged as a cross.
+        table_frame = tk.Frame(self._right, bg="#1a1a1a", padx=8, pady=8)
+        table_frame.pack(fill="x", pady=4)
+        # Layout: 3 rows x 3 cols. P3=top, P4=left, P2=right, AI=bottom.
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.columnconfigure(1, weight=1)
+        table_frame.columnconfigure(2, weight=1)
+
+        # Card slot widgets (label-based, will show card text or player name).
+        self._trick_slots = {}
+        slot_positions = {2: (0, 1), 3: (1, 0), 1: (1, 2), 0: (2, 1)}  # pid: (row, col)
+
+        for pid, (row, col) in slot_positions.items():
+            slot = tk.Label(table_frame, text=player_names[pid],
+                            font=("Consolas", 11, "bold"),
+                            fg="#555555", bg="#2a3a2a",
+                            width=8, height=3, relief="ridge", bd=1)
+            slot.grid(row=row, column=col, padx=4, pady=4)
+            self._trick_slots[pid] = slot
 
         # Buttons.
         btn_row = tk.Frame(self._right, bg="#252525")
@@ -577,7 +594,7 @@ class AdvisorTab:
         self._next_trick_btn.config(state="disabled")
 
         # Score display.
-        self._score_label = tk.Label(self._right, text="Score: T1: 0 | T2: 0",
+        self._score_label = tk.Label(self._right, text="Tricks — T1: 0 | T2: 0",
                                      font=("Segoe UI", 10, "bold"),
                                      fg=COLORS["gold"], bg="#252525")
         self._score_label.pack(anchor="w", pady=(12, 0))
@@ -594,10 +611,16 @@ class AdvisorTab:
         self._next_trick_btn.config(state="disabled")
 
         if self.trick_number > 13:
-            self._end_game()
+            self._end_shota()
             return
 
-        self._trick_info.config(text=f"Trick {self.trick_number}/13 — Leader: P{self.leader_id + 1}")
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+        self._trick_info.config(
+            text=f"Trick {self.trick_number}/13 — Leader: {player_names[self.leader_id]}")
+
+        # Reset slot visuals.
+        for pid, slot in self._trick_slots.items():
+            slot.config(text=player_names[pid], fg="#555555", bg="#2a3a2a")
 
         # Determine play order.
         self._play_order = [(self.leader_id + i) % 4 for i in range(4)]
@@ -611,17 +634,19 @@ class AdvisorTab:
             return
 
         pid = self._play_order[self._play_idx]
-        self._update_trick_display()
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+
+        # Highlight the active player slot.
+        for p, slot in self._trick_slots.items():
+            if p == pid and p not in [pc[0] for pc in self.trick_cards]:
+                slot.config(bg="#3a5a3a", fg="#ffd54f")  # Active highlight.
 
         if pid == 0:
-            # AI's turn — ask AI what to play.
             self._ai_play()
         else:
-            # Other player's turn — wait for user to click their card.
-            player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
-            self._deck_label.config(text=f"Click the card P{pid+1} played")
+            self._deck_label.config(text=f"Click the card {player_names[pid]} played")
             self._command_label.config(
-                text=f"⏳ Waiting: What did {player_names[pid]} play?", fg="#ff9800")
+                text=f"⏳ {player_names[pid]}'s turn — click their card", fg="#ff9800")
 
     def _ai_play(self) -> None:
         """AI decides which card to play."""
@@ -660,11 +685,10 @@ class AdvisorTab:
                 btn.config(bg="#666666", fg="#999999", relief="flat")
 
             self.trick_cards.append((0, card))
+            self._trick_slots[0].config(text=sym, fg="#4caf50", bg="#1a3a1a")
             self._play_idx += 1
             self._deck_label.config(text=f"AI HAND — {len(self.ai_hand)} cards left")
-            self._update_trick_display()
 
-            # Auto-advance after short delay.
             self.root.after(500, self._advance_play)
 
     def _opponent_plays(self, card: Card) -> None:
@@ -676,19 +700,22 @@ class AdvisorTab:
 
         pid = self._play_order[self._play_idx]
         if pid == 0:
-            return  # AI plays itself.
+            return
 
-        # Mark the card as played.
+        # Mark the card as played on grid.
         btn = self._card_buttons[card]
         btn.config(bg="#1e88e5", fg="#ffffff", relief="sunken")
 
+        # Update the slot on the mini-table.
+        sym = card_str(card)
+        self._trick_slots[pid].config(text=sym, fg="#ffffff", bg="#1a3a5a")
+
         self.trick_cards.append((pid, card))
         self._play_idx += 1
-        self._update_trick_display()
         self._advance_play()
 
     def _resolve_trick(self) -> None:
-        """Determine trick winner."""
+        """Determine trick winner and highlight."""
         from environments.wist.trick import Trick
         from environments.wist.rules import trick_winner
 
@@ -700,45 +727,84 @@ class AdvisorTab:
         winner_team = 0 if winner in (0, 2) else 1
         self.team_tricks[winner_team] += 1
 
-        # Grey out all opponent cards played this trick.
+        # Grey out opponent cards on the deck grid.
         for pid, card in self.trick_cards:
-            if pid != 0:  # Not the AI's card (already greyed).
+            if pid != 0:
                 btn = self._card_buttons[card]
                 btn.config(bg="#666666", fg="#999999", relief="flat")
 
-        player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
+        # Highlight winner slot gold.
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+        self._trick_slots[winner].config(bg="#5a4a00", fg="#ffd54f")
         self._command_label.config(
-            text=f"🏆 Winner: {player_names[winner]}", fg="#ffd54f")
+            text=f"🏆 {player_names[winner]} wins the trick!", fg="#ffd54f")
         self._score_label.config(
-            text=f"Score: T1: {self.team_tricks[0]} | T2: {self.team_tricks[1]}")
+            text=f"Tricks — T1: {self.team_tricks[0]} | T2: {self.team_tricks[1]}")
 
         self.leader_id = winner
         self._next_trick_btn.config(state="normal")
         self._deck_label.config(text=f"AI HAND — {len(self.ai_hand)} cards left")
 
     def _update_trick_display(self) -> None:
-        """Show cards played in current trick with leader indicator."""
-        player_names = {0: "P1", 1: "P2", 2: "P3", 3: "P4"}
-        lines = []
-        leader = self._play_order[0] if hasattr(self, '_play_order') and self._play_order else None
-        for pid, card in self.trick_cards:
-            prefix = "→ " if pid == leader else "  "
-            lines.append(f"{prefix}{player_names[pid]}: {card_str(card)}")
-        if not lines:
-            leader_name = player_names.get(self.leader_id, "?")
-            lines.append(f"  Leader: {leader_name} (waiting...)")
-        self._trick_display.config(text="\n".join(lines))
+        """No-op — display is now handled by slot widgets."""
+        pass
 
-    def _end_game(self) -> None:
-        """Show end-of-shota summary."""
-        self.phase = "done"
+    def _end_shota(self) -> None:
+        """Show end-of-shota summary with option to continue."""
+        self.phase = "shota_end"
         t1 = self.team_tricks[0]
         t2 = self.team_tricks[1]
-        winner = "Your Team (T1)" if t1 > t2 else "Opponent Team (T2)"
+        winner = "Your Team (AI+P3)" if t1 > t2 else "Opponents (P2+P4)"
         self._command_label.config(
-            text=f"GAME OVER — {winner} wins! ({t1}-{t2})", fg="#ffd54f")
-        self._instruction.config(text="Shota complete. Click Reset to play again.")
+            text=f"Shota Complete — {winner} wins! ({t1}-{t2})", fg="#ffd54f")
+        self._instruction.config(text="Shota done. Start next shota or reset.")
         self._next_trick_btn.config(state="disabled")
+
+        # Replace next trick button with next shota button.
+        for w in self._right.winfo_children():
+            w.destroy()
+
+        tk.Label(self._right, text="SHOTA COMPLETE",
+                 font=("Segoe UI", 14, "bold"), fg=COLORS["gold"], bg="#252525"
+                 ).pack(anchor="w", pady=(8, 4))
+        tk.Label(self._right, text=f"{winner} — Tricks: {t1} vs {t2}",
+                 font=("Segoe UI", 11), fg="#ffffff", bg="#252525"
+                 ).pack(anchor="w", pady=(0, 8))
+        tk.Label(self._right, text=f"Bid: {self.bid_value} by P{self.bid_winner_id + 1}",
+                 font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525"
+                 ).pack(anchor="w", pady=(0, 12))
+
+        tk.Button(self._right, text="▶  Next Shota", command=self._next_shota,
+                  font=("Segoe UI", 11, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                  bd=0, padx=16, pady=8, cursor="hand2").pack(anchor="w", pady=(4, 0))
+        tk.Button(self._right, text="↺ Reset All", command=self._reset_all,
+                  font=("Segoe UI", 9), fg="#fff", bg=COLORS["btn_grey"],
+                  bd=0, padx=8, pady=4, cursor="hand2").pack(anchor="w", pady=(12, 0))
+
+    def _next_shota(self) -> None:
+        """Start a new shota — clear hand, keep scores, rotate Qabool."""
+        self.ai_hand.clear()
+        self.trick_cards.clear()
+        self.trump_suit = None
+        self.trick_number = 0
+        self.team_tricks = [0, 0]
+        self.phase = "hand"
+
+        # Rotate Qabool clockwise.
+        self.qabool_id = (self.qabool_id + 1) % 4
+
+        # Reset card buttons.
+        for card, btn in self._card_buttons.items():
+            fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
+            btn.config(bg=COLORS["card_bg"], fg=fg, relief="solid",
+                       command=lambda c=card: self._card_clicked(c))
+
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+        self._deck_label.config(text="AI HAND — Click 13 cards (0/13)")
+        self._command_label.config(
+            text=f"New Shota — Qabool: {player_names[self.qabool_id]}", fg="#ffd54f")
+        self._instruction.config(text="Select your new 13 cards for this shota")
+        self._build_right_panel()
 
     # ----------------------------------------------------------
     # Helpers
