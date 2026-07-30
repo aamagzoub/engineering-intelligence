@@ -116,11 +116,22 @@ class AnimatingCard:
             return
         pos = self.current_pos
         scale = self.current_scale
+
+        # Motion trail — draw 2 fading ghosts at previous positions.
+        t = self.progress
+        if 0.1 < t < 0.95:
+            for trail_i, alpha in [(0.7, 40), (0.85, 70)]:
+                trail_t = t * trail_i
+                tx = self.start_pos[0] + (self.end_pos[0] - self.start_pos[0]) * trail_t
+                ty = self.start_pos[1] + (self.end_pos[1] - self.start_pos[1]) * trail_t
+                ghost = self.surface.copy()
+                ghost.set_alpha(alpha)
+                screen.blit(ghost, (tx, ty))
+
         if abs(scale - 1.0) > 0.01:
             w = int(self.surface.get_width() * scale)
             h = int(self.surface.get_height() * scale)
             scaled_surf = pygame.transform.smoothscale(self.surface, (w, h))
-            # Centre the scaled surface on the position
             offset_x = (w - self.surface.get_width()) // 2
             offset_y = (h - self.surface.get_height()) // 2
             screen.blit(scaled_surf, (pos[0] - offset_x, pos[1] - offset_y))
@@ -332,6 +343,36 @@ class GameScreen:
             if self._player_points >= threshold:
                 return name
         return "Private"
+
+    def _get_rank_progress(self) -> float:
+        """Get progress (0.0 to 1.0) toward the next rank."""
+        ranks = [
+            (8000, "Field Marshal"),
+            (6000, "General"),
+            (4500, "Lt. General"),
+            (3500, "Major General"),
+            (2700, "Brigadier"),
+            (2100, "Colonel"),
+            (1600, "Lt. Colonel"),
+            (1200, "Major"),
+            (900, "Captain"),
+            (650, "1st Lieutenant"),
+            (450, "2nd Lieutenant"),
+            (300, "Warrant Officer"),
+            (200, "Staff Sergeant"),
+            (120, "Sergeant"),
+            (60, "Corporal"),
+            (25, "Private 1st Class"),
+            (0, "Private"),
+        ]
+        pts = self._player_points
+        for i, (threshold, _) in enumerate(ranks):
+            if pts >= threshold:
+                if i == 0:
+                    return 1.0  # Max rank.
+                next_threshold = ranks[i - 1][0]
+                return (pts - threshold) / (next_threshold - threshold)
+        return 0.0
 
     def _shape_arabic(self, text: str) -> str:
         """Reshape Arabic text for proper RTL connected rendering."""
@@ -1280,8 +1321,12 @@ class GameScreen:
             return
 
         for i in range(7):
-            rect = pygame.Rect(row1_start + 65 + i * 60, cy - 10, 55, 45)
-            if rect.collidepoint(pos):
+            chip_cx = row1_start + 65 + i * 60 + 27
+            chip_cy = cy + 12
+            chip_r = 22
+            dx = pos[0] - chip_cx
+            dy = pos[1] - chip_cy
+            if dx * dx + dy * dy <= chip_r * chip_r:
                 self._selected_bid = 7 + i
                 return
 
@@ -1467,6 +1512,9 @@ class GameScreen:
         table_rect = pygame.Rect(10, 10, TABLE_WIDTH - 20, SCREEN_HEIGHT - 20)
         pygame.draw.rect(self.screen, TABLE_FELT, table_rect, border_radius=12)
         pygame.draw.rect(self.screen, TABLE_BORDER, table_rect, width=2, border_radius=12)
+
+        # Gold corner ornaments.
+        self._draw_table_corners(table_rect)
 
         # Table felt texture — subtle diagonal lines.
         felt_texture = pygame.Surface((table_rect.width, table_rect.height), pygame.SRCALPHA)
@@ -1671,7 +1719,15 @@ class GameScreen:
         y += 20
         self.screen.blit(label_font.render(f"{self._player_points} pts", True, TEXT_LIGHT),
                          (panel_x + pad, y))
-        y += 24
+        y += 14
+        # Rank progress bar.
+        prog = self._get_rank_progress()
+        prog_x = panel_x + pad
+        prog_w = inner_w
+        pygame.draw.rect(self.screen, (30, 50, 30), (prog_x, y, prog_w, 4), border_radius=2)
+        if prog > 0:
+            pygame.draw.rect(self.screen, TEXT_GOLD, (prog_x, y, int(prog_w * prog), 4), border_radius=2)
+        y += 12
 
         # ========== GAME INFO CARD (fixed height) ==========
         game_card_y = y
@@ -1957,6 +2013,34 @@ class GameScreen:
         val_surf = value_font.render(value, True, value_color)
         self.screen.blit(val_surf, (panel_x + panel_w - pad - 4 - val_surf.get_width(), y))
 
+    def _draw_table_corners(self, table_rect):
+        """Draw gold decorative corner flourishes on the table."""
+        gold = (200, 170, 50)
+        gold_dim = (140, 115, 30)
+        length = 35
+        offset = 18  # Inset from the corner.
+
+        corners = [
+            (table_rect.left + offset, table_rect.top + offset, 1, 1),      # Top-left
+            (table_rect.right - offset, table_rect.top + offset, -1, 1),    # Top-right
+            (table_rect.left + offset, table_rect.bottom - offset, 1, -1),  # Bottom-left
+            (table_rect.right - offset, table_rect.bottom - offset, -1, -1),  # Bottom-right
+        ]
+
+        for cx, cy, dx, dy in corners:
+            # L-shaped corner flourish.
+            pygame.draw.line(self.screen, gold, (cx, cy), (cx + length * dx, cy), 2)
+            pygame.draw.line(self.screen, gold, (cx, cy), (cx, cy + length * dy), 2)
+            # Small decorative dot at the corner vertex.
+            pygame.draw.circle(self.screen, gold, (cx, cy), 3)
+            # Short inner accent lines.
+            pygame.draw.line(self.screen, gold_dim,
+                             (cx + 6 * dx, cy + 6 * dy),
+                             (cx + 18 * dx, cy + 6 * dy), 1)
+            pygame.draw.line(self.screen, gold_dim,
+                             (cx + 6 * dx, cy + 6 * dy),
+                             (cx + 6 * dx, cy + 18 * dy), 1)
+
     def _render_quit_overlay(self):
         """Feature 21: ESC quit overlay."""
         # Render game underneath.
@@ -1978,11 +2062,11 @@ class GameScreen:
         self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 10))
 
     def _render_game_over(self):
-        """Render game over screen with stats."""
+        """Render game over screen with fanned cards and stats."""
         cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
 
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
+        overlay.fill((0, 0, 0, 200))
         self.screen.blit(overlay, (0, 0))
 
         if self.game_scores[0] > self.game_scores[1]:
@@ -1995,62 +2079,84 @@ class GameScreen:
             winner_text = "IT'S A DRAW!"
             color = TEXT_WHITE
 
-        trophy_font = pygame.font.SysFont("Segoe UI", 48, bold=True)
+        # Fanned victory cards behind the text.
+        fan_cards = [("A", "♠"), ("K", "♥"), ("Q", "♣"), ("J", "♦"), ("A", "♥")]
+        fan_cx = cx
+        fan_y = cy - 60
+        for i, (r, s) in enumerate(fan_cards):
+            angle = (i - 2) * 12  # -24, -12, 0, 12, 24 degrees.
+            card_surf = create_card_surface(r, s, CARD_LARGE_W, CARD_LARGE_H)
+            rotated = pygame.transform.rotate(card_surf, -angle)
+            rot_rect = rotated.get_rect(center=(fan_cx + (i - 2) * 40, fan_y))
+            rotated.set_alpha(120)
+            self.screen.blit(rotated, rot_rect)
+
+        # Title.
+        trophy_font = pygame.font.SysFont("Segoe UI", 42, bold=True)
         trophy = trophy_font.render("GAME OVER", True, TEXT_GOLD)
-        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 140))
+        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 120))
 
-        go_font = pygame.font.SysFont("Segoe UI", 32, bold=True)
-        go = go_font.render("GAME OVER", True, TEXT_WHITE)
-        self.screen.blit(go, go.get_rect(centerx=cx, y=cy - 80))
-
-        win_font = pygame.font.SysFont("Segoe UI", 24, bold=True)
+        # Winner.
+        win_font = pygame.font.SysFont("Segoe UI", 28, bold=True)
         win = win_font.render(winner_text, True, color)
-        self.screen.blit(win, win.get_rect(centerx=cx, y=cy - 40))
+        self.screen.blit(win, win.get_rect(centerx=cx, y=cy - 60))
 
+        # Score.
         score_font = pygame.font.SysFont("Segoe UI", 18)
         score = score_font.render(
-            f"Team 1 (You + Hima): {self.game_scores[0]}  │  Team 2 (Gaafar + Musaab): {self.game_scores[1]}",
+            f"T1 ({DISPLAY_NAMES[2]} + {DISPLAY_NAMES[0]}): {self.game_scores[0]}  │  "
+            f"T2 ({DISPLAY_NAMES[1]} + {DISPLAY_NAMES[3]}): {self.game_scores[1]}",
             True, TEXT_LIGHT)
         self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 5))
 
-        # End-of-game stats.
+        # Stats summary.
         stats = getattr(self, '_game_stats', {})
         stat_font = pygame.font.SysFont("Segoe UI", 14)
-        stats_lines = [
-            f"Shotas: {stats.get('shotas_played', self.shota_number)}  │  "
-            f"Daks: {self._dak_count}  │  "
-            f"Seeks: {stats.get('seeks', 0)}  │  "
-            f"Bids Met: {stats.get('bids_met', 0)}",
-        ]
-        y_stat = cy + 40
-        for line in stats_lines:
-            surf = stat_font.render(line, True, TEXT_DIM)
-            self.screen.blit(surf, surf.get_rect(centerx=cx, y=y_stat))
-            y_stat += 22
+        stat_line = (f"Shotas: {stats.get('shotas_played', self.shota_number)}  │  "
+                     f"Daks: {self._dak_count}  │  "
+                     f"Seeks: {stats.get('seeks', 0)}  │  "
+                     f"Bids Met: {stats.get('bids_met', 0)}")
+        self.screen.blit(stat_font.render(stat_line, True, TEXT_LIGHT),
+                         stat_font.render(stat_line, True, TEXT_LIGHT)
+                         .get_rect(centerx=cx, y=cy + 40))
 
-        hint = self.fonts["medium"].render("Press SPACE for new game  |  ESC for menu", True, TEXT_DIM)
-        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 90))
+        hint = self.fonts["medium"].render(
+            "Press SPACE for new game  |  ESC for menu", True, TEXT_LIGHT)
+        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 80))
 
         self._render_game_log()
 
     def _render_shota_end(self):
-        """Render Shota end summary."""
+        """Render Shota end summary — chapter break style."""
         cx, cy = TABLE_WIDTH // 2, SCREEN_HEIGHT // 2
 
+        # Dark overlay.
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 140))
+        overlay.fill((0, 0, 0, 160))
         self.screen.blit(overlay, (0, 0))
+
+        # Card-style panel in the centre.
+        panel_w, panel_h = 420, 280
+        panel_rect = pygame.Rect(cx - panel_w // 2, cy - panel_h // 2, panel_w, panel_h)
+        pygame.draw.rect(self.screen, (20, 35, 20), panel_rect, border_radius=12)
+        pygame.draw.rect(self.screen, TEXT_GOLD, panel_rect, width=2, border_radius=12)
+
+        # Gold corner dots on the panel.
+        for corner_x, corner_y in [(panel_rect.left + 12, panel_rect.top + 12),
+                                    (panel_rect.right - 12, panel_rect.top + 12),
+                                    (panel_rect.left + 12, panel_rect.bottom - 12),
+                                    (panel_rect.right - 12, panel_rect.bottom - 12)]:
+            pygame.draw.circle(self.screen, TEXT_GOLD, (corner_x, corner_y), 3)
 
         playing_team = self.players[self.shooter_id].team_id
         bid_met = self.team_tricks[playing_team] >= self.bid_value
 
-        title_font = pygame.font.SysFont("Segoe UI", 24, bold=True)
+        # Title.
+        title_font = pygame.font.SysFont("Segoe UI", 26, bold=True)
         title = title_font.render(f"Shota {self.shota_number} Complete", True, TEXT_WHITE)
-        self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 60))
+        self.screen.blit(title, title.get_rect(centerx=cx, y=panel_rect.top + 20))
 
-        result_color = HIGHLIGHT_GREEN if bid_met else BUTTON_RED
-        human_team = 0  # Players 0, 2 = Team 1.
-        playing_won = self.team_tricks[playing_team] >= self.bid_value
+        # Result.
         your_team_won = self.team_tricks[0] > self.team_tricks[1]
         if your_team_won:
             result_text = "Your Team WON"
@@ -2058,39 +2164,51 @@ class GameScreen:
         else:
             result_text = "Your Team LOST"
             result_color = BUTTON_RED
-        result = self.fonts["large"].render(result_text, True, result_color)
-        self.screen.blit(result, result.get_rect(centerx=cx, y=cy - 20))
+        result_font = pygame.font.SysFont("Segoe UI", 20, bold=True)
+        self.screen.blit(result_font.render(result_text, True, result_color),
+                         result_font.render(result_text, True, result_color)
+                         .get_rect(centerx=cx, y=panel_rect.top + 55))
 
         # Seek announcement.
+        info_y = panel_rect.top + 85
         if hasattr(self, '_seek_team') and self._seek_team is not None:
-            seek_font = pygame.font.SysFont("Segoe UI", 20, bold=True)
-            seek_text = f"* SEEK! Team {self._seek_team + 1} won all 13 tricks! *"
-            seek_surf = seek_font.render(seek_text, True, TEXT_GOLD)
-            self.screen.blit(seek_surf, seek_surf.get_rect(centerx=cx, y=cy + 5))
-            y_offset = 35
-        else:
-            y_offset = 5
+            seek_font = pygame.font.SysFont("Segoe UI", 18, bold=True)
+            seek_surf = seek_font.render(
+                f"SEEK! Team {self._seek_team + 1} won all 13!", True, TEXT_GOLD)
+            self.screen.blit(seek_surf, seek_surf.get_rect(centerx=cx, y=info_y))
+            info_y += 28
 
-        tricks = self.fonts["medium"].render(
-            f"Tricks — Team 1: {self.team_tricks[0]}  |  Team 2: {self.team_tricks[1]}",
+        # Tricks & Score.
+        info_font = pygame.font.SysFont("Segoe UI", 14)
+        tricks_surf = info_font.render(
+            f"Tricks — T1: {self.team_tricks[0]}  |  T2: {self.team_tricks[1]}", True, TEXT_LIGHT)
+        self.screen.blit(tricks_surf, tricks_surf.get_rect(centerx=cx, y=info_y))
+        info_y += 22
+
+        score_font = pygame.font.SysFont("Segoe UI", 16, bold=True)
+        score_surf = score_font.render(
+            f"Total Score: T1 = {self.game_scores[0]}  |  T2 = {self.game_scores[1]}", True, TEXT_GOLD)
+        self.screen.blit(score_surf, score_surf.get_rect(centerx=cx, y=info_y))
+        info_y += 28
+
+        # Next shota preview.
+        next_qabool = (self.qabool_id + 1) % 4
+        next_font = pygame.font.SysFont("Segoe UI", 13)
+        next_surf = next_font.render(
+            f"Next Shota {self.shota_number + 1}  •  Qabool: {DISPLAY_NAMES[next_qabool]}",
             True, TEXT_LIGHT)
-        self.screen.blit(tricks, tricks.get_rect(centerx=cx, y=cy + y_offset + 10))
-
-        score = self.fonts["large"].render(
-            f"Score: T1 = {self.game_scores[0]} | T2 = {self.game_scores[1]}",
-            True, TEXT_GOLD)
-        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + y_offset + 40))
+        self.screen.blit(next_surf, next_surf.get_rect(centerx=cx, y=info_y))
 
         # "Next Shota" button.
         ns_press = 2 if (self._button_press_timer > 0 and self._button_press_id == "next_shota") else 0
-        btn_rect = pygame.Rect(cx - 90, cy + 100 + ns_press, 180, 45 - ns_press)
+        btn_rect = pygame.Rect(cx - 90, panel_rect.bottom - 55 + ns_press, 180, 40 - ns_press)
         mx, my = pygame.mouse.get_pos()
         hover = btn_rect.collidepoint(mx, my)
         bg = (56, 142, 60) if hover else BUTTON_GREEN
         pygame.draw.rect(self.screen, bg, btn_rect, border_radius=10)
         if hover:
             pygame.draw.rect(self.screen, (100, 200, 100), btn_rect, width=2, border_radius=10)
-        btn_font = pygame.font.SysFont("Segoe UI", 16, bold=True)
+        btn_font = pygame.font.SysFont("Segoe UI", 15, bold=True)
         btn_text = btn_font.render("Next Shota", True, TEXT_WHITE)
         self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
 
@@ -2472,24 +2590,26 @@ class GameScreen:
             pass_surf = btn_font.render(pass_label, True, TEXT_GREEN)
             self.screen.blit(pass_surf, pass_surf.get_rect(center=pass_rect.center))
 
-            # Bid numbers.
+            # Bid numbers — poker chip style.
             for i, val in enumerate(range(7, 14)):
-                rect = pygame.Rect(row1_start + 65 + i * 60, cy - 10, 55, 45)
-                hover = rect.collidepoint(mx, my)
+                chip_cx = row1_start + 65 + i * 60 + 27
+                chip_cy = cy + 12
+                chip_r = 22
+                hover = (mx - chip_cx) ** 2 + (my - chip_cy) ** 2 <= chip_r ** 2
                 selected = (self._selected_bid == val)
 
                 if selected:
-                    bg = (30, 100, 30)
-                    pygame.draw.rect(self.screen, bg, rect, border_radius=6)
-                    pygame.draw.rect(self.screen, TEXT_GREEN, rect, width=2, border_radius=6)
+                    pygame.draw.circle(self.screen, (30, 100, 30), (chip_cx, chip_cy), chip_r)
+                    pygame.draw.circle(self.screen, TEXT_GREEN, (chip_cx, chip_cy), chip_r, 2)
+                    pygame.draw.circle(self.screen, TEXT_GREEN, (chip_cx, chip_cy), chip_r - 5, 1)
                 elif hover:
-                    bg = (56, 142, 60)
-                    pygame.draw.rect(self.screen, bg, rect, border_radius=6)
-                    pygame.draw.rect(self.screen, TEXT_GREEN, rect, width=1, border_radius=6)
+                    pygame.draw.circle(self.screen, (56, 142, 60), (chip_cx, chip_cy), chip_r)
+                    pygame.draw.circle(self.screen, TEXT_GREEN, (chip_cx, chip_cy), chip_r, 1)
                 else:
-                    pygame.draw.rect(self.screen, BUTTON_GREEN, rect, border_radius=6)
+                    pygame.draw.circle(self.screen, BUTTON_GREEN, (chip_cx, chip_cy), chip_r)
+                    pygame.draw.circle(self.screen, (40, 120, 40), (chip_cx, chip_cy), chip_r - 5, 1)
                 num_surf = btn_font.render(str(val), True, TEXT_WHITE)
-                self.screen.blit(num_surf, num_surf.get_rect(center=rect.center))
+                self.screen.blit(num_surf, num_surf.get_rect(center=(chip_cx, chip_cy)))
 
             # Row 2: Suit buttons. 4 buttons 65px each with 10px gap = 290px centred at cx.
             suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]

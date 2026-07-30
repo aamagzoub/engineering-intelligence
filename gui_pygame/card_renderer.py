@@ -45,22 +45,58 @@ def create_card_surface(rank: str, suit: str, width: int = CARD_WIDTH,
 
 
 def create_card_back(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> pygame.Surface:
-    """Create a card back surface."""
+    """Create a card back with a repeating geometric lattice pattern."""
     surf = pygame.Surface((width, height), pygame.SRCALPHA)
 
-    # Blue card back.
+    # Base — deep blue rounded rect.
     rect = pygame.Rect(0, 0, width, height)
-    pygame.draw.rect(surf, (21, 101, 192), rect, border_radius=CARD_RADIUS)
-    pygame.draw.rect(surf, (13, 71, 161), rect, width=1, border_radius=CARD_RADIUS)
+    pygame.draw.rect(surf, (18, 60, 140), rect, border_radius=CARD_RADIUS)
 
-    # Diamond pattern.
-    inner = pygame.Rect(6, 6, width - 12, height - 12)
-    pygame.draw.rect(surf, (25, 118, 210), inner, border_radius=4)
+    # Inner border frame.
+    inner = pygame.Rect(4, 4, width - 8, height - 8)
+    pygame.draw.rect(surf, (22, 80, 170), inner, border_radius=5)
+    pygame.draw.rect(surf, (40, 110, 200), inner, width=1, border_radius=5)
 
-    # Centre diamond.
+    # Repeating diamond lattice pattern inside the inner frame.
+    pattern_rect = pygame.Rect(7, 7, width - 14, height - 14)
+    pattern_surf = pygame.Surface((pattern_rect.width, pattern_rect.height), pygame.SRCALPHA)
+
+    # Diamond grid — small repeating diamonds.
+    diamond_size = 8
+    line_color = (60, 140, 230, 70)
+    for row in range(0, pattern_rect.height + diamond_size, diamond_size):
+        for col in range(0, pattern_rect.width + diamond_size, diamond_size * 2):
+            offset = diamond_size if (row // diamond_size) % 2 else 0
+            cx = col + offset
+            cy = row
+            # Small diamond.
+            half = diamond_size // 2
+            pts = [(cx, cy - half), (cx + half, cy), (cx, cy + half), (cx - half, cy)]
+            pygame.draw.polygon(pattern_surf, line_color, pts, width=1)
+
+    # Overlay a subtle cross-hatch.
+    hatch_color = (80, 160, 240, 40)
+    for i in range(-pattern_rect.height, pattern_rect.width, 12):
+        pygame.draw.line(pattern_surf, hatch_color, (i, 0), (i + pattern_rect.height, pattern_rect.height))
+        pygame.draw.line(pattern_surf, hatch_color, (i + pattern_rect.height, 0), (i, pattern_rect.height))
+
+    surf.blit(pattern_surf, pattern_rect.topleft)
+
+    # Centre ornament — larger diamond with inner detail.
     cx, cy = width // 2, height // 2
-    points = [(cx, cy - 15), (cx + 10, cy), (cx, cy + 15), (cx - 10, cy)]
-    pygame.draw.polygon(surf, (255, 255, 255, 100), points)
+    # Outer diamond.
+    size = min(width, height) // 4
+    outer_pts = [(cx, cy - size), (cx + size, cy), (cx, cy + size), (cx - size, cy)]
+    pygame.draw.polygon(surf, (255, 255, 255, 50), outer_pts)
+    pygame.draw.polygon(surf, (180, 220, 255, 100), outer_pts, width=1)
+    # Inner diamond.
+    s2 = size // 2
+    inner_pts = [(cx, cy - s2), (cx + s2, cy), (cx, cy + s2), (cx - s2, cy)]
+    pygame.draw.polygon(surf, (255, 255, 255, 30), inner_pts)
+    pygame.draw.polygon(surf, (180, 220, 255, 80), inner_pts, width=1)
+
+    # Card edge border.
+    pygame.draw.rect(surf, (13, 50, 120), rect, width=2, border_radius=CARD_RADIUS)
 
     return surf
 
