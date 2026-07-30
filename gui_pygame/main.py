@@ -164,7 +164,12 @@ class WistApp:
         if self.state == "playing":
             self.game_screen.update()
             if self.game_screen.phase == "idle":
-                self.state = "menu"
+                # Check if full restart was requested (back to name entry).
+                if getattr(self.game_screen, '_restart_to_name', False):
+                    self.game_screen._restart_to_name = False
+                    self.state = "name_entry"
+                else:
+                    self.state = "menu"
         elif self.state == "name_entry":
             self._name_cursor_timer += 1
             if self._name_cursor_timer >= 30:
