@@ -1,23 +1,15 @@
 """
 Learning Wist Agent — Monte Carlo Policy Improvement.
 
-Instead of Q-learning (which updates per-step and struggles with
-large state spaces), this agent uses Monte Carlo methods:
-
+Uses Monte Carlo methods for both card-play and bidding:
 1. Play a full Shota (13 tricks).
 2. At the end, assign credit to every (state, action) pair
-   based on whether the team WON or LOST that Shota.
-3. Over thousands of games, the agent learns which actions
-   in which states lead to winning.
+   based on graduated rewards (tricks won, bid met, seek).
+3. Over thousands of games, the agent learns optimal strategies.
 
-Why this works better than Q-learning for cards:
-- Card games have delayed rewards (you don't know if a play
-  was good until the Shota ends).
-- Monte Carlo uses the ACTUAL outcome, not estimated next-state values.
-- With coarse state encoding, similar situations get grouped together
-  and the agent learns general strategies.
-
-The agent can be saved/loaded as JSON.
+The agent maintains two Q-tables:
+- play_q: for card-play decisions (state → action → value)
+- bid_q: for bidding decisions (state → action → value)
 """
 
 import json
@@ -43,17 +35,22 @@ from intelligence.core.observation import Observation
 SUIT_INDEX = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
 
 
-def encode_state(obs: WistObservation) -> str:
+def encode_play_state(obs: WistObservation) -> str:
     """
-    Coarse state encoding for card play decisions.
+    Rich state encoding for card play decisions.
 
-    Features:
-    - Position: leading / 2nd / 3rd / 4th
-    - My trump strength: none(0), some(1-2), strong(3+)
-    - My high cards: none, some, many
-    - Can follow suit: yes/no
-    - Partner winning current trick: yes/no/na
-    - Game phase: early(10+), mid(6-9), late(1-5) cards left
+    Features (11 dimensions):
+    - Position in trick: 0/1/2/3
+    - Trump strength: 0/1/2 (none / 1-2 / 3+)
+    - High cards in hand: 0/1/2 (none / 1-2 / 3+)
+    - Can follow suit: 0/1
+    - Partner winning: Y/N/U (yes/no/unknown)
+    - Game phase: E(arly 10+) / M(id 6-9) / L(ate 1-5)
+    - Trick number bucket: A(1-4) / B(5-9) / C(10-13)
+    - Team tricks differential: W(inning +3) / A(head +1-2) / T(ied) / B(ehind)
+    - Am I the shooter's team: S/D (shooter/defender)
+    - Leading suit is trump: Y/N
+    - Bid difficulty: L(ow 7-8) / M(id 9-10) / H(igh 11-13)
     """
     hand = obs.hand
     trump = obs.trump_suit
@@ -64,20 +61,20 @@ def encode_state(obs: WistObservation) -> str:
     if obs.current_trick and obs.current_trick.played_cards:
         n_played = len(obs.current_trick.played_cards)
         leading_suit = obs.current_trick.leading_suit
-    pos = str(n_played)  # "0","1","2","3"
+    pos = str(n_played)
 
     # Trump strength.
     trump_count = sum(1 for c in hand if c.suit == trump) if trump else 0
     ts = "0" if trump_count == 0 else ("1" if trump_count <= 2 else "2")
 
-    # High card count (A, K, Q in hand).
+    # High card count (A, K, Q).
     highs = sum(1 for c in hand if c.rank in (Rank.ACE, Rank.KING, Rank.QUEEN))
     hc = "0" if highs == 0 else ("1" if highs <= 2 else "2")
 
     # Can follow suit.
     cf = "1" if (leading_suit and any(c.suit == leading_suit for c in hand)) else "0"
 
-    # Partner winning.
+    # Partner winning current trick.
     pw = "U"
     if obs.current_trick and obs.current_trick.played_cards and trump:
         best_id = obs.current_trick.played_cards[0].player_id
@@ -96,20 +93,43 @@ def encode_state(obs: WistObservation) -> str:
         my_team = {obs.player_id, (obs.player_id + 2) % 4}
         pw = "Y" if best_id in my_team else "N"
 
-    # Game phase.
+    # Game phase (cards left in hand).
     cl = len(hand)
     ph = "E" if cl >= 10 else ("M" if cl >= 6 else "L")
 
-    return f"{pos}{ts}{hc}{cf}{pw}{ph}"
+    # Trick number bucket.
+    trick_num = 14 - cl  # Approximate trick number.
+    tn = "A" if trick_num <= 4 else ("B" if trick_num <= 9 else "C")
+
+    # Team tricks differential.
+    scores = obs.team_scores
+    my_team_id = 0 if obs.player_id in (0, 2) else 1
+    opp_team_id = 1 - my_team_id
+    my_tricks = scores.get(my_team_id, 0)
+    opp_tricks = scores.get(opp_team_id, 0)
+    diff = my_tricks - opp_tricks
+    if diff >= 3:
+        td = "W"
+    elif diff >= 1:
+        td = "A"
+    elif diff == 0:
+        td = "T"
+    else:
+        td = "B"
+
+    # Leading suit is trump.
+    lt = "Y" if (leading_suit and leading_suit == trump) else "N"
+
+    return f"{pos}{ts}{hc}{cf}{pw}{ph}{tn}{td}{lt}"
 
 
-def encode_action(card: Card, trump: Suit | None, leading_suit: Suit | None) -> str:
+def encode_play_action(card: Card, trump: Suit | None, leading_suit: Suit | None) -> str:
     """
-    Coarse action encoding.
+    Action encoding for card play.
 
-    Encodes the TYPE of play, not the exact card:
+    Encodes the TYPE of play:
     - Is it trump? T/N
-    - Is it following suit? F/O (follow/off)
+    - Is it following suit? F/O (follow/off-suit)
     - Rank tier: H(igh: A,K,Q), M(id: J,10,9), L(ow: 8-2)
     """
     is_trump = "T" if card.suit == trump else "N"
@@ -126,6 +146,58 @@ def encode_action(card: Card, trump: Suit | None, leading_suit: Suit | None) -> 
     return f"{is_trump}{follows}{tier}"
 
 
+def encode_bid_state(obs: BiddingObservation) -> str:
+    """
+    State encoding for bidding decisions.
+
+    Features:
+    - Longest suit count: 4/5/6/7
+    - High cards (A,K,Q) count: 0/1/2/3+
+    - Has existing bid: Y/N
+    - Is Qabool: Y/N
+    - Trump suit strength relative to longest
+    """
+    hand = obs.hand
+    suit_counts = Counter(card.suit for card in hand)
+    longest = max(suit_counts.values()) if suit_counts else 0
+    longest_suit = max(suit_counts, key=suit_counts.get) if suit_counts else None
+
+    # Longest suit bucket.
+    ls = str(min(longest, 7))
+
+    # High cards in longest suit.
+    highs_in_longest = sum(1 for c in hand
+                           if c.suit == longest_suit and c.rank in (Rank.ACE, Rank.KING, Rank.QUEEN))
+    hl = str(min(highs_in_longest, 3))
+
+    # Total high cards.
+    total_highs = sum(1 for c in hand if c.rank in (Rank.ACE, Rank.KING, Rank.QUEEN))
+    th = str(min(total_highs, 4))
+
+    # Has existing bid.
+    hb = "Y" if obs.current_highest_bid else "N"
+
+    # Is Qabool.
+    iq = "Y" if obs.is_sahib_al_qabool else "N"
+
+    return f"{ls}{hl}{th}{hb}{iq}"
+
+
+def encode_bid_action(action: Action) -> str:
+    """Encode bidding action."""
+    if isinstance(action, PassAction):
+        return "PASS"
+    if isinstance(action, BidAction):
+        v = action.value
+        if v <= 8:
+            return "LOW"
+        elif v <= 10:
+            return "MID"
+        else:
+            return "HIGH"
+    return "PASS"
+
+
 # ---------------------------------------------------------------
 # Learning Agent
 # ---------------------------------------------------------------
@@ -133,23 +205,24 @@ def encode_action(card: Card, trump: Suit | None, leading_suit: Suit | None) -> 
 
 class LearningAgent(Agent):
     """
-    Monte Carlo learning agent for Wist.
-
-    Learns by playing full Shotas and updating action values
-    based on whether the team won or lost.
+    Monte Carlo learning agent for Wist with separate play and bid Q-tables.
     """
 
     def __init__(self, epsilon: float = 0.3, training: bool = True) -> None:
-        # Action value table: state → {action: average_return}
+        # Play Q-table: state → {action: average_return}
         self.q_table: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        # Visit count for averaging: state → {action: count}
         self.n_table: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+        # Bid Q-table.
+        self.bid_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        self.bid_n: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
         self.epsilon = epsilon
         self.training = training
 
-        # Episode memory: list of (state, action_key) for current Shota.
-        self._episode: list[tuple[str, str]] = []
+        # Episode memory for current Shota.
+        self._play_episode: list[tuple[str, str]] = []
+        self._bid_episode: list[tuple[str, str]] = []
 
         self.total_updates = 0
         self.episodes_trained = 0
@@ -188,15 +261,15 @@ class LearningAgent(Agent):
 
         # Record state-action for this episode.
         if self.training:
-            state = encode_state(obs)
-            action_key = encode_action(card, obs.trump_suit, leading_suit)
-            self._episode.append((state, action_key))
+            state = encode_play_state(obs)
+            action_key = encode_play_action(card, obs.trump_suit, leading_suit)
+            self._play_episode.append((state, action_key))
 
         return PlayCardAction(player_id=obs.player_id, card=card)
 
     def _best_card(self, obs: WistObservation, playable: list[Card]) -> Card:
         """Pick the card whose action-type has the best learned value."""
-        state = encode_state(obs)
+        state = encode_play_state(obs)
         q_values = self.q_table[state]
 
         leading_suit = None
@@ -207,7 +280,7 @@ class LearningAgent(Agent):
         best_q = float("-inf")
 
         for card in playable:
-            key = encode_action(card, obs.trump_suit, leading_suit)
+            key = encode_play_action(card, obs.trump_suit, leading_suit)
             q = q_values[key]
             if q > best_q:
                 best_q = q
@@ -216,7 +289,7 @@ class LearningAgent(Agent):
         return best_card
 
     # ----------------------------------------------------------
-    # Bidding (heuristic — learning focuses on play)
+    # Bidding (learned)
     # ----------------------------------------------------------
 
     def _act_bidding(self, obs: BiddingObservation) -> Action:
@@ -224,83 +297,174 @@ class LearningAgent(Agent):
         suit_counts = Counter(card.suit for card in hand)
         longest = max(suit_counts.values()) if suit_counts else 0
 
+        # Can't bid with 8+ in one suit (Dak territory).
         if longest >= 8:
+            action = PassAction(player_id=obs.player_id)
+            if self.training:
+                state = encode_bid_state(obs)
+                self._bid_episode.append((state, encode_bid_action(action)))
+            return action
+
+        # Calculate feasible bid range.
+        min_bid = longest + 3
+        min_bid = max(7, min_bid)
+
+        # Explore or exploit.
+        if self.training and random.random() < self.epsilon:
+            action = self._random_bid(obs, min_bid, longest)
+        else:
+            action = self._best_bid(obs, min_bid, longest)
+
+        if self.training:
+            state = encode_bid_state(obs)
+            self._bid_episode.append((state, encode_bid_action(action)))
+
+        return action
+
+    def _random_bid(self, obs: BiddingObservation, min_bid: int, longest: int) -> Action:
+        """Random exploration bid."""
+        # 40% chance to pass, 60% chance to bid.
+        if random.random() < 0.4:
             return PassAction(player_id=obs.player_id)
 
-        bid_value = longest + 3
-        bid_value = max(7, min(bid_value, 13))
+        bid_value = random.randint(max(7, min_bid), min(13, min_bid + 3))
 
-        high_count = sum(1 for c in hand if c.rank in (Rank.ACE, Rank.KING, Rank.QUEEN))
-
-        if obs.is_sahib_al_qabool:
-            if obs.current_highest_bid is None:
-                if high_count >= 2 or longest >= 5:
-                    return BidAction(player_id=obs.player_id, value=max(7, bid_value - 1))
-                return PassAction(player_id=obs.player_id)
+        # Respect constraints.
+        if obs.current_highest_bid and bid_value <= obs.current_highest_bid:
+            if obs.is_sahib_al_qabool:
+                bid_value = obs.current_highest_bid  # Qabool can match.
             else:
-                if bid_value >= obs.current_highest_bid and high_count >= 3:
-                    return BidAction(player_id=obs.player_id, value=obs.current_highest_bid)
                 return PassAction(player_id=obs.player_id)
+
+        if not obs.is_sahib_al_qabool and obs.is_opening_bid and bid_value > 11:
+            bid_value = 11
+
+        return BidAction(player_id=obs.player_id, value=bid_value)
+
+    def _best_bid(self, obs: BiddingObservation, min_bid: int, longest: int) -> Action:
+        """Choose best bid based on learned Q-values."""
+        state = encode_bid_state(obs)
+        q_values = self.bid_q[state]
+
+        # Get Q-values for pass vs bid levels.
+        pass_q = q_values.get("PASS", 0.0)
+        low_q = q_values.get("LOW", 0.0)
+        mid_q = q_values.get("MID", 0.0)
+        high_q = q_values.get("HIGH", 0.0)
+
+        # Determine best action.
+        best_action = "PASS"
+        best_q = pass_q
+        for key, q in [("LOW", low_q), ("MID", mid_q), ("HIGH", high_q)]:
+            if q > best_q:
+                best_q = q
+                best_action = key
+
+        if best_action == "PASS":
+            return PassAction(player_id=obs.player_id)
+
+        # Convert to actual bid value.
+        if best_action == "LOW":
+            bid_value = max(7, min_bid)
+        elif best_action == "MID":
+            bid_value = max(9, min_bid + 1)
         else:
-            if high_count < 3:
-                return PassAction(player_id=obs.player_id)
-            if obs.is_opening_bid and bid_value > 11:
-                return PassAction(player_id=obs.player_id)
-            if obs.current_highest_bid and bid_value <= obs.current_highest_bid:
-                return PassAction(player_id=obs.player_id)
-            return BidAction(player_id=obs.player_id, value=bid_value)
+            bid_value = max(11, min_bid + 2)
+
+        bid_value = min(bid_value, 13)
+
+        # Respect opening bid max 11 rule.
+        if not obs.is_sahib_al_qabool and obs.is_opening_bid and bid_value > 11:
+            bid_value = 11
+
+        # Respect constraints.
+        if obs.current_highest_bid:
+            if obs.is_sahib_al_qabool:
+                if bid_value < obs.current_highest_bid:
+                    bid_value = obs.current_highest_bid
+            else:
+                if bid_value <= obs.current_highest_bid:
+                    return PassAction(player_id=obs.player_id)
+
+        return BidAction(player_id=obs.player_id, value=bid_value)
 
     # ----------------------------------------------------------
-    # Learning: Monte Carlo update
+    # Learning: Monte Carlo update with graduated rewards
     # ----------------------------------------------------------
 
     def reward_trick(self, won: bool) -> None:
-        """Per-trick reward (not used in MC, but kept for interface compat)."""
+        """Per-trick signal (not used in MC, kept for interface)."""
         pass
 
-    def reward_shota(self, team_won_shota: bool, bid_met: bool) -> None:
+    def reward_shota(self, team_won_shota: bool, bid_met: bool,
+                     my_tricks: int = 0, opp_tricks: int = 0,
+                     was_shooter: bool = False, seek: bool = False) -> None:
         """
-        Called at end of Shota. This is where Monte Carlo learning happens.
+        End-of-Shota Monte Carlo update with graduated rewards.
 
-        Every (state, action) visited during this Shota gets updated
-        based on whether we won.
+        Reward structure:
+        - Base: +1.0 for winning shota, -1.0 for losing
+        - Bid bonus: +0.5 if our team met the bid as shooter
+        - Bid penalty: -0.5 if we were shooter and failed
+        - Trick margin: +0.1 per trick above opponent
+        - Seek bonus: +2.0 for achieving seek
+        - Seek penalty: -1.5 for being seeked against
         """
-        if not self.training or not self._episode:
-            self._episode.clear()
+        if not self.training:
+            self._play_episode.clear()
+            self._bid_episode.clear()
             return
 
-        # Compute return for this episode.
-        if team_won_shota:
-            G = 1.0
-        else:
-            G = -1.0
+        # Compute return.
+        G = 1.0 if team_won_shota else -1.0
 
-        # Bonus for meeting bid (extra signal).
-        if bid_met:
-            G += 0.5
+        # Bid bonus/penalty.
+        if was_shooter:
+            G += 0.5 if bid_met else -0.5
 
-        # First-visit Monte Carlo: update each unique (state, action) once.
+        # Trick margin bonus.
+        margin = my_tricks - opp_tricks
+        G += margin * 0.1
+
+        # Seek bonus.
+        if seek:
+            if my_tricks == 13:
+                G += 2.0
+            else:
+                G -= 1.5
+
+        # Clamp to reasonable range.
+        G = max(-3.0, min(3.0, G))
+
+        # Update play Q-table (first-visit MC).
+        self._update_table(self.q_table, self.n_table, self._play_episode, G)
+
+        # Update bid Q-table with same reward.
+        self._update_table(self.bid_q, self.bid_n, self._bid_episode, G)
+
+        self.episodes_trained += 1
+        self._play_episode.clear()
+        self._bid_episode.clear()
+
+    def _update_table(self, q_table, n_table, episode, G):
+        """First-visit Monte Carlo update on a Q-table."""
         visited = set()
-        for state, action_key in self._episode:
+        for state, action_key in episode:
             sa = (state, action_key)
             if sa in visited:
                 continue
             visited.add(sa)
 
-            # Incremental mean update.
-            self.n_table[state][action_key] += 1
-            n = self.n_table[state][action_key]
-            old_q = self.q_table[state][action_key]
-            # Running average: Q = Q + (G - Q) / N
-            self.q_table[state][action_key] = old_q + (G - old_q) / n
+            n_table[state][action_key] += 1
+            n = n_table[state][action_key]
+            old_q = q_table[state][action_key]
+            q_table[state][action_key] = old_q + (G - old_q) / n
             self.total_updates += 1
-
-        self.episodes_trained += 1
-        self._episode.clear()
 
     def reset_episode(self) -> None:
         """Clear episode memory (call on Dak / skipped Shota)."""
-        self._episode.clear()
+        self._play_episode.clear()
+        self._bid_episode.clear()
 
     def decay_epsilon(self, min_epsilon: float = 0.05, decay_rate: float = 0.9995) -> None:
         """Slowly reduce exploration."""
@@ -316,6 +480,8 @@ class LearningAgent(Agent):
         data = {
             "q_table": {k: dict(v) for k, v in self.q_table.items()},
             "n_table": {k: dict(v) for k, v in self.n_table.items()},
+            "bid_q": {k: dict(v) for k, v in self.bid_q.items()},
+            "bid_n": {k: dict(v) for k, v in self.bid_n.items()},
             "epsilon": self.epsilon,
             "total_updates": self.total_updates,
             "episodes_trained": self.episodes_trained,
@@ -336,10 +502,18 @@ class LearningAgent(Agent):
         for state, actions in data.get("n_table", {}).items():
             for action_key, value in actions.items():
                 agent.n_table[state][action_key] = value
+        for state, actions in data.get("bid_q", {}).items():
+            for action_key, value in actions.items():
+                agent.bid_q[state][action_key] = value
+        for state, actions in data.get("bid_n", {}).items():
+            for action_key, value in actions.items():
+                agent.bid_n[state][action_key] = value
         agent.total_updates = data.get("total_updates", 0)
         agent.episodes_trained = data.get("episodes_trained", 0)
         return agent
 
     @property
     def q_table_size(self) -> int:
-        return sum(len(v) for v in self.q_table.values())
+        play_size = sum(len(v) for v in self.q_table.values())
+        bid_size = sum(len(v) for v in self.bid_q.values())
+        return play_size + bid_size

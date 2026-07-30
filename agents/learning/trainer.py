@@ -1,8 +1,8 @@
 """
 Training loop for the Learning Agent.
 
-Runs self-play games, updates the Q-table after each trick and Shota,
-and tracks win rates over time.
+Runs self-play games with Monte Carlo updates after each Shota.
+Supports curriculum learning: start vs Random, then graduate to Rule-Based.
 
 Can be used standalone (CLI) or called from the GUI Stats tab.
 """
@@ -13,12 +13,11 @@ from agents.learning.learning_agent import LearningAgent
 from agents.random.random_agent import RandomAgent
 from agents.rule_based.rule_based_agent import RuleBasedAgent
 from environments.wist.environment import WistEnvironment
-from environments.wist.playing_engine import PlayingEngine
 from environments.wist.round import Round
 from environments.wist.rules import trick_winner
 from environments.wist.scoring import detect_seek
 from environments.wist.setup import create_standard_players
-from environments.wist.tasmiya_engine import TasmiyaEngine, determine_trump_suit
+from environments.wist.tasmiya_engine import TasmiyaEngine
 from environments.wist.trick import Trick
 from intelligence.core.agent import Agent
 
@@ -30,7 +29,7 @@ class TrainingResult:
         self.episodes: int = 0
         self.wins: int = 0
         self.losses: int = 0
-        self.win_rates: list[float] = []  # Win rate per window.
+        self.win_rates: list[float] = []
         self.q_table_sizes: list[int] = []
         self.epsilon_history: list[float] = []
 
@@ -41,6 +40,7 @@ def train_agent(
     save_path: str | None = None,
     report_every: int = 50,
     on_progress=None,
+    learner: LearningAgent | None = None,
 ) -> tuple[LearningAgent, TrainingResult]:
     """
     Train a LearningAgent through self-play.
@@ -52,15 +52,15 @@ def train_agent(
         episodes: Number of Shotas to play.
         opponent: "random" or "rule_based".
         save_path: If set, save the trained agent here.
-        report_every: Print/report progress every N episodes.
-        on_progress: Callback(episode, wins, losses, win_rate, epsilon)
+        report_every: Report progress every N episodes.
+        on_progress: Callback(episode, wins, losses, win_rate, epsilon).
+        learner: Existing agent to continue training (or None for new).
 
     Returns:
         (trained_agent, training_results)
     """
-
-    # Create agents.
-    learner = LearningAgent(epsilon=0.4, alpha=0.15, gamma=0.9, training=True)
+    if learner is None:
+        learner = LearningAgent(epsilon=0.4, training=True)
 
     def make_opponent():
         if opponent == "rule_based":
@@ -77,25 +77,24 @@ def train_agent(
         players = create_standard_players()
 
         # Team 0 = learning agent, Team 1 = opponent.
-        agents: list[Agent] = [
-            learner,              # P0 - Team 0
-            make_opponent(),      # P1 - Team 1
-            learner,              # P2 - Team 0 (same agent instance)
-            make_opponent(),      # P3 - Team 1
-        ]
+        opp1 = make_opponent()
+        opp2 = make_opponent()
+        agents: list[Agent] = [learner, opp1, learner, opp2]
 
         round_ = Round(players)
         round_.deal()
 
         # Skip card-based Dak hands.
         if round_.has_card_based_dak():
+            learner.reset_episode()
             continue
 
-        # Bidding.
+        # Bidding — rotate Qabool each episode.
+        qabool_id = episode % 4
         tasmiya_result = tasmiya_engine.run(
             players=players,
             agents=agents,
-            sahib_al_qabool_id=0,
+            sahib_al_qabool_id=qabool_id,
         )
 
         if tasmiya_result.is_dak:
@@ -109,7 +108,7 @@ def train_agent(
 
         environment = WistEnvironment(round_.state)
 
-        # Play 13 tricks manually (to give per-trick rewards).
+        # Play 13 tricks.
         team_tricks = {0: 0, 1: 0}
 
         for trick_num in range(13):
@@ -133,19 +132,33 @@ def train_agent(
             winner_team = players[winner].team_id
             team_tricks[winner_team] += 1
 
-            # Per-trick reward to the learning agent.
-            learner.reward_trick(won=(winner_team == 0))
-
-        # Shota-level reward.
+        # Determine outcomes.
         playing_team = tasmiya_result.playing_team_id
         bid = tasmiya_result.winning_bid_value
-        learner_team_tricks = team_tricks[0]
-        bid_met = (learner_team_tricks >= bid) if playing_team == 0 else False
-        team_won = team_tricks[0] > team_tricks[1]
+        shooter_id = tasmiya_result.winning_bidder_id
+        learner_team = 0
 
-        learner.reward_shota(team_won_shota=team_won, bid_met=bid_met)
+        my_tricks = team_tricks[learner_team]
+        opp_tricks = team_tricks[1]
+        team_won = my_tricks > opp_tricks
+        was_shooter = (playing_team == learner_team)
+        bid_met = (my_tricks >= bid) if was_shooter else False
+
+        # Seek detection.
+        seek = (my_tricks == 13 or opp_tricks == 13)
+
+        # Reward the agent.
+        learner.reward_shota(
+            team_won_shota=team_won,
+            bid_met=bid_met,
+            my_tricks=my_tricks,
+            opp_tricks=opp_tricks,
+            was_shooter=was_shooter,
+            seek=seek,
+        )
         learner.decay_epsilon()
 
+        # Track results.
         result.episodes += 1
         if team_won:
             result.wins += 1
@@ -175,27 +188,73 @@ def train_agent(
     return learner, result
 
 
+def train_curriculum(
+    save_path: str = "agents/learning/trained_model.json",
+    on_progress=None,
+) -> tuple[LearningAgent, TrainingResult]:
+    """
+    Curriculum training: Random → Rule-Based.
+
+    Phase 1: 5000 episodes vs Random (learn basics)
+    Phase 2: 10000 episodes vs Rule-Based (learn strategy)
+    """
+    learner = LearningAgent(epsilon=0.5, training=True)
+
+    # Phase 1: vs Random.
+    if on_progress:
+        on_progress(0, 0, 0, 0, learner.epsilon)
+
+    learner, result1 = train_agent(
+        episodes=5000,
+        opponent="random",
+        learner=learner,
+        report_every=100,
+        on_progress=on_progress,
+    )
+
+    # Phase 2: vs Rule-Based (lower epsilon for more exploitation).
+    learner.epsilon = 0.25
+
+    _, result2 = train_agent(
+        episodes=10000,
+        opponent="rule_based",
+        learner=learner,
+        save_path=save_path,
+        report_every=100,
+        on_progress=on_progress,
+    )
+
+    # Merge results.
+    result2.episodes += result1.episodes
+    result2.wins += result1.wins
+    result2.losses += result1.losses
+
+    return learner, result2
+
+
 # ---------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------
 
 if __name__ == "__main__":
     def progress(ep, wins, losses, rate, eps):
-        print(f"Episode {ep:5d} | Wins: {wins} | Losses: {losses} | "
-              f"Win Rate (window): {rate:.1f}% | ε: {eps:.3f}")
+        total = wins + losses
+        print(f"Episode {ep:5d} | Total {total:5d} | "
+              f"Win Rate (window): {rate:.1f}% | ε: {eps:.4f} | "
+              f"Overall: {wins}/{total} ({wins/total*100:.1f}%)" if total > 0 else "")
 
-    print("Training Learning Agent vs Random...")
-    print("=" * 60)
+    print("=" * 70)
+    print("Curriculum Training: Learning Agent")
+    print("Phase 1: 5,000 games vs Random")
+    print("Phase 2: 10,000 games vs Rule-Based")
+    print("=" * 70)
 
-    agent, results = train_agent(
-        episodes=2000,
-        opponent="random",
+    agent, results = train_curriculum(
         save_path="agents/learning/trained_model.json",
-        report_every=100,
         on_progress=progress,
     )
 
-    print("=" * 60)
+    print("=" * 70)
     total = results.wins + results.losses
     print(f"Final: {results.wins}/{total} wins ({results.wins/total*100:.1f}%)")
     print(f"Q-table size: {agent.q_table_size} state-action pairs")
