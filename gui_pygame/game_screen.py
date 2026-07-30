@@ -1942,9 +1942,9 @@ class GameScreen:
             shooter_tricks = self.team_tricks[shooter_team]
             needed = self.bid_value - shooter_tricks
             if needed <= 0:
-                bid_prob = 95.0
+                bid_prob = 100.0
             elif needed > tricks_left:
-                bid_prob = 5.0
+                bid_prob = 0.0
             else:
                 # Rate-based projection.
                 rate = shooter_tricks / tricks_played if tricks_played > 0 else 0.5
