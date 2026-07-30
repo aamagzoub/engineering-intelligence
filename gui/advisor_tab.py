@@ -110,6 +110,12 @@ class AdvisorTab:
         self._card_buttons: dict[Card, tk.Button] = {}
         self._build_deck_grid()
 
+        # Trump indicator (bottom-left, visible during play).
+        self._trump_display = tk.Label(left, text="",
+                                       font=("Segoe UI", 14, "bold"),
+                                       fg=COLORS["gold"], bg="#252525")
+        self._trump_display.pack(anchor="w", pady=(8, 0))
+
         # Right: controls panel (changes per phase, fixed size to prevent jumps).
         self._right = tk.Frame(main, bg="#252525", bd=1, relief="groove", padx=12, pady=8,
                                width=320, height=500)
@@ -529,8 +535,11 @@ class AdvisorTab:
         self._show_trump_and_start()
 
     def _show_trump_and_start(self) -> None:
-        """Trump is set — start playing."""
+        """Trump is set — show it on the left panel and start playing."""
         sym = SUIT_SYMBOLS[self.trump_suit]
+        fg = "#c62828" if self.trump_suit in (Suit.HEARTS, Suit.DIAMONDS) else "#ffffff"
+        self._trump_display.config(text=f"Trump: {sym}  |  Bid: {self.bid_value}", fg=fg)
+
         self.phase = "playing"
         self.trick_number = 0
         self.leader_id = self.bid_winner_id
@@ -790,8 +799,8 @@ class AdvisorTab:
         self.team_tricks = [0, 0]
         self.phase = "hand"
 
-        # Rotate Qabool clockwise.
-        self.qabool_id = (self.qabool_id + 1) % 4
+        # Rotate Qabool clockwise (to the right from your view).
+        self.qabool_id = (self.qabool_id + 3) % 4
 
         # Reset card buttons.
         for card, btn in self._card_buttons.items():
@@ -801,6 +810,7 @@ class AdvisorTab:
 
         player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
         self._deck_label.config(text="AI HAND — Click 13 cards (0/13)")
+        self._trump_display.config(text="")
         self._command_label.config(
             text=f"New Shota — Qabool: {player_names[self.qabool_id]}", fg="#ffd54f")
         self._instruction.config(text="Select your new 13 cards for this shota")
@@ -846,6 +856,7 @@ class AdvisorTab:
                        command=lambda c=card: self._card_clicked(c))
 
         self._deck_label.config(text="AI HAND — Click 13 cards (0/13)")
+        self._trump_display.config(text="")
         self._command_label.config(text="Select your hand first", fg="#4caf50")
         self._instruction.config(text="Step 1: Click your 13 cards from the deck below")
         self._build_right_panel()
