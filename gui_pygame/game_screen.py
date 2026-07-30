@@ -1719,7 +1719,7 @@ class GameScreen:
         y += 22
         self.screen.blit(label_font.render(f"{self._player_points} pts", True, TEXT_LIGHT),
                          (panel_x + pad, y))
-        y += 18
+        y += 20
         # Rank progress bar.
         prog = self._get_rank_progress()
         prog_x = panel_x + pad
@@ -1727,11 +1727,11 @@ class GameScreen:
         pygame.draw.rect(self.screen, (30, 50, 30), (prog_x, y, prog_w, 4), border_radius=2)
         if prog > 0:
             pygame.draw.rect(self.screen, TEXT_GOLD, (prog_x, y, int(prog_w * prog), 4), border_radius=2)
-        y += 14
+        y += 18
 
         # ========== GAME INFO CARD (fixed height) ==========
         game_card_y = y
-        game_card_h = 230
+        game_card_h = 240
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, game_card_y, panel_w - 10, game_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1739,7 +1739,7 @@ class GameScreen:
         y += 8
 
         self.screen.blit(title_font.render("Game", True, TEXT_WHITE), (panel_x + pad + 4, y))
-        y += 22
+        y += 24
 
         # Score + pulse.
         self.screen.blit(label_font.render("Score", True, TEXT_LIGHT), (panel_x + pad + 4, y))
@@ -1766,7 +1766,7 @@ class GameScreen:
         t2 = min(1.0, self.game_scores[1] / 25.0)
         if t2 > 0:
             pygame.draw.rect(self.screen, TEAM2_ORANGE, (bar_x, y, int(bar_w * t2), 5), border_radius=3)
-        y += 12
+        y += 14
 
         # Info rows (always shown, stable positions).
         trump_sym = "?"
@@ -1787,6 +1787,7 @@ class GameScreen:
             y += 19
 
         # Team tricks + momentum.
+        y += 4
         t1_arrow = " ↑" if self._team_streak[0] >= 3 else (" →" if self._team_streak[0] >= 2 else "")
         t2_arrow = " ↑" if self._team_streak[1] >= 3 else (" →" if self._team_streak[1] >= 2 else "")
         if "tricks" in self._stat_highlight_timers:
@@ -1803,15 +1804,15 @@ class GameScreen:
         # ========== STATS CARD (fixed position) ==========
         y = game_card_y + game_card_h + 8
         stats = getattr(self, '_game_stats', {})
-        stats_card_h = 185
+        stats_card_h = 200
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, y, panel_w - 10, stats_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
                          (panel_x + 5, y, panel_w - 10, stats_card_h), width=1, border_radius=8)
-        y += 8
+        y += 10
 
         self.screen.blit(title_font.render("Stats", True, TEXT_GREEN), (panel_x + pad + 4, y))
-        y += 22
+        y += 24
 
         # Player tricks with mini-bars.
         player_tricks = stats.get("player_tricks", {0: 0, 1: 0, 2: 0, 3: 0})
@@ -1825,16 +1826,16 @@ class GameScreen:
             self.screen.blit(label_font.render(name, True, color), (panel_x + pad + 4, y))
             c_surf = value_font.render(str(count), True, TEXT_WHITE)
             self.screen.blit(c_surf, (panel_x + panel_w - pad - 4 - c_surf.get_width(), y))
-            y += 15
+            y += 16
             bx = panel_x + pad + 4
             bw = inner_w - 8
             pygame.draw.rect(self.screen, (30, 50, 30), (bx, y, bw, 4), border_radius=2)
             ratio = count / max_t
             if ratio > 0:
                 pygame.draw.rect(self.screen, color, (bx, y, int(bw * ratio), 4), border_radius=2)
-            y += 7
+            y += 9
 
-        y += 4
+        y += 6
 
         # Daks (with shake).
         daks = stats.get("daks", self._dak_count)
@@ -1877,9 +1878,9 @@ class GameScreen:
         pygame.draw.rect(self.screen, (45, 90, 45),
                          (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), width=1, border_radius=8)
 
-        py = prob_card_y + 8
+        py = prob_card_y + 10
         self.screen.blit(title_font.render("Live Odds", True, (180, 140, 255)), (panel_x + pad + 4, py))
-        py += 22
+        py += 24
 
         # Calculate probabilities.
         tricks_played = self.team_tricks[0] + self.team_tricks[1]
