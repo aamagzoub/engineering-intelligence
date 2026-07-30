@@ -119,7 +119,7 @@ class WistAILabApp:
                      fg=COLORS["text_muted"], bg=COLORS["header_bg"]).pack(side="left", padx=(8, 2))
             var = tk.StringVar(value="Rule-Based")
             menu = tk.OptionMenu(selector_frame, var,
-                                 "Rule-Based", "Random", "Learning")
+                                 "Rule-Based", "Learning")
             menu.config(font=("Segoe UI", 8), width=8)
             menu.pack(side="left", padx=2)
             self._game_agent_vars.append(var)
