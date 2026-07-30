@@ -858,6 +858,10 @@ class GameScreen:
         bid_met = self.team_tricks[playing_team] >= self.bid_value
         if bid_met:
             self._game_stats["bids_met"] += 1
+            if playing_team == 0:
+                self._game_stats["bids_met_t1"] = self._game_stats.get("bids_met_t1", 0) + 1
+            else:
+                self._game_stats["bids_met_t2"] = self._game_stats.get("bids_met_t2", 0) + 1
             self._stat_highlight_timers["bids_met"] = 30
 
         # Award player points.
@@ -1790,14 +1794,17 @@ class GameScreen:
 
         # Best bid + bids met (always shown).
         highest_bid = stats.get("highest_bid", 0)
-        bid_text = str(highest_bid) if highest_bid > 0 else "-"
+        bidder = stats.get("highest_bidder")
+        bidder_name = DISPLAY_NAMES.get(bidder, "") if bidder is not None else ""
+        bid_text = f"{highest_bid} ({bidder_name})" if highest_bid > 0 else "-"
         self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font,
                             "Best bid", bid_text, TEXT_LIGHT)
         y += 17
 
-        bids_met = stats.get("bids_met", 0)
+        bids_met_t1 = stats.get("bids_met_t1", 0)
+        bids_met_t2 = stats.get("bids_met_t2", 0)
         shotas_played = stats.get("shotas_played", 0)
-        met_text = f"{bids_met}/{shotas_played}" if shotas_played > 0 else "-"
+        met_text = f"T1:{bids_met_t1} T2:{bids_met_t2}" if shotas_played > 0 else "-"
         if "bids_met" in self._stat_highlight_timers:
             a = int(100 * (self._stat_highlight_timers["bids_met"] / 30.0))
             hl = pygame.Surface((inner_w - 8, 17), pygame.SRCALPHA)
@@ -1842,8 +1849,10 @@ class GameScreen:
         # Win probability bar.
         bar_x = panel_x + pad + 4
         bar_w = inner_w - 8
-        self.screen.blit(label_font.render("Win", True, TEXT_LIGHT), (bar_x, py))
-        pct_surf = value_font.render(f"{win_prob:.0f}%", True, TEAM1_BLUE)
+        win_label = "T1 Win Game" if win_prob >= 50 else "T2 Win Game"
+        win_display_color = TEAM1_BLUE if win_prob >= 50 else TEAM2_ORANGE
+        self.screen.blit(label_font.render(win_label, True, TEXT_LIGHT), (bar_x, py))
+        pct_surf = value_font.render(f"{win_prob:.0f}%", True, win_display_color)
         self.screen.blit(pct_surf, (panel_x + panel_w - pad - 4 - pct_surf.get_width(), py))
         py += 15
         pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
@@ -1868,10 +1877,10 @@ class GameScreen:
             if self.team_tricks[0] == 0 and self.team_tricks[1] >= 6:
                 t2_seek = min(95, (self.team_tricks[1] / 13.0) ** 3 * 100)
         seek_prob = max(t1_seek, t2_seek)
-        seek_team_label = "T1" if t1_seek >= t2_seek else "T2"
+        seek_team_label = "T1 Seek" if t1_seek >= t2_seek else "T2 Seek"
         seek_color = TEAM1_BLUE if t1_seek >= t2_seek else TEAM2_ORANGE
 
-        self.screen.blit(label_font.render("Seek", True, TEXT_LIGHT), (bar_x, py))
+        self.screen.blit(label_font.render(seek_team_label, True, TEXT_LIGHT), (bar_x, py))
         seek_text = f"{seek_prob:.0f}%" if seek_prob > 0 else "-"
         sk_surf = value_font.render(seek_text, True, seek_color if seek_prob > 0 else TEXT_LIGHT)
         self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
@@ -1904,7 +1913,9 @@ class GameScreen:
         elif self.bid_value == 0:
             bid_prob = 0  # No bid yet.
 
-        self.screen.blit(label_font.render("Bid", True, TEXT_LIGHT), (bar_x, py))
+        self.screen.blit(label_font.render(
+            f"Bid ({DISPLAY_NAMES.get(self.shooter_id, '?')})" if self.bid_value > 0 else "Bid",
+            True, TEXT_LIGHT), (bar_x, py))
         bid_pct_text = f"{bid_prob:.0f}%" if self.bid_value > 0 else "-"
         bid_color = HIGHLIGHT_GREEN if bid_prob >= 60 else (TEXT_GOLD if bid_prob >= 40 else BUTTON_RED)
         bp_surf = value_font.render(bid_pct_text, True, bid_color if self.bid_value > 0 else TEXT_LIGHT)
