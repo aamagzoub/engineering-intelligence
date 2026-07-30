@@ -35,6 +35,7 @@ import os
 import struct
 import wave
 import tempfile
+import random
 from collections import Counter
 from tkinter import Tk, filedialog
 
@@ -110,31 +111,61 @@ def _ensure_sound_files():
 class AnimatingCard:
     """A card animating from one position to another over N frames."""
 
-    def __init__(self, surface: pygame.Surface, start_pos: tuple, end_pos: tuple, frames: int = 30):
+    def __init__(self, surface: pygame.Surface, start_pos: tuple, end_pos: tuple, frames: int = 30,
+                 start_scale: float = 1.2, end_scale: float = 1.0, delay: int = 0):
         self.surface = surface
         self.start_pos = start_pos
         self.end_pos = end_pos
         self.total_frames = frames
         self.frame = 0
         self.done = False
+        self.start_scale = start_scale
+        self.end_scale = end_scale
+        self.delay = delay  # frames to wait before starting
 
     def update(self):
+        if self.delay > 0:
+            self.delay -= 1
+            return
         self.frame += 1
         if self.frame >= self.total_frames:
             self.done = True
 
     @property
-    def current_pos(self) -> tuple[float, float]:
+    def progress(self) -> float:
+        if self.delay > 0:
+            return 0.0
         t = min(1.0, self.frame / self.total_frames)
         # Ease-out quad.
-        t = 1 - (1 - t) ** 2
+        return 1 - (1 - t) ** 2
+
+    @property
+    def current_pos(self) -> tuple[float, float]:
+        t = self.progress
         x = self.start_pos[0] + (self.end_pos[0] - self.start_pos[0]) * t
         y = self.start_pos[1] + (self.end_pos[1] - self.start_pos[1]) * t
         return (x, y)
 
+    @property
+    def current_scale(self) -> float:
+        t = self.progress
+        return self.start_scale + (self.end_scale - self.start_scale) * t
+
     def render(self, screen: pygame.Surface):
+        if self.delay > 0:
+            return
         pos = self.current_pos
-        screen.blit(self.surface, pos)
+        scale = self.current_scale
+        if abs(scale - 1.0) > 0.01:
+            w = int(self.surface.get_width() * scale)
+            h = int(self.surface.get_height() * scale)
+            scaled_surf = pygame.transform.smoothscale(self.surface, (w, h))
+            # Centre the scaled surface on the position
+            offset_x = (w - self.surface.get_width()) // 2
+            offset_y = (h - self.surface.get_height()) // 2
+            screen.blit(scaled_surf, (pos[0] - offset_x, pos[1] - offset_y))
+        else:
+            screen.blit(self.surface, pos)
 
 
 class GameScreen:
@@ -185,6 +216,11 @@ class GameScreen:
 
         # Feature 1: Trump hidden until first card of first trick.
         self._trump_revealed = False
+        self._trump_flip_timer = 0  # Card flip animation (20 frames).
+
+        # Button press feedback.
+        self._button_press_timer = 0
+        self._button_press_id = None  # Which button is pressed.
 
         # Feature 6: Pass-based Dak counter (max 2 per game).
         self._dak_count = 0
@@ -218,6 +254,15 @@ class GameScreen:
         self._hover_card_idx = -1
         self._message = ""
         self._message_timer = 0
+
+        # Bid chip pop-in animation (Feature: bid chip pop-in).
+        self._bid_chip_anim_timer: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}
+
+        # Player turn glow.
+        self._active_turn_pid: int | None = None
+
+        # Victory confetti.
+        self._confetti_particles: list[dict] = []
 
         # Timing.
         self._ai_timer = 0
@@ -428,23 +473,48 @@ class GameScreen:
         self._ai_timer = 35  # Wait for deal animation then go to bidding.
 
     def _start_deal_animation(self):
-        """Animate cards sliding into player positions (Feature 16)."""
+        """Animate cards from dealer (right of Qabool) to all players."""
         self._deal_animations = []
         cx, cy = TABLE_WIDTH // 2, SCREEN_HEIGHT // 2
-        # Animate a few cards flying to each player area.
-        positions = {
-            0: (cx, 80),       # Top
-            3: (50, cy),       # Left
-            1: (TABLE_WIDTH - 100, cy),  # Right
-            2: (cx, SCREEN_HEIGHT - 140),  # Bottom (human)
+
+        # Dealer = player to the right of Sahib Al-Qabool.
+        dealer_id = (self.qabool_id + 3) % 4
+        dealer_positions = {
+            0: (cx, 80),
+            3: (50, cy),
+            1: (TABLE_WIDTH - 100, cy),
+            2: (cx, SCREEN_HEIGHT - 140),
         }
-        for pid in range(4):
-            end_x, end_y = positions[pid]
-            for i in range(3):  # 3 cards per player for visual.
-                start = (cx - 25, cy - 36)
-                end = (end_x + i * 15, end_y)
-                surf = self._card_back_mini
-                anim = AnimatingCard(surf, start, end, frames=25 + i * 5)
+        deck_x, deck_y = dealer_positions.get(dealer_id, (cx, cy))
+
+        # Human hand target area.
+        n = 13
+        card_w = CARD_WIDTH
+        spacing = min(55, (TABLE_WIDTH - 200) // max(n, 1))
+        total_w = (n - 1) * spacing + card_w
+        start_x = (TABLE_WIDTH - total_w) // 2
+        hand_y = SCREEN_HEIGHT - CARD_HEIGHT - 40
+
+        surf = self._card_back_mini
+        for i in range(n):
+            end_x = start_x + i * spacing
+            end_y = hand_y
+            anim = AnimatingCard(surf, (deck_x, deck_y), (end_x, end_y),
+                                 frames=25, start_scale=1.0, end_scale=1.0, delay=i * 2)
+            self._deal_animations.append(anim)
+
+        # Also animate cards to each opponent.
+        target_positions = {
+            0: (cx, 80),
+            3: (50, cy),
+            1: (TABLE_WIDTH - 100, cy),
+        }
+        for pid in (0, 3, 1):
+            end_x, end_y = target_positions[pid]
+            for j in range(3):
+                end = (end_x + j * 15, end_y)
+                anim = AnimatingCard(surf, (deck_x, deck_y), end, frames=20,
+                                     start_scale=1.0, end_scale=1.0, delay=j * 3 + 5)
                 self._deal_animations.append(anim)
 
     def _run_bidding(self):
@@ -508,12 +578,14 @@ class GameScreen:
                 self._bid_history.append((pid, action.value))
                 self._has_opening_bid = True
                 self._player_bids_display[pid] = f"Bid {action.value}"
+                self._bid_chip_anim_timer[pid] = 15
                 self._message = f"{DISPLAY_NAMES[pid]} bids {action.value}"
                 self._log_game_event(f"{DISPLAY_NAMES[pid]} bids {action.value}")
             else:
                 self._bidding_engine.apply_pass(Pass(player_id=pid))
                 self._bid_history.append((pid, None))
                 self._player_bids_display[pid] = "Pass"
+                self._bid_chip_anim_timer[pid] = 15
                 self._message = f"{DISPLAY_NAMES[pid]} passes"
                 self._log_game_event(f"{DISPLAY_NAMES[pid]} passes")
 
@@ -569,11 +641,13 @@ class GameScreen:
                 self._bidding_engine.apply_pass(Pass(player_id=qid))
                 self._bid_history.append((qid, None))
                 self._player_bids_display[qid] = "Accepts"
+                self._bid_chip_anim_timer[qid] = 15
                 self._log_game_event(f"{DISPLAY_NAMES[qid]} (Qabool) accepts (forced)")
                 self._finalize_bidding()
                 return
             self._bid_history.append((qid, bid_value))
             self._player_bids_display[qid] = f"Bid {bid_value}"
+            self._bid_chip_anim_timer[qid] = 15
             self._log_game_event(f"{DISPLAY_NAMES[qid]} (Qabool) bids {bid_value}")
         else:
             self._bidding_engine.apply_pass(Pass(player_id=qid))
@@ -588,25 +662,48 @@ class GameScreen:
                 self._log_game_event(f"DAK #{self._dak_count}! All passed.")
                 return
             self._player_bids_display[qid] = "Accepts"
+            self._bid_chip_anim_timer[qid] = 15
             self._log_game_event(f"{DISPLAY_NAMES[qid]} (Qabool) accepts")
 
         self._finalize_bidding()
 
     def _human_bid_with_number_and_suit(self):
-        """Human selected bid number + suit + confirmed (Feature 5)."""
+        """Human selected bid number + suit + confirmed."""
         suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
         chosen_suit = suits[self._selected_trump_idx]
         bid_value = self._selected_bid
+        trump_count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == chosen_suit)
 
         from environments.wist.bidding import Bid
         is_qabool = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
+        someone_bid = (self._bidding_engine.highest_bid is not None)
+
+        # Validate: bid must be >= trump_count + 3.
+        # Qabool advantage: bid >= trump_count + 2 (only when matching/outbidding someone).
+        if is_qabool and someone_bid:
+            min_bid = trump_count + 2  # Qabool extra card advantage.
+        else:
+            min_bid = trump_count + 3  # Standard formula.
+
+        if bid_value < max(7, min_bid):
+            self._log_game_event(f"  Invalid: Bid {bid_value} < min {max(7, min_bid)} for {trump_count} cards")
+            self._bid_step = "number"
+            self._selected_bid = None
+            self._selected_trump_idx = None
+            return
+
+        # Validate: trump can't have 8+ cards.
+        if trump_count >= 8:
+            self._bid_step = "number"
+            self._selected_bid = None
+            self._selected_trump_idx = None
+            return
 
         try:
             bid = Bid(player_id=HUMAN_ID, value=bid_value)
             self._bidding_engine.apply_bid(bid, is_sahib_al_qabool=is_qabool)
         except ValueError as e:
-            self._message = str(e)
-            self._message_timer = 50
+            self._log_game_event(f"  Bid error: {e}")
             self._bid_step = "number"
             self._selected_bid = None
             self._selected_trump_idx = None
@@ -616,8 +713,7 @@ class GameScreen:
         self._has_opening_bid = True
         self._human_trump_choice = chosen_suit
         self._player_bids_display[HUMAN_ID] = f"Bid {bid_value}"
-        self._message = f"You bid {bid_value} ({SUIT_SYMBOLS[chosen_suit]})"
-        self._message_timer = 30
+        self._bid_chip_anim_timer[HUMAN_ID] = 15
         self._log_game_event(f"You bid {bid_value} ({SUIT_SYMBOLS[chosen_suit]})")
 
         # Reset bid step.
@@ -645,6 +741,7 @@ class GameScreen:
         self._bidding_engine.apply_pass(Pass(player_id=HUMAN_ID))
         self._bid_history.append((HUMAN_ID, None))
         self._player_bids_display[HUMAN_ID] = "Pass"
+        self._bid_chip_anim_timer[HUMAN_ID] = 15
         self._log_game_event("You pass")
 
         if is_qabool:
@@ -658,6 +755,7 @@ class GameScreen:
                 self._log_game_event(f"DAK #{self._dak_count}!")
                 return
             self._player_bids_display[HUMAN_ID] = "Accepts"
+            self._bid_chip_anim_timer[HUMAN_ID] = 15
             self._log_game_event("You accept as Qabool")
             self._finalize_bidding()
         else:
@@ -800,6 +898,7 @@ class GameScreen:
 
             self.phase = "game_over"
             self._log_game_event("=== GAME OVER ===")
+            self._spawn_confetti()
         else:
             self.phase = "shota_end"
             self._ai_timer = 120
@@ -831,6 +930,30 @@ class GameScreen:
             if self._trick_winner_timer <= 0:
                 self._trick_winner_id = None
 
+        # Bid chip pop-in timers.
+        for pid in list(self._bid_chip_anim_timer.keys()):
+            if self._bid_chip_anim_timer[pid] > 0:
+                self._bid_chip_anim_timer[pid] -= 1
+
+        # Trump flip animation timer.
+        if self._trump_flip_timer > 0:
+            self._trump_flip_timer -= 1
+
+        # Button press feedback timer.
+        if self._button_press_timer > 0:
+            self._button_press_timer -= 1
+            if self._button_press_timer <= 0:
+                self._button_press_id = None
+
+        # Victory confetti update.
+        for p in self._confetti_particles:
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+            p["vy"] += 0.15  # gravity
+            p["life"] -= 1
+            p["alpha"] = max(0, int(255 * (p["life"] / p["max_life"])))
+        self._confetti_particles = [p for p in self._confetti_particles if p["life"] > 0]
+
         if self.phase == "dealing":
             self._ai_timer -= 1
             if self._ai_timer <= 0:
@@ -855,11 +978,13 @@ class GameScreen:
 
         # State 99 = waiting to start next trick (not a real play index).
         if self._play_idx == 99:
+            self._active_turn_pid = None
             self._start_next_trick()
             return
 
         if self._play_idx >= 4:
             # Trick complete — resolve.
+            self._active_turn_pid = None
             self._resolve_trick()
             return
 
@@ -869,6 +994,12 @@ class GameScreen:
             return
 
         pid = self._play_order[self._play_idx]
+
+        # Set active turn for glow effect.
+        if pid not in self._trick_played:
+            self._active_turn_pid = pid
+        else:
+            self._active_turn_pid = None
 
         if pid == HUMAN_ID:
             # Safety checks — if state is broken, skip human turn.
@@ -899,6 +1030,7 @@ class GameScreen:
                 # Feature 1: Reveal trump on first card of first trick.
                 if not self._trump_revealed:
                     self._trump_revealed = True
+                    self._trump_flip_timer = 20  # Start flip animation.
 
                 # Feature 17: Play animation.
                 self._start_play_animation(pid, r, s)
@@ -924,7 +1056,7 @@ class GameScreen:
             self._ai_timer = 15
 
     def _start_play_animation(self, pid: int, rank: str, suit: str):
-        """Start a card play animation (Feature 17)."""
+        """Start a card play animation with swoosh scale effect (Feature 17)."""
         cx, cy = TABLE_WIDTH // 2, SCREEN_HEIGHT // 2
         # Start positions by player.
         start_positions = {
@@ -939,7 +1071,8 @@ class GameScreen:
         end = (cx + dx - CARD_WIDTH // 2, cy + dy - CARD_HEIGHT // 2)
         start = start_positions.get(pid, (cx, cy))
         surf = self._get_card_surface(rank, suit)
-        anim = AnimatingCard(surf, start, end, frames=15)
+        # Swoosh: start at 1.2x scale, animate down to 1.0x.
+        anim = AnimatingCard(surf, start, end, frames=15, start_scale=1.2, end_scale=1.0)
         self._play_animations.append(anim)
 
     def _resolve_trick(self):
@@ -963,7 +1096,20 @@ class GameScreen:
         self._trick_winner_id = winner
         self._trick_winner_timer = 50
 
-        # Clear winner announcement.
+        # Animate cards sliding to winner's pile.
+        cx_t, cy_t = TABLE_WIDTH // 2, SCREEN_HEIGHT // 2
+        winner_positions = {
+            0: (cx_t, 90), 3: (60, cy_t), 1: (TABLE_WIDTH - 80, cy_t), 2: (cx_t, SCREEN_HEIGHT - 130),
+        }
+        offsets = {0: (0, -70), 1: (90, 0), 2: (0, 50), 3: (-90, 0)}
+        win_dest = winner_positions.get(winner, (cx_t, cy_t))
+        for pid, (r, s) in self._trick_played.items():
+            dx, dy = offsets.get(pid, (0, 0))
+            start = (cx_t + dx - CARD_WIDTH // 2, cy_t + dy - CARD_HEIGHT // 2)
+            surf = self._get_card_surface(r, s)
+            anim = AnimatingCard(surf, start, win_dest, frames=20)
+            self._play_animations.append(anim)
+
         winner_name = DISPLAY_NAMES[winner]
         team_name = "Team 1" if team == 0 else "Team 2"
         self._message = f"{winner_name} wins! ({team_name}: {self.team_tricks[team]})"
@@ -1014,8 +1160,8 @@ class GameScreen:
 
     def _handle_click(self, pos):
         """Handle mouse click — bidding or card selection."""
-        # Feature 22: Load model button (top-right of info bar area).
-        load_btn = pygame.Rect(TABLE_WIDTH - 130, 5, 120, 28)
+        # Feature 22: Load AI-Expert Model button (top-right of info bar area).
+        load_btn = pygame.Rect(TABLE_WIDTH - 155, 5, 145, 28)
         if load_btn.collidepoint(pos):
             self._open_model_dialog()
             return
@@ -1026,6 +1172,8 @@ class GameScreen:
             cy = SCREEN_HEIGHT // 2
             btn_rect = pygame.Rect(cx - 90, cy + 100, 180, 45)
             if btn_rect.collidepoint(pos):
+                self._button_press_timer = 4
+                self._button_press_id = "next_shota"
                 self._start_new_shota()
             return
 
@@ -1068,54 +1216,116 @@ class GameScreen:
             pass
 
     def _handle_bid_click(self, pos):
-        """Handle bidding click — 3-step: number → trump → confirm (Feature 5)."""
+        """Handle bidding click — all visible at once: bids, suits, confirm."""
         cx = TABLE_WIDTH // 2
         cy = SCREEN_HEIGHT // 2
 
-        if self._bid_step == "number":
-            # Check bid number buttons (7-13).
-            for i in range(7):
-                rect = pygame.Rect(cx - 210 + i * 62, cy + 10, 55, 45)
-                if rect.collidepoint(pos):
-                    self._selected_bid = 7 + i
-                    self._bid_step = "trump"
-                    return
-            # Check pass button.
-            pass_rect = pygame.Rect(cx - 50, cy + 70, 100, 38)
-            if pass_rect.collidepoint(pos):
-                self._bid_step = "number"
-                self._selected_bid = None
-                self._selected_trump_idx = None
-                self._human_pass_action()
+        # Row 1: Pass button (first in row) then Bid numbers.
+        # Centred layout: row1_start = cx - 250
+        row1_start = cx - 250
+        pass_rect = pygame.Rect(row1_start, cy - 10, 60, 45)
+        if pass_rect.collidepoint(pos):
+            self._button_press_timer = 4
+            self._button_press_id = "pass"
+            self._selected_bid = None
+            self._selected_trump_idx = None
+            self._human_pass_action()
+            return
+
+        for i in range(7):
+            rect = pygame.Rect(row1_start + 65 + i * 60, cy - 10, 55, 45)
+            if rect.collidepoint(pos):
+                self._selected_bid = 7 + i
                 return
 
-        elif self._bid_step == "trump":
-            # Check suit buttons.
-            for i in range(4):
-                rect = pygame.Rect(cx - 140 + i * 75, cy + 10, 65, 60)
-                if rect.collidepoint(pos):
-                    self._selected_trump_idx = i
-                    self._bid_step = "confirm"
-                    return
-            # Back button.
-            back_rect = pygame.Rect(cx - 50, cy + 80, 100, 32)
-            if back_rect.collidepoint(pos):
-                self._bid_step = "number"
-                self._selected_bid = None
+        # Row 2: Suit buttons. row2_start = cx - 145
+        row2_start = cx - 145
+        for i in range(4):
+            rect = pygame.Rect(row2_start + i * 75, cy + 50, 65, 55)
+            if rect.collidepoint(pos):
+                self._selected_trump_idx = i
                 return
 
-        elif self._bid_step == "confirm":
-            # Confirm button.
-            confirm_rect = pygame.Rect(cx - 70, cy + 10, 140, 45)
+        # Row 3: Confirm (only if valid).
+        if self._is_bid_valid():
+            confirm_rect = pygame.Rect(cx - 70, cy + 120, 140, 40)
             if confirm_rect.collidepoint(pos):
+                self._button_press_timer = 4
+                self._button_press_id = "confirm"
                 self._human_bid_with_number_and_suit()
                 return
-            # Back button.
-            back_rect = pygame.Rect(cx - 70, cy + 65, 140, 32)
-            if back_rect.collidepoint(pos):
-                self._bid_step = "trump"
-                self._selected_trump_idx = None
-                return
+
+    def _is_bid_valid(self) -> bool:
+        """Check if current bid + suit selection is valid."""
+        if self._selected_bid is None or self._selected_trump_idx is None:
+            return False
+
+        suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
+        chosen_suit = suits[self._selected_trump_idx]
+        bid_value = self._selected_bid
+        trump_count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == chosen_suit)
+
+        # Can't use suit with 8+ cards.
+        if trump_count >= 8:
+            return False
+
+        is_qabool = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
+        someone_bid = (self._bidding_engine.highest_bid is not None)
+
+        # Bid must be >= trump_count + 3 (or +2 for Qabool advantage when matching).
+        if is_qabool and someone_bid:
+            min_bid = trump_count + 2
+        else:
+            min_bid = trump_count + 3
+        if bid_value < max(7, min_bid):
+            return False
+
+        # Opening bid max 11 (not Qabool).
+        if not is_qabool and not self._has_opening_bid and bid_value > 11:
+            return False
+
+        # Must beat current highest (not Qabool).
+        current_highest = (self._bidding_engine.highest_bid.value
+                           if self._bidding_engine.highest_bid else None)
+        if not is_qabool and current_highest and bid_value <= current_highest:
+            return False
+
+        return True
+
+    def _get_bid_warning(self) -> str:
+        """Get warning text explaining why bid+suit is invalid."""
+        if self._selected_bid is None or self._selected_trump_idx is None:
+            return ""
+
+        suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
+        chosen_suit = suits[self._selected_trump_idx]
+        bid_value = self._selected_bid
+        trump_count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == chosen_suit)
+        sym = SUIT_SYMBOLS[chosen_suit]
+
+        if trump_count >= 8:
+            return f"8+ cards in {sym} = Dak (cannot bid)"
+
+        is_qabool = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
+        someone_bid = (self._bidding_engine.highest_bid is not None)
+
+        if is_qabool and someone_bid:
+            min_bid = trump_count + 2
+        else:
+            min_bid = trump_count + 3
+
+        if bid_value < max(7, min_bid):
+            return f"{trump_count} {sym} cards = min bid {max(7, min_bid)}"
+
+        if not is_qabool and not self._has_opening_bid and bid_value > 11:
+            return "Opening bid cannot exceed 11"
+
+        current_highest = (self._bidding_engine.highest_bid.value
+                           if self._bidding_engine.highest_bid else None)
+        if not is_qabool and current_highest and bid_value <= current_highest:
+            return f"Current highest is {current_highest} — you must bid {current_highest + 1}+"
+
+        return ""
 
     def _human_play(self, card: Card):
         """Human plays a card."""
@@ -1141,6 +1351,7 @@ class GameScreen:
         # Feature 1: Reveal trump on first card.
         if not self._trump_revealed:
             self._trump_revealed = True
+            self._trump_flip_timer = 20
 
         # Feature 17: Animation.
         self._start_play_animation(HUMAN_ID, r, s)
@@ -1208,6 +1419,7 @@ class GameScreen:
 
         if self.phase == "game_over":
             self._render_game_over()
+            self._render_confetti()
             return
 
         if self.phase == "shota_end":
@@ -1218,6 +1430,25 @@ class GameScreen:
         table_rect = pygame.Rect(20, 50, TABLE_WIDTH - 40, SCREEN_HEIGHT - 100)
         pygame.draw.rect(self.screen, TABLE_FELT, table_rect, border_radius=12)
         pygame.draw.rect(self.screen, TABLE_BORDER, table_rect, width=2, border_radius=12)
+
+        # Table felt texture — subtle diagonal lines.
+        felt_texture = pygame.Surface((table_rect.width, table_rect.height), pygame.SRCALPHA)
+        line_color = (255, 255, 255, 12)
+        for offset in range(-table_rect.height, table_rect.width, 20):
+            start = (max(0, offset), max(0, -offset))
+            end = (min(table_rect.width, offset + table_rect.height),
+                   min(table_rect.height, table_rect.height - offset) if offset >= 0
+                   else min(table_rect.height, table_rect.width - offset))
+            # Draw 45-degree lines.
+            x1 = offset
+            y1 = 0
+            x2 = offset + table_rect.height
+            y2 = table_rect.height
+            # Clip to surface.
+            pygame.draw.line(felt_texture, line_color,
+                             (max(0, x1), max(0, y1)),
+                             (min(table_rect.width, x2), min(table_rect.height, y2)))
+        self.screen.blit(felt_texture, table_rect.topleft)
 
         # Top info bar.
         self._render_info_bar()
@@ -1232,8 +1463,8 @@ class GameScreen:
         # Player labels with roles.
         self._render_player_labels(cx, cy)
 
-        # Persistent "Sahib Al-Qabool" label — always visible during shota.
-        self._render_qabool_label(cx, cy)
+        # Persistent "Sahib Al-Qabool" indicator — only show during dealing/bidding.
+        # (Removed — info bar shows Qabool info, gold dot during play)
 
         # Won tricks piles.
         self._render_tricks_won(cx, cy)
@@ -1254,14 +1485,18 @@ class GameScreen:
         if self.phase == "bidding":
             self._render_bidding_ui(cx, cy)
 
-        # Deal animation removed — was causing small boxes to linger.
-        # if self.phase == "dealing":
-        #     for anim in self._deal_animations:
-        #         anim.render(self.screen)
+        # Deal animation (card fan).
+        if self.phase == "dealing":
+            for anim in self._deal_animations:
+                anim.render(self.screen)
 
         # Play animations (Feature 17).
         for anim in self._play_animations:
             anim.render(self.screen)
+
+        # Player turn glow.
+        if self.phase == "playing" and self._active_turn_pid is not None:
+            self._render_turn_glow(cx, cy)
 
         # Message — removed entirely.
 
@@ -1271,6 +1506,9 @@ class GameScreen:
         # Feature 7: Bid display persistence — show during bidding AND playing.
         if self.phase in ("bidding", "playing"):
             self._render_bid_labels(cx, cy)
+
+        # Victory confetti.
+        self._render_confetti()
 
     def _render_bid_labels(self, cx, cy):
         """Render bid badges — uniform size, aligned horizontally for side players,
@@ -1316,11 +1554,22 @@ class GameScreen:
             display_text = f"{icon}{text}"
             surf = bid_font.render(display_text, True, text_color)
 
+            # Bid chip pop-in scale.
+            timer = self._bid_chip_anim_timer.get(pid, 0)
+            if timer > 0:
+                # Ease from 1.3x down to 1.0x over 15 frames.
+                t = timer / 15.0
+                scale = 1.0 + 0.3 * t
+            else:
+                scale = 1.0
+
             # Fixed-size chip centred at position.
-            chip_rect = pygame.Rect(0, 0, CHIP_W, CHIP_H)
+            chip_w = int(CHIP_W * scale)
+            chip_h = int(CHIP_H * scale)
+            chip_rect = pygame.Rect(0, 0, chip_w, chip_h)
             chip_rect.center = (px, py)
 
-            chip_surf = pygame.Surface((CHIP_W, CHIP_H), pygame.SRCALPHA)
+            chip_surf = pygame.Surface((chip_w, chip_h), pygame.SRCALPHA)
             pygame.draw.rect(chip_surf, (*bg_color, 220), chip_surf.get_rect(),
                              border_radius=10)
             pygame.draw.rect(chip_surf, border_color, chip_surf.get_rect(),
@@ -1441,7 +1690,7 @@ class GameScreen:
 
     def _render_shota_end(self):
         """Render Shota end summary."""
-        cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+        cx, cy = TABLE_WIDTH // 2, SCREEN_HEIGHT // 2
 
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 140))
@@ -1483,12 +1732,13 @@ class GameScreen:
         self.screen.blit(tricks, tricks.get_rect(centerx=cx, y=cy + y_offset + 10))
 
         score = self.fonts["large"].render(
-            f"Score — Team 1: {self.game_scores[0]}  |  Team 2: {self.game_scores[1]}",
+            f"Score: T1 = {self.game_scores[0]} | T2 = {self.game_scores[1]}",
             True, TEXT_GOLD)
         self.screen.blit(score, score.get_rect(centerx=cx, y=cy + y_offset + 40))
 
         # "Next Shota" button.
-        btn_rect = pygame.Rect(cx - 90, cy + 100, 180, 45)
+        ns_press = 2 if (self._button_press_timer > 0 and self._button_press_id == "next_shota") else 0
+        btn_rect = pygame.Rect(cx - 90, cy + 100 + ns_press, 180, 45 - ns_press)
         mx, my = pygame.mouse.get_pos()
         hover = btn_rect.collidepoint(mx, my)
         bg = (56, 142, 60) if hover else BUTTON_GREEN
@@ -1509,38 +1759,37 @@ class GameScreen:
         cx_table = TABLE_WIDTH // 2
 
         # Top player (pid 0 = Hima) — YOUR PARTNER.
-        role_0 = " [Q]" if 0 == self.qabool_id else ""
-        role_0 += " [S]" if 0 == self.shooter_id else ""
-        surf = font.render(f"{DISPLAY_NAMES[0]}{role_0}", True, TEAM1_BLUE)
+        surf = font.render(f"{DISPLAY_NAMES[0]}", True, TEAM1_BLUE)
         self.screen.blit(surf, surf.get_rect(centerx=cx_table, y=57))
         partner_lbl = team_font.render("(Your Partner - Team 1)", True, (80, 140, 200))
         self.screen.blit(partner_lbl, partner_lbl.get_rect(centerx=cx_table, y=73))
+        # Gold dot under Qabool's name during play.
+        if 0 == self.qabool_id and self.phase == "playing":
+            pygame.draw.circle(self.screen, TEXT_GOLD, (cx_table, 55), 3)
 
         # Left player (pid 3 = Musaab) — OPPONENT.
-        role_3 = " [Q]" if 3 == self.qabool_id else ""
-        role_3 += " [S]" if 3 == self.shooter_id else ""
-        surf = font.render(f"{DISPLAY_NAMES[3]}{role_3}", True, TEAM2_ORANGE)
+        surf = font.render(f"{DISPLAY_NAMES[3]}", True, TEAM2_ORANGE)
         self.screen.blit(surf, surf.get_rect(centerx=45 + CARD_MINI_W // 2, y=cy - 80))
         opp_lbl = team_font.render("Team 2", True, (180, 100, 60))
         self.screen.blit(opp_lbl, opp_lbl.get_rect(centerx=45 + CARD_MINI_W // 2, y=cy - 66))
+        if 3 == self.qabool_id and self.phase == "playing":
+            pygame.draw.circle(self.screen, TEXT_GOLD, (45 + CARD_MINI_W // 2, cy - 82), 3)
 
         # Right player (pid 1 = Gaafar) — OPPONENT.
-        role_1 = " [Q]" if 1 == self.qabool_id else ""
-        role_1 += " [S]" if 1 == self.shooter_id else ""
-        surf = font.render(f"{DISPLAY_NAMES[1]}{role_1}", True, TEAM2_ORANGE)
+        surf = font.render(f"{DISPLAY_NAMES[1]}", True, TEAM2_ORANGE)
         right_x = TABLE_WIDTH - 45 - CARD_MINI_W + CARD_MINI_W // 2
         self.screen.blit(surf, surf.get_rect(centerx=right_x, y=cy - 80))
         opp_lbl2 = team_font.render("Team 2", True, (180, 100, 60))
         self.screen.blit(opp_lbl2, opp_lbl2.get_rect(centerx=right_x, y=cy - 66))
+        if 1 == self.qabool_id and self.phase == "playing":
+            pygame.draw.circle(self.screen, TEXT_GOLD, (right_x, cy - 82), 3)
 
         # Human (pid 2 = Abubakr) — YOUR area.
         role_2 = ""
-        if HUMAN_ID == self.qabool_id:
-            role_2 += "  [Qabool]"
-        if HUMAN_ID == self.shooter_id:
-            role_2 += "  [Shooter]"
-        surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) - Team 1{role_2}", True, TEXT_GOLD)
+        surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) - Team 1", True, TEXT_GOLD)
         self.screen.blit(surf, surf.get_rect(centerx=cx_table, y=SCREEN_HEIGHT - CARD_HEIGHT - 70))
+        if HUMAN_ID == self.qabool_id and self.phase == "playing":
+            pygame.draw.circle(self.screen, TEXT_GOLD, (cx_table, SCREEN_HEIGHT - CARD_HEIGHT - 72), 3)
 
     def _render_qabool_label(self, cx, cy):
         """Render 'Qabool: Name' directly beneath the trump card."""
@@ -1573,29 +1822,50 @@ class GameScreen:
         self.screen.blit(t2, (x + 72, y + 14))
 
     def _render_trump_display(self):
-        """Feature 1: Trump hidden until first card played in trick 1."""
+        """Feature 1: Trump hidden until first card played. Card flip animation on reveal."""
         x, y = TABLE_WIDTH - 100, 60
-        card_surf = pygame.Surface((60, 85), pygame.SRCALPHA)
-        pygame.draw.rect(card_surf, CARD_WHITE, card_surf.get_rect(), border_radius=6)
-        pygame.draw.rect(card_surf, (180, 180, 180), card_surf.get_rect(), width=1, border_radius=6)
+        card_w, card_h = 60, 85
 
-        if self._trump_revealed and self.trump_suit is not None:
+        # Flip animation: squish horizontally then expand.
+        flip_scale_x = 1.0
+        if self._trump_flip_timer > 0:
+            t = self._trump_flip_timer / 20.0
+            if t > 0.5:
+                # First half: squish to 0.
+                flip_scale_x = (t - 0.5) * 2
+            else:
+                # Second half: expand back.
+                flip_scale_x = (0.5 - t) * 2
+            flip_scale_x = max(0.05, flip_scale_x)
+
+        actual_w = int(card_w * flip_scale_x)
+        offset_x = (card_w - actual_w) // 2
+
+        card_surf = pygame.Surface((actual_w, card_h), pygame.SRCALPHA)
+        pygame.draw.rect(card_surf, CARD_WHITE, card_surf.get_rect(), border_radius=max(2, int(6 * flip_scale_x)))
+        pygame.draw.rect(card_surf, (180, 180, 180), card_surf.get_rect(), width=1, border_radius=max(2, int(6 * flip_scale_x)))
+
+        # Show content only in second half of flip (or when not flipping).
+        show_content = (self._trump_flip_timer <= 10)
+
+        if show_content and self._trump_revealed and self.trump_suit is not None:
             sym = SUIT_SYMBOLS.get(self.trump_suit, "?")
             color = RED_SUIT if self.trump_suit in (Suit.HEARTS, Suit.DIAMONDS) else BLACK_SUIT
-            big_font = pygame.font.SysFont("Segoe UI", 36)
+            font_size = max(12, int(36 * flip_scale_x))
+            big_font = pygame.font.SysFont("Segoe UI", font_size)
             suit_surf = big_font.render(sym, True, color)
-            card_surf.blit(suit_surf, suit_surf.get_rect(center=(30, 42)))
-        else:
-            # Show "?" when hidden.
-            big_font = pygame.font.SysFont("Segoe UI", 36, bold=True)
+            card_surf.blit(suit_surf, suit_surf.get_rect(center=(actual_w // 2, card_h // 2)))
+        elif show_content:
+            font_size = max(12, int(36 * flip_scale_x))
+            big_font = pygame.font.SysFont("Segoe UI", font_size, bold=True)
             q_surf = big_font.render("?", True, TEXT_DIM)
-            card_surf.blit(q_surf, q_surf.get_rect(center=(30, 42)))
+            card_surf.blit(q_surf, q_surf.get_rect(center=(actual_w // 2, card_h // 2)))
 
-        self.screen.blit(card_surf, (x, y))
+        self.screen.blit(card_surf, (x + offset_x, y))
 
         label_text = "TRUMP" if self._trump_revealed else "TRUMP (hidden)"
         label = self.fonts["small"].render(label_text, True, TEXT_GOLD)
-        self.screen.blit(label, label.get_rect(centerx=x + 30, y=y + 88))
+        self.screen.blit(label, label.get_rect(centerx=x + card_w // 2, y=y + card_h + 3))
 
     def _render_centre_trick(self, cx, cy):
         """Render centre trick with placeholders (Feature 15) and labels (Feature 13)."""
@@ -1623,8 +1893,16 @@ class GameScreen:
                 pygame.draw.rect(shadow, (0, 0, 0, 40), shadow.get_rect(), border_radius=6)
                 self.screen.blit(shadow, (rect.x - 2, rect.y + 2))
 
-                # Feature 9: Gold border on winning card.
+                # Feature 9: Gold border on winning card + pulsing glow.
                 if self._trick_winner_id == pid and self._trick_winner_timer > 0:
+                    # Pulsing glow — alpha changes based on sine wave of timer.
+                    pulse_alpha = int(120 + 80 * math.sin(self._trick_winner_timer * 0.3))
+                    pulse_alpha = max(0, min(255, pulse_alpha))
+                    glow_surf = pygame.Surface((CARD_WIDTH + 16, CARD_HEIGHT + 16), pygame.SRCALPHA)
+                    pygame.draw.rect(glow_surf, (*HIGHLIGHT_GOLD, pulse_alpha),
+                                     glow_surf.get_rect(), border_radius=10)
+                    self.screen.blit(glow_surf, (rect.x - 8, rect.y - 8))
+                    # Gold border.
                     glow = pygame.Surface((CARD_WIDTH + 8, CARD_HEIGHT + 8), pygame.SRCALPHA)
                     pygame.draw.rect(glow, (*HIGHLIGHT_GOLD, 200), glow.get_rect(),
                                      width=4, border_radius=8)
@@ -1716,7 +1994,7 @@ class GameScreen:
             r, s = card_key(card)
             card_surf = self._get_card_surface_sized(r, s, card_w, card_h)
 
-            card_y = y - 12 if (is_hovered and is_legal) else y
+            card_y = y - 10 if (is_hovered and is_legal) else y
 
             if not is_legal:
                 dimmed = card_surf.copy()
@@ -1754,36 +2032,8 @@ class GameScreen:
 
         if self._bid_step == "number":
 
-            # Bid number buttons: 7-13.
-            current_highest = (self._bidding_engine.highest_bid.value
-                               if self._bidding_engine.highest_bid else None)
-            for i, val in enumerate(range(7, 14)):
-                rect = pygame.Rect(cx - 210 + i * 62, cy + 10, 55, 45)
-                hover = rect.collidepoint(mx, my)
-                # Dim numbers that are too low.
-                is_valid = True
-                if current_highest and val <= current_highest:
-                    is_qabool_turn = (self.qabool_id == HUMAN_ID and
-                                      self._bid_index >= len(self._bid_order))
-                    if not is_qabool_turn:
-                        is_valid = False
-                if not self._has_opening_bid and val > 11:
-                    is_qabool_turn = (self.qabool_id == HUMAN_ID and
-                                      self._bid_index >= len(self._bid_order))
-                    if not is_qabool_turn:
-                        is_valid = False
-
-                if is_valid:
-                    bg = (56, 142, 60) if hover else BUTTON_GREEN
-                else:
-                    bg = (60, 60, 60)
-                pygame.draw.rect(self.screen, bg, rect, border_radius=6)
-                if hover and is_valid:
-                    pygame.draw.rect(self.screen, TEXT_GREEN, rect, width=2, border_radius=6)
-                num_surf = btn_font.render(str(val), True, TEXT_WHITE if is_valid else TEXT_DIM)
-                self.screen.blit(num_surf, num_surf.get_rect(center=rect.center))
-
-            # Pass / Dak button — labelled "Dak" when you're Qabool and no one bid.
+            # All three rows visible at once.
+            # Row 1: Pass + Bid numbers (7-13).
             is_qabool_turn = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
             no_bids = (self._bidding_engine.highest_bid is None)
             if is_qabool_turn and no_bids:
@@ -1793,69 +2043,88 @@ class GameScreen:
                 pass_label = "Pass"
                 pass_bg = BUTTON_GREY
 
-            pass_rect = pygame.Rect(cx - 50, cy + 70, 100, 38)
-            hover = pass_rect.collidepoint(mx, my)
-            bg = (100, 50, 50) if (hover and pass_label == "Dak!") else ((80, 80, 80) if hover else pass_bg)
+            # Pass button first in row.
+            # Row 1: Total ~500px centred at cx. start_x = cx - 250.
+            # Pass: 60px, gap 5px, then 7 buttons of 55px with 5px gap = 60 + 5 + 7*55 + 6*5 = 480.
+            row1_start = cx - 250
+            pass_press = 2 if (self._button_press_timer > 0 and self._button_press_id == "pass") else 0
+            pass_rect = pygame.Rect(row1_start, cy - 10 + pass_press, 60, 45 - pass_press)
+            hover_pass = pass_rect.collidepoint(mx, my)
+            bg = (100, 50, 50) if (hover_pass and pass_label == "Dak!") else ((80, 80, 80) if hover_pass else pass_bg)
             pygame.draw.rect(self.screen, bg, pass_rect, border_radius=6)
-            pass_surf = btn_font.render(pass_label, True, TEXT_WHITE)
+            pass_surf = btn_font.render(pass_label, True, TEXT_GREEN)
             self.screen.blit(pass_surf, pass_surf.get_rect(center=pass_rect.center))
 
-        elif self._bid_step == "trump":
-            # Select trump suit.
+            # Bid numbers.
+            for i, val in enumerate(range(7, 14)):
+                rect = pygame.Rect(row1_start + 65 + i * 60, cy - 10, 55, 45)
+                hover = rect.collidepoint(mx, my)
+                selected = (self._selected_bid == val)
 
+                if selected:
+                    bg = (30, 100, 30)
+                    pygame.draw.rect(self.screen, bg, rect, border_radius=6)
+                    pygame.draw.rect(self.screen, TEXT_GREEN, rect, width=2, border_radius=6)
+                elif hover:
+                    bg = (56, 142, 60)
+                    pygame.draw.rect(self.screen, bg, rect, border_radius=6)
+                    pygame.draw.rect(self.screen, TEXT_GREEN, rect, width=1, border_radius=6)
+                else:
+                    pygame.draw.rect(self.screen, BUTTON_GREEN, rect, border_radius=6)
+                num_surf = btn_font.render(str(val), True, TEXT_WHITE)
+                self.screen.blit(num_surf, num_surf.get_rect(center=rect.center))
+
+            # Row 2: Suit buttons. 4 buttons 65px each with 10px gap = 290px centred at cx.
             suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
+            row2_start = cx - 145
             for i, suit in enumerate(suits):
                 sym = SUIT_SYMBOLS[suit]
                 count = sum(1 for c in self.players[HUMAN_ID].hand if c.suit == suit)
-                rect = pygame.Rect(cx - 140 + i * 75, cy + 10, 65, 60)
+                rect = pygame.Rect(row2_start + i * 75, cy + 50, 65, 55)
                 hover = rect.collidepoint(mx, my)
+                selected = (self._selected_trump_idx == i)
                 color = RED_SUIT if suit in (Suit.HEARTS, Suit.DIAMONDS) else BLACK_SUIT
 
-                bg = (255, 255, 240) if hover else CARD_WHITE
-                pygame.draw.rect(self.screen, bg, rect, border_radius=8)
-                if hover:
+                if selected:
+                    bg = (220, 255, 220)
+                    pygame.draw.rect(self.screen, bg, rect, border_radius=8)
                     pygame.draw.rect(self.screen, HIGHLIGHT_GREEN, rect, width=2, border_radius=8)
+                elif hover:
+                    pygame.draw.rect(self.screen, (255, 255, 240), rect, border_radius=8)
+                    pygame.draw.rect(self.screen, HIGHLIGHT_GREEN, rect, width=1, border_radius=8)
                 else:
+                    pygame.draw.rect(self.screen, CARD_WHITE, rect, border_radius=8)
                     pygame.draw.rect(self.screen, (180, 180, 180), rect, width=1, border_radius=8)
 
-                sym_font = pygame.font.SysFont("Segoe UI", 26, bold=True)
+                sym_font = pygame.font.SysFont("Segoe UI", 24, bold=True)
                 sym_surf = sym_font.render(sym, True, color)
-                self.screen.blit(sym_surf, sym_surf.get_rect(centerx=rect.centerx, y=rect.y + 5))
-
+                self.screen.blit(sym_surf, sym_surf.get_rect(centerx=rect.centerx, y=rect.y + 4))
                 cnt_surf = self.fonts["small"].render(f"({count})", True, TEXT_DIM)
-                self.screen.blit(cnt_surf, cnt_surf.get_rect(centerx=rect.centerx, y=rect.y + 42))
+                self.screen.blit(cnt_surf, cnt_surf.get_rect(centerx=rect.centerx, y=rect.y + 38))
 
-            # Back button.
-            back_rect = pygame.Rect(cx - 50, cy + 80, 100, 32)
-            hover = back_rect.collidepoint(mx, my)
-            bg = (70, 70, 70) if hover else BUTTON_GREY
-            pygame.draw.rect(self.screen, bg, back_rect, border_radius=6)
-            back_surf = self.fonts["medium"].render("← Back", True, TEXT_WHITE)
-            self.screen.blit(back_surf, back_surf.get_rect(center=back_rect.center))
-
-        elif self._bid_step == "confirm":
-            # Step 3: Confirm (Feature 5).
-            suits = [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
-            chosen_suit = suits[self._selected_trump_idx]
-            sym = SUIT_SYMBOLS[chosen_suit]
-
-            # Confirm button.
-            confirm_rect = pygame.Rect(cx - 70, cy + 10, 140, 45)
-            hover = confirm_rect.collidepoint(mx, my)
-            bg = (56, 142, 60) if hover else BUTTON_GREEN
-            pygame.draw.rect(self.screen, bg, confirm_rect, border_radius=8)
-            if hover:
-                pygame.draw.rect(self.screen, TEXT_GREEN, confirm_rect, width=2, border_radius=8)
-            confirm_surf = btn_font.render("✓ Confirm", True, TEXT_WHITE)
+            # Row 3: Confirm button.
+            valid = self._is_bid_valid()
+            confirm_press = 2 if (self._button_press_timer > 0 and self._button_press_id == "confirm") else 0
+            confirm_rect = pygame.Rect(cx - 70, cy + 120 + confirm_press, 140, 40 - confirm_press)
+            hover_confirm = confirm_rect.collidepoint(mx, my)
+            if valid:
+                bg = (56, 142, 60) if hover_confirm else BUTTON_GREEN
+                pygame.draw.rect(self.screen, bg, confirm_rect, border_radius=8)
+                if hover_confirm:
+                    pygame.draw.rect(self.screen, TEXT_GREEN, confirm_rect, width=2, border_radius=8)
+                confirm_surf = btn_font.render("Confirm", True, TEXT_WHITE)
+            else:
+                pygame.draw.rect(self.screen, (50, 50, 50), confirm_rect, border_radius=8)
+                confirm_surf = btn_font.render("Confirm", True, TEXT_DIM)
             self.screen.blit(confirm_surf, confirm_surf.get_rect(center=confirm_rect.center))
 
-            # Back button.
-            back_rect = pygame.Rect(cx - 70, cy + 65, 140, 32)
-            hover = back_rect.collidepoint(mx, my)
-            bg = (70, 70, 70) if hover else BUTTON_GREY
-            pygame.draw.rect(self.screen, bg, back_rect, border_radius=6)
-            back_surf = self.fonts["medium"].render("← Change", True, TEXT_WHITE)
-            self.screen.blit(back_surf, back_surf.get_rect(center=back_rect.center))
+            # Warning line under confirm when invalid.
+            if not valid and self._selected_bid is not None and self._selected_trump_idx is not None:
+                warn_text = self._get_bid_warning()
+                if warn_text:
+                    warn_font = pygame.font.SysFont("Segoe UI", 14, bold=True)
+                    warn_surf = warn_font.render(warn_text, True, (255, 100, 50))
+                    self.screen.blit(warn_surf, warn_surf.get_rect(centerx=cx, y=cy + 165))
 
     def _render_info_bar(self):
         """Render the top information bar."""
@@ -1868,45 +2137,49 @@ class GameScreen:
         self.screen.blit(pts_surf, (30, y))
 
         items = [
-            (f"Shota {self.shota_number}/5", TEXT_WHITE),
-            (f"Trick {self.trick_number}/13", TEXT_LIGHT),
-            (f"Qabool: {DISPLAY_NAMES[self.qabool_id]}", TEXT_GOLD),
-            (f"Bid: {self.bid_value}", TEXT_GOLD),
-            (f"Shooter: {DISPLAY_NAMES.get(self.shooter_id, '?')}", TEXT_GREEN),
+            (f"Shota {self.shota_number}/5", (255, 255, 255)),
+            (f"Trick {self.trick_number}/13", (220, 255, 220)),
+            (f"Qabool: {DISPLAY_NAMES[self.qabool_id]}", (255, 255, 255)),
+            (f"Bid: {self.bid_value}", (255, 230, 100)),
+            (f"Shooter: {DISPLAY_NAMES.get(self.shooter_id, '?')}", (130, 255, 130)),
         ]
 
         # Feature 1: Only show trump if revealed.
         if self._trump_revealed and self.trump_suit:
             sym = SUIT_SYMBOLS.get(self.trump_suit, "?")
-            color = RED_SUIT if self.trump_suit in (Suit.HEARTS, Suit.DIAMONDS) else TEXT_WHITE
+            color = (255, 100, 100) if self.trump_suit in (Suit.HEARTS, Suit.DIAMONDS) else (255, 255, 255)
             items.append((f"Trump: {sym}", color))
         else:
-            items.append(("Trump: ?", TEXT_DIM))
+            items.append(("Trump: ?", (140, 140, 140)))
 
-        items.append((f"T1={self.game_scores[0]} | T2={self.game_scores[1]}", TEAM1_BLUE))
+        items.append((f"T1={self.game_scores[0]} | T2={self.game_scores[1]}", (100, 200, 255)))
 
         # Feature 6: Dak counter.
         if self._dak_count > 0:
             items.append((f"Daks: {self._dak_count}/2", BUTTON_RED))
 
         x = 30 + pts_surf.get_width() + 25
+        bold_font = pygame.font.SysFont("Segoe UI", 13, bold=True)
         for text, color in items:
-            surf = self.fonts["medium"].render(text, True, color)
+            is_qabool_item = text.startswith("Qabool:")
+            font_to_use = bold_font if is_qabool_item else self.fonts["medium"]
+            surf = font_to_use.render(text, True, color)
             self.screen.blit(surf, (x, y))
             x += surf.get_width() + 20
 
-        # Feature 22: Load Model button.
-        btn_rect = pygame.Rect(TABLE_WIDTH - 130, 5, 120, 28)
+        # Feature 22: Load AI-Expert Model button.
+        btn_rect = pygame.Rect(TABLE_WIDTH - 155, 5, 145, 28)
         mx, my = pygame.mouse.get_pos()
         hover = btn_rect.collidepoint(mx, my)
-        bg = (40, 100, 160) if hover else BUTTON_BLUE
+        bg = (255, 230, 50) if hover else (255, 213, 79)
         pygame.draw.rect(self.screen, bg, btn_rect, border_radius=5)
-        btn_text = self.fonts["small"].render("Load Model", True, TEXT_WHITE)
+        pygame.draw.rect(self.screen, (200, 160, 0), btn_rect, width=1, border_radius=5)
+        btn_text = self.fonts["small"].render("Load AI-Expert Model", True, (20, 20, 20))
         self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
         if self._ai_model_path:
-            model_name = os.path.basename(self._ai_model_path)[:15]
+            model_name = os.path.basename(self._ai_model_path)[:18]
             name_surf = self.fonts["small"].render(model_name, True, TEXT_GREEN)
-            self.screen.blit(name_surf, (TABLE_WIDTH - 130, 36))
+            self.screen.blit(name_surf, (TABLE_WIDTH - 155, 36))
 
     def _render_opponent(self, pid, x, y, horizontal=True):
         """Render face-down cards for an opponent."""
@@ -1920,6 +2193,65 @@ class GameScreen:
             else:
                 pos = (x, y + i * 8)
             self.screen.blit(self._card_back_mini, pos)
+
+    def _render_turn_glow(self, cx, cy):
+        """Render a soft radial glow behind the active player's card area."""
+        if self._active_turn_pid is None:
+            return
+        pid = self._active_turn_pid
+        # Positions for the glow centre per player.
+        glow_positions = {
+            0: (cx, 130),                   # Top
+            3: (75, cy),                    # Left
+            1: (TABLE_WIDTH - 75, cy),      # Right
+            2: (cx, SCREEN_HEIGHT - 180),   # Bottom (human)
+        }
+        if pid not in glow_positions:
+            return
+        gx, gy = glow_positions[pid]
+
+        # Create a 100x100 surface with a radial alpha gradient.
+        glow_size = 100
+        glow_surf = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
+        center = glow_size // 2
+        for r in range(center, 0, -2):
+            alpha = int(60 * (1 - r / center))
+            pygame.draw.circle(glow_surf, (76, 175, 80, alpha), (center, center), r)
+        self.screen.blit(glow_surf, (gx - center, gy - center))
+
+    def _spawn_confetti(self):
+        """Spawn 80 confetti particles for victory celebration."""
+        colors = [
+            (255, 215, 0),    # Gold
+            (76, 175, 80),    # Green
+            (66, 165, 245),   # Blue
+            (229, 57, 53),    # Red
+            (255, 112, 67),   # Orange
+        ]
+        self._confetti_particles = []
+        for _ in range(80):
+            self._confetti_particles.append({
+                "x": random.randint(0, SCREEN_WIDTH),
+                "y": random.randint(-100, 0),
+                "vx": random.uniform(-2, 2),
+                "vy": random.uniform(1, 4),
+                "color": random.choice(colors),
+                "w": random.randint(4, 8),
+                "h": random.randint(4, 10),
+                "life": random.randint(180, 240),  # 3-4 seconds at 60fps
+                "max_life": 240,
+                "alpha": 255,
+            })
+
+    def _render_confetti(self):
+        """Render confetti particles as small coloured rectangles."""
+        for p in self._confetti_particles:
+            if p["alpha"] <= 0:
+                continue
+            rect_surf = pygame.Surface((p["w"], p["h"]), pygame.SRCALPHA)
+            r, g, b = p["color"]
+            rect_surf.fill((r, g, b, p["alpha"]))
+            self.screen.blit(rect_surf, (int(p["x"]), int(p["y"])))
 
     def _get_card_surface(self, rank: str, suit: str) -> pygame.Surface:
         """Get card surface at default size."""

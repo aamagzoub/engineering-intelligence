@@ -4,6 +4,8 @@ Sudanese Wist — Pro PyGame UI
 Run this file to launch the PyGame version of the game.
 """
 
+VERSION = "1.1.0"
+
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +22,7 @@ class WistApp:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption(TITLE)
+        pygame.display.set_caption(f"{TITLE} v{VERSION}")
         self.clock = pygame.time.Clock()
         self.running = True
 
@@ -32,7 +34,7 @@ class WistApp:
         }
 
         self.state = "name_entry"  # Start with name entry.
-        self._player_name = "Abubakr"
+        self._player_name = self._load_saved_name()
         self._name_cursor_visible = True
         self._name_cursor_timer = 0
 
@@ -95,6 +97,13 @@ class WistApp:
                             self._player_name = "Abubakr"
                         self._apply_player_name()
                         self.state = "menu"
+                    # Reset points button.
+                    reset_rect = pygame.Rect(cx - 60, cy + 120, 120, 30)
+                    if reset_rect.collidepoint(event.pos):
+                        self.game_screen._player_points = 0
+                        self.game_screen._player_games_played = 0
+                        self.game_screen._player_games_won = 0
+                        self.game_screen._save_player_stats()
                 elif self.state == "menu":
                     cx = SCREEN_WIDTH // 2
                     cy = SCREEN_HEIGHT // 2
@@ -116,9 +125,40 @@ class WistApp:
         self.game_screen.start_game()
 
     def _apply_player_name(self):
-        """Set the player name in the game screen."""
+        """Set the player name in the game screen and save it."""
         import gui_pygame.game_screen as gs
         gs.DISPLAY_NAMES[2] = self._player_name
+        self._save_player_name()
+
+    def _load_saved_name(self) -> str:
+        """Load player name from stats file if it exists."""
+        import json, os
+        stats_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "player_stats.json")
+        try:
+            if os.path.exists(stats_file):
+                with open(stats_file, 'r') as f:
+                    data = json.load(f)
+                return data.get("name", "Abubakr")
+        except Exception:
+            pass
+        return "Abubakr"
+
+    def _save_player_name(self):
+        """Save player name to stats file."""
+        import json, os
+        stats_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "player_stats.json")
+        try:
+            data = {}
+            if os.path.exists(stats_file):
+                with open(stats_file, 'r') as f:
+                    data = json.load(f)
+            data["name"] = self._player_name
+            with open(stats_file, 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
 
     def _update(self):
         if self.state == "playing":
@@ -184,8 +224,16 @@ class WistApp:
         hover = btn_rect.collidepoint(mx, my)
         bg = (56, 142, 60) if hover else BUTTON_GREEN
         pygame.draw.rect(self.screen, bg, btn_rect, border_radius=10)
-        btn_text = self.fonts["large"].render("Continue ▶", True, TEXT_WHITE)
+        btn_text = self.fonts["large"].render("Continue", True, TEXT_WHITE)
         self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
+
+        # Reset Points button.
+        reset_rect = pygame.Rect(cx - 60, cy + 120, 120, 30)
+        hover_reset = reset_rect.collidepoint(mx, my)
+        bg_reset = (80, 30, 30) if hover_reset else (50, 20, 20)
+        pygame.draw.rect(self.screen, bg_reset, reset_rect, border_radius=6)
+        reset_text = self.fonts["medium"].render("Reset Points", True, (200, 100, 100))
+        self.screen.blit(reset_text, reset_text.get_rect(center=reset_rect.center))
 
     def _render_rules(self):
         """Render How to Play screen."""
@@ -278,6 +326,10 @@ class WistApp:
         # Instructions.
         inst = self.fonts["medium"].render("Click button or press ENTER  |  ESC to quit", True, TEXT_DIM)
         self.screen.blit(inst, inst.get_rect(centerx=cx, y=SCREEN_HEIGHT - 120))
+
+        # Version.
+        ver_surf = self.fonts["medium"].render(f"v{VERSION}", True, TEXT_DIM)
+        self.screen.blit(ver_surf, ver_surf.get_rect(x=SCREEN_WIDTH - 80, y=SCREEN_HEIGHT - 40))
 
 
 if __name__ == "__main__":
