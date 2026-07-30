@@ -22,7 +22,7 @@ All 22 features implemented:
 15. Empty slot placeholders in centre (dashed rect)
 16. Card dealing animation (lerp 30 frames)
 17. Card play animation (slide to centre)
-18. Sound effects (pygame.mixer tones)
+18. (Sound effects removed)
 19. Bid number validation feedback
 20. Responsive hand sizing (CARD_LARGE when ≤6 cards)
 21. ESC during game (quit overlay Y/N)
@@ -32,11 +32,7 @@ All 22 features implemented:
 import pygame
 import math
 import os
-import struct
-import wave
-import tempfile
 import random
-from collections import Counter
 from tkinter import Tk, filedialog
 
 from gui_pygame.constants import *
@@ -70,42 +66,6 @@ TABLE_WIDTH = SCREEN_WIDTH - STATS_PANEL_WIDTH
 
 def card_key(card: Card) -> tuple[str, str]:
     return RANK_SYMBOLS[card.rank], SUIT_SYMBOLS[card.suit]
-
-
-def _generate_tone_wav(filepath: str, freq: int = 440, duration_ms: int = 200, volume: float = 0.3):
-    """Generate a simple sine-wave WAV file if it doesn't exist."""
-    if os.path.exists(filepath):
-        return
-    sample_rate = 22050
-    n_samples = int(sample_rate * duration_ms / 1000)
-    try:
-        with wave.open(filepath, 'w') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            for i in range(n_samples):
-                t = i / sample_rate
-                val = int(volume * 32767 * math.sin(2 * math.pi * freq * t))
-                wf.writeframes(struct.pack('<h', val))
-    except Exception:
-        pass
-
-
-def _ensure_sound_files():
-    """Ensure sound effect WAV files exist (generate simple tones if not)."""
-    sound_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
-    os.makedirs(sound_dir, exist_ok=True)
-    files = {
-        "card_play.wav": (600, 100, 0.2),
-        "trick_win.wav": (880, 300, 0.3),
-        "your_turn.wav": (520, 150, 0.25),
-    }
-    paths = {}
-    for fname, (freq, dur, vol) in files.items():
-        fpath = os.path.join(sound_dir, fname)
-        _generate_tone_wav(fpath, freq, dur, vol)
-        paths[fname] = fpath
-    return paths
 
 
 class AnimatingCard:
@@ -187,11 +147,6 @@ class GameScreen:
         self._card_back = create_card_back(CARD_WIDTH, CARD_HEIGHT)
         self._card_back_mini = create_card_back(CARD_MINI_W, CARD_MINI_H)
         self._card_back_large = create_card_back(CARD_LARGE_W, CARD_LARGE_H)
-
-        # Sound effects (Feature 18).
-        self._sounds_loaded = False
-        self._sounds: dict[str, pygame.mixer.Sound] = {}
-        self._init_sounds()
 
         # Player rating/points (persistent JSON).
         self._player_points = 0
@@ -295,30 +250,6 @@ class GameScreen:
         self._bid_step = "number"  # "number" → "trump" → "confirm"
         self._selected_bid: int | None = None
         self._selected_trump_idx: int | None = None
-
-    def _init_sounds(self):
-        """Initialize sound effects (Feature 18)."""
-        try:
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(22050, -16, 1, 512)
-            sound_paths = _ensure_sound_files()
-            for name, path in sound_paths.items():
-                key = name.replace(".wav", "")
-                try:
-                    self._sounds[key] = pygame.mixer.Sound(path)
-                except Exception:
-                    pass
-            self._sounds_loaded = True
-        except Exception:
-            self._sounds_loaded = False
-
-    def _play_sound(self, name: str):
-        """Play a sound effect by name."""
-        if self._sounds_loaded and name in self._sounds:
-            try:
-                self._sounds[name].play()
-            except Exception:
-                pass
 
     # ----------------------------------------------------------
     # Player Points (persistent)
@@ -877,9 +808,6 @@ class GameScreen:
         self._ai_timer = 30
         print(f"[Trick {self.trick_number}] Leader: {DISPLAY_NAMES[leader]}, Order: {[DISPLAY_NAMES[p] for p in self._play_order]}")
 
-        # Feature 18: Play "your_turn" sound if human leads.
-        # (Sounds removed)
-
     def _end_shota(self):
         """Score the Shota and start next or end game."""
         from environments.wist.scoring import score_shota, detect_seek
@@ -1173,9 +1101,6 @@ class GameScreen:
         # Feature 9: Gold highlight the winning card on the table.
         self._trick_winner_id = winner
         self._trick_winner_timer = 60
-
-        # Play sound.
-        self._play_sound("trick_win")
 
         # Pause with all 4 cards visible + gold highlight, then move to phase 2.
         self._ai_timer = 45  # ~0.75s pause at 60fps.
