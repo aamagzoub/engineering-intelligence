@@ -24,7 +24,9 @@ class BiddingEngine:
     ) -> None:
 
         if self.highest_bid is None:
-            validate_opening_bid(bid)
+            # Opening bid restriction (max 11) does NOT apply to Sahib Al-Qabool.
+            if not is_sahib_al_qabool:
+                validate_opening_bid(bid)
         elif is_sahib_al_qabool:
             validate_sahib_al_qabool_bid(
                 bid,

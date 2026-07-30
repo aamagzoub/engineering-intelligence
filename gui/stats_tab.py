@@ -39,7 +39,7 @@ class StatsTab:
 
         tk.Label(controls, text="Games:", font=("Segoe UI", 10),
                  fg="#aaaaaa", bg="#252525").grid(row=1, column=0, padx=(0, 6))
-        self._batch_count_var = tk.StringVar(value="1000")
+        self._batch_count_var = tk.StringVar(value="50000")
         tk.Entry(controls, textvariable=self._batch_count_var, font=("Consolas", 11),
                  width=6, bg="#333333", fg="#ffffff", insertbackground="#fff",
                  bd=1, relief="solid").grid(row=1, column=1, padx=(0, 16))
