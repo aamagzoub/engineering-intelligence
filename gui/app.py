@@ -80,24 +80,24 @@ class WistAILabApp:
         self.notebook = ttk.Notebook(self.root, style="Lab.TNotebook")
         self.notebook.pack(fill="both", expand=True, padx=10, pady=(2, 4))
 
-        # Tab 1: AI Advisor
-        advisor_tab_frame = tk.Frame(self.notebook, bg="#1a1a1a")
-        self.notebook.add(advisor_tab_frame, text="  🔬 AI Advisor  ")
-
-        from gui.advisor_tab import AdvisorTab
-        self._advisor_tab = AdvisorTab(advisor_tab_frame, self.root)
-
-        # Tab 2: Game Table (AI vs AI)
-        game_tab = tk.Frame(self.notebook, bg=COLORS["table_border"])
-        self.notebook.add(game_tab, text="  🃏 Game Table  ")
-        self._build_game_tab(game_tab)
-
-        # Tab 3: Stats & Lab
+        # Tab 1: Stats & Lab
         stats_tab = tk.Frame(self.notebook, bg=COLORS["header_bg"])
         self.notebook.add(stats_tab, text="  📊 Stats & Lab  ")
 
         from gui.stats_tab import StatsTab
         self._stats_tab = StatsTab(stats_tab, self.root, self.stats)
+
+        # Tab 2: Play for AI
+        advisor_tab_frame = tk.Frame(self.notebook, bg="#1a1a1a")
+        self.notebook.add(advisor_tab_frame, text="  🤖 Play for AI  ")
+
+        from gui.advisor_tab import AdvisorTab
+        self._advisor_tab = AdvisorTab(advisor_tab_frame, self.root)
+
+        # Tab 3: Game Table (AI vs AI)
+        game_tab = tk.Frame(self.notebook, bg=COLORS["table_border"])
+        self.notebook.add(game_tab, text="  🃏 Game Table  ")
+        self._build_game_tab(game_tab)
 
         # Bottom: controls (visible on all tabs)
         self._build_controls()
