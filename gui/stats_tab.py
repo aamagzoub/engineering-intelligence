@@ -39,7 +39,7 @@ class StatsTab:
 
         tk.Label(controls, text="Games:", font=("Segoe UI", 10),
                  fg="#aaaaaa", bg="#252525").grid(row=1, column=0, padx=(0, 6))
-        self._batch_count_var = tk.StringVar(value="10000")
+        self._batch_count_var = tk.StringVar(value="1000")
         tk.Entry(controls, textvariable=self._batch_count_var, font=("Consolas", 11),
                  width=6, bg="#333333", fg="#ffffff", insertbackground="#fff",
                  bd=1, relief="solid").grid(row=1, column=1, padx=(0, 16))
@@ -339,7 +339,14 @@ class StatsTab:
 
             bid_met = (tt.get(res.playing_team_id, 0) >= res.winning_bid_value)
             if isinstance(t1_agent, LearningAgent):
-                t1_agent.reward_shota(team_won_shota=(tt[0] > tt[1]), bid_met=(bid_met and res.playing_team_id == 0))
+                t1_agent.reward_shota(
+                    team_won_shota=(tt[0] > tt[1]),
+                    bid_met=(bid_met and res.playing_team_id == 0),
+                    my_tricks=tt[0],
+                    opp_tricks=tt[1],
+                    was_shooter=(res.playing_team_id == 0),
+                    seek=(tt[0] == 13 or tt[1] == 13),
+                )
                 t1_agent.decay_epsilon()
 
             wt = 0 if tt[0] > tt[1] else (1 if tt[1] > tt[0] else None)

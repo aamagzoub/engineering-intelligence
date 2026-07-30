@@ -211,108 +211,297 @@ class AdvisorTab:
         self.qabool_id = qabool_map.get(self._qabool_var.get(), 0)
         self.phase = "bidding"
 
-        self._instruction.config(text="Bidding phase — AI will decide its bid")
+        # Bidding order: left of Qabool → opposite → right → Qabool last.
+        order = [(self.qabool_id + 1) % 4,
+                 (self.qabool_id + 2) % 4,
+                 (self.qabool_id + 3) % 4]
+        self._bid_order = order  # 3 players then Qabool decides.
+        self._bid_history: list[tuple[int, int | None]] = []  # (pid, value or None=pass)
+        self._highest_bid: int | None = None
+        self._highest_bidder: int | None = None
+        self._bid_step = 0  # Which player in order we're at.
+        self._is_opening_bid = True
 
-        # Ask AI for its bid.
-        agent = self._get_agent()
+        self._instruction.config(text="Bidding — enter each player's bid in order")
+        self._build_bidding_step_panel()
+
+    def _build_bidding_step_panel(self) -> None:
+        """Show the current bidding step — who's bidding now."""
+        for w in self._right.winfo_children():
+            w.destroy()
+
+        player_names = {0: "AI (You)", 1: "P2 (Right)", 2: "P3 (Partner)", 3: "P4 (Left)"}
+
+        # Show bid history so far.
+        if self._bid_history:
+            history_frame = tk.Frame(self._right, bg="#252525")
+            history_frame.pack(fill="x", pady=(0, 8))
+            tk.Label(history_frame, text="Bids so far:", font=("Segoe UI", 9),
+                     fg="#888888", bg="#252525").pack(anchor="w")
+            for pid, val in self._bid_history:
+                text = f"  {player_names[pid]}: {'Pass' if val is None else f'Bid {val}'}"
+                fg = "#888888" if val is None else COLORS["gold"]
+                tk.Label(history_frame, text=text, font=("Consolas", 10),
+                         fg=fg, bg="#252525").pack(anchor="w")
+
+        # Are we still in the 3-player round or at Qabool's decision?
+        if self._bid_step < 3:
+            current_pid = self._bid_order[self._bid_step]
+            is_ai_turn = (current_pid == 0)
+
+            tk.Label(self._right, text=f"Now: {player_names[current_pid]}",
+                     font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#252525"
+                     ).pack(anchor="w", pady=(4, 8))
+
+            if is_ai_turn:
+                # AI decides — ask the agent.
+                self._ai_bid_decision()
+            else:
+                # Other player — ask user to input their bid/pass.
+                tk.Label(self._right, text="What did they say?",
+                         font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
+
+                btn_row = tk.Frame(self._right, bg="#252525")
+                btn_row.pack(fill="x", pady=(6, 4))
+
+                tk.Button(btn_row, text="Pass", command=lambda: self._record_bid(current_pid, None),
+                          font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_grey"],
+                          bd=0, padx=12, pady=5, cursor="hand2").pack(side="left", padx=3)
+
+                # Bid value buttons.
+                min_val = (self._highest_bid + 1) if self._highest_bid else 7
+                for v in range(min_val, 14):
+                    tk.Button(btn_row, text=str(v),
+                              command=lambda val=v: self._record_bid(current_pid, val),
+                              font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                              bd=0, padx=8, pady=5, cursor="hand2").pack(side="left", padx=2)
+
+        else:
+            # Qabool's decision.
+            tk.Label(self._right, text=f"Qabool: {player_names[self.qabool_id]}",
+                     font=("Segoe UI", 12, "bold"), fg=COLORS["gold"], bg="#252525"
+                     ).pack(anchor="w", pady=(4, 4))
+
+            is_ai_qabool = (self.qabool_id == 0)
+
+            if self._highest_bid is None:
+                # Everyone passed — Qabool must decide: bid or Dak.
+                if is_ai_qabool:
+                    self._ai_qabool_decision()
+                else:
+                    tk.Label(self._right, text="All passed. Qabool decides:",
+                             font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
+                    btn_row = tk.Frame(self._right, bg="#252525")
+                    btn_row.pack(fill="x", pady=6)
+                    tk.Button(btn_row, text="Dak!", command=self._declare_dak,
+                              font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_red"],
+                              bd=0, padx=12, pady=5, cursor="hand2").pack(side="left", padx=3)
+                    for v in range(7, 14):
+                        tk.Button(btn_row, text=str(v),
+                                  command=lambda val=v: self._qabool_bids(val),
+                                  font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                                  bd=0, padx=6, pady=5, cursor="hand2").pack(side="left", padx=2)
+            else:
+                # Someone bid — Qabool: accept or match/outbid.
+                if is_ai_qabool:
+                    self._ai_qabool_decision()
+                else:
+                    tk.Label(self._right,
+                             text=f"Highest bid: {self._highest_bid} by {player_names[self._highest_bidder]}",
+                             font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
+                    tk.Label(self._right, text="Qabool decides:",
+                             font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
+                    btn_row = tk.Frame(self._right, bg="#252525")
+                    btn_row.pack(fill="x", pady=6)
+                    tk.Button(btn_row, text="Accept",
+                              command=lambda: self._qabool_accepts(),
+                              font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_orange"],
+                              bd=0, padx=12, pady=5, cursor="hand2").pack(side="left", padx=3)
+                    for v in range(self._highest_bid, 14):
+                        tk.Button(btn_row, text=str(v),
+                                  command=lambda val=v: self._qabool_bids(val),
+                                  font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                                  bd=0, padx=6, pady=5, cursor="hand2").pack(side="left", padx=2)
+
+    def _record_bid(self, pid: int, value: int | None) -> None:
+        """Record a player's bid or pass and advance."""
+        self._bid_history.append((pid, value))
+        if value is not None:
+            if self._highest_bid is None or value > self._highest_bid:
+                self._highest_bid = value
+                self._highest_bidder = pid
+            self._is_opening_bid = False
+            # Bid of 13 stops bidding immediately.
+            if value == 13:
+                self._bid_step = 3  # Jump to Qabool.
+                self._build_bidding_step_panel()
+                return
+        self._bid_step += 1
+        self._build_bidding_step_panel()
+
+    def _ai_bid_decision(self) -> None:
+        """AI decides its bid."""
         from environments.wist.observation import BiddingObservation
         from environments.wist.actions import BidAction, PassAction
 
+        agent = self._get_agent()
         obs = BiddingObservation(
             player_id=0,
             hand=list(self.ai_hand),
-            previous_bids=[],
-            current_highest_bid=None,
-            is_sahib_al_qabool=(self.qabool_id == 0),
-            is_opening_bid=True,
+            previous_bids=list(self._bid_history),
+            current_highest_bid=self._highest_bid,
+            is_sahib_al_qabool=False,
+            is_opening_bid=self._is_opening_bid,
         )
         action = agent.act(obs)
 
         if isinstance(action, BidAction):
-            ai_bid_text = f"BID {action.value}"
-            self._command_label.config(text=f"📢 Say: \"{ai_bid_text}\"", fg="#4caf50")
+            bid_val = action.value
+            self._command_label.config(text=f"📢 Say: \"BID {bid_val}\"", fg="#4caf50")
+            tk.Label(self._right, text=f"AI bids: {bid_val}",
+                     font=("Segoe UI", 14, "bold"), fg="#4caf50", bg="#252525"
+                     ).pack(anchor="w", pady=8)
         else:
-            ai_bid_text = "PASS"
+            bid_val = None
             self._command_label.config(text=f"📢 Say: \"PASS\"", fg="#ff9800")
+            tk.Label(self._right, text="AI passes",
+                     font=("Segoe UI", 14, "bold"), fg="#ff9800", bg="#252525"
+                     ).pack(anchor="w", pady=8)
 
-        # Now show bidding result inputs.
-        self._build_bidding_result_panel()
+        tk.Button(self._right, text="→ Continue", command=lambda: self._record_bid(0, bid_val),
+                  font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                  bd=0, padx=12, pady=5, cursor="hand2").pack(anchor="w", pady=4)
 
-    def _build_bidding_result_panel(self) -> None:
-        """Show inputs for the bidding result (who won, value, trump)."""
+    def _ai_qabool_decision(self) -> None:
+        """AI is Qabool — decide accept/match/dak."""
+        from environments.wist.observation import BiddingObservation
+        from environments.wist.actions import BidAction, PassAction
+
+        agent = self._get_agent()
+        obs = BiddingObservation(
+            player_id=0,
+            hand=list(self.ai_hand),
+            previous_bids=list(self._bid_history),
+            current_highest_bid=self._highest_bid,
+            is_sahib_al_qabool=True,
+            is_opening_bid=self._is_opening_bid,
+        )
+        action = agent.act(obs)
+
+        if isinstance(action, PassAction):
+            if self._highest_bid is None:
+                # Dak.
+                self._command_label.config(text="📢 Say: \"DAK!\"", fg="#ff5252")
+                tk.Label(self._right, text="AI declares DAK!",
+                         font=("Segoe UI", 14, "bold"), fg="#ff5252", bg="#252525"
+                         ).pack(anchor="w", pady=8)
+                tk.Button(self._right, text="OK (Re-deal)", command=self._declare_dak,
+                          font=("Segoe UI", 10), fg="#fff", bg=COLORS["btn_red"],
+                          bd=0, padx=12, pady=5, cursor="hand2").pack(anchor="w")
+            else:
+                # Accept.
+                self._command_label.config(text="📢 AI ACCEPTS the bid", fg="#ffd54f")
+                tk.Label(self._right, text="AI accepts",
+                         font=("Segoe UI", 14, "bold"), fg="#ffd54f", bg="#252525"
+                         ).pack(anchor="w", pady=8)
+                tk.Button(self._right, text="→ Continue", command=self._qabool_accepts,
+                          font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                          bd=0, padx=12, pady=5, cursor="hand2").pack(anchor="w")
+        else:
+            bid_val = action.value
+            self._command_label.config(text=f"📢 Say: \"I BID {bid_val}\"", fg="#4caf50")
+            tk.Label(self._right, text=f"AI bids: {bid_val} (as Qabool)",
+                     font=("Segoe UI", 14, "bold"), fg="#4caf50", bg="#252525"
+                     ).pack(anchor="w", pady=8)
+            tk.Button(self._right, text="→ Continue",
+                      command=lambda: self._qabool_bids(bid_val),
+                      font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
+                      bd=0, padx=12, pady=5, cursor="hand2").pack(anchor="w")
+
+    def _qabool_accepts(self) -> None:
+        """Qabool accepts the highest bid — that bidder's team plays."""
+        self.bid_winner_id = self._highest_bidder
+        self.bid_value = self._highest_bid
+        self._finalize_bidding()
+
+    def _qabool_bids(self, value: int) -> None:
+        """Qabool matches or outbids — Qabool's team plays."""
+        self.bid_winner_id = self.qabool_id
+        self.bid_value = value
+        self._highest_bid = value
+        self._highest_bidder = self.qabool_id
+        self._finalize_bidding()
+
+    def _declare_dak(self) -> None:
+        """Dak declared — reset for new shota."""
+        self._command_label.config(text="DAK! Re-deal and start over.", fg="#ff5252")
+        self._instruction.config(text="Dak declared. Click Reset to re-deal.")
+        self.phase = "done"
+
+    def _finalize_bidding(self) -> None:
+        """Bidding resolved — determine trump and start play."""
+        player_names = {0: "AI (You)", 1: "P2 (Right)", 2: "P3 (Partner)", 3: "P4 (Left)"}
+
+        # If AI won the bid, AI picks trump (longest suit).
+        if self.bid_winner_id == 0:
+            from environments.wist.tasmiya_engine import determine_trump_suit
+            self.trump_suit = determine_trump_suit(self.ai_hand)
+            sym = SUIT_SYMBOLS[self.trump_suit]
+            self._command_label.config(
+                text=f"🃏 Play your first card from {sym} (trump)", fg="#4caf50")
+            self._instruction.config(
+                text=f"You won bid {self.bid_value}. Trump: {sym}. Play starts!")
+            self._show_trump_and_start()
+        else:
+            # Someone else won — ask user what trump was revealed.
+            self._instruction.config(
+                text=f"{player_names[self.bid_winner_id]} won bid {self.bid_value}. What is trump?")
+            self._command_label.config(text="⏳ Waiting: what suit did they lead?", fg="#ff9800")
+            self._build_trump_selection_panel()
+
+    def _build_trump_selection_panel(self) -> None:
+        """Ask user to select the revealed trump suit."""
         for w in self._right.winfo_children():
             w.destroy()
 
-        tk.Label(self._right, text="Bidding Result",
-                 font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#252525"
+        tk.Label(self._right, text="What is the trump suit?",
+                 font=("Segoe UI", 12, "bold"), fg="#ffffff", bg="#252525"
                  ).pack(anchor="w", pady=(0, 8))
+        tk.Label(self._right, text="(Revealed by the first card played)",
+                 font=("Segoe UI", 9), fg="#888888", bg="#252525").pack(anchor="w", pady=(0, 8))
 
-        tk.Label(self._right, text="Who won the bid?",
-                 font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
-        self._bid_winner_var = tk.StringVar(value="You (AI)")
-        tk.OptionMenu(self._right, self._bid_winner_var,
-                      "You (AI)", "Right (P2)", "Partner (P3)", "Left (P4)"
-                      ).pack(anchor="w", pady=(2, 8))
-
-        tk.Label(self._right, text="Bid value:",
-                 font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
-        self._bid_value_var = tk.StringVar(value="7")
-        bid_row = tk.Frame(self._right, bg="#252525")
-        bid_row.pack(anchor="w", pady=(2, 8))
-        for v in range(7, 14):
-            tk.Radiobutton(bid_row, text=str(v), variable=self._bid_value_var,
-                           value=str(v), fg="#fff", bg="#252525", selectcolor="#333",
-                           font=("Segoe UI", 10)).pack(side="left", padx=2)
-
-        tk.Label(self._right, text="Trump suit:",
-                 font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525").pack(anchor="w")
         trump_row = tk.Frame(self._right, bg="#252525")
-        trump_row.pack(anchor="w", pady=(2, 12))
-        self._trump_var = tk.StringVar(value="♠")
+        trump_row.pack(anchor="w", pady=8)
         for suit in ALL_SUITS:
             sym = SUIT_SYMBOLS[suit]
             fg = "#c62828" if suit in (Suit.HEARTS, Suit.DIAMONDS) else "#ffffff"
-            tk.Radiobutton(trump_row, text=sym, variable=self._trump_var,
-                           value=sym, fg=fg, bg="#252525", selectcolor="#333",
-                           font=("Segoe UI", 16, "bold")).pack(side="left", padx=6)
+            tk.Button(trump_row, text=sym, font=("Segoe UI", 20, "bold"),
+                      fg=fg, bg="#333333", bd=1, padx=12, pady=6, cursor="hand2",
+                      command=lambda s=suit: self._set_trump_and_start(s)
+                      ).pack(side="left", padx=6)
 
-        # If AI won bid, auto-select trump.
-        tk.Button(self._right, text="🤖 Let AI Pick Trump", command=self._ai_pick_trump,
-                  font=("Segoe UI", 9), fg="#fff", bg="#1e88e5",
-                  bd=0, padx=8, pady=3, cursor="hand2").pack(anchor="w", pady=(0, 12))
+    def _set_trump_and_start(self, suit: Suit) -> None:
+        self.trump_suit = suit
+        self._show_trump_and_start()
 
-        tk.Button(self._right, text="▶  Start Playing", command=self._start_playing,
-                  font=("Segoe UI", 11, "bold"), fg="#fff", bg=COLORS["btn_green"],
-                  bd=0, padx=16, pady=8, cursor="hand2").pack(anchor="w")
-
-    def _ai_pick_trump(self) -> None:
-        """Let AI choose its trump suit (longest suit)."""
-        from environments.wist.tasmiya_engine import determine_trump_suit
-        trump = determine_trump_suit(self.ai_hand)
-        sym = SUIT_SYMBOLS[trump]
-        self._trump_var.set(sym)
-        self._command_label.config(text=f"Trump: {sym} ({trump.name})", fg="#ffd54f")
+    def _show_trump_and_start(self) -> None:
+        """Trump is set — start playing."""
+        sym = SUIT_SYMBOLS[self.trump_suit]
+        self.phase = "playing"
+        self.trick_number = 0
+        self.leader_id = self.bid_winner_id
+        self.team_tricks = [0, 0]
+        self._instruction.config(text=f"Playing — Trump: {sym} | Bid: {self.bid_value}")
+        self._build_playing_panel()
+        self._start_next_trick()
 
     # ----------------------------------------------------------
     # Playing phase
     # ----------------------------------------------------------
 
     def _start_playing(self) -> None:
-        winner_map = {"You (AI)": 0, "Right (P2)": 1, "Partner (P3)": 2, "Left (P4)": 3}
-        self.bid_winner_id = winner_map.get(self._bid_winner_var.get(), 0)
-        self.bid_value = int(self._bid_value_var.get())
-
-        sym_to_suit = {"♠": Suit.SPADES, "♥": Suit.HEARTS, "♣": Suit.CLUBS, "♦": Suit.DIAMONDS}
-        self.trump_suit = sym_to_suit.get(self._trump_var.get(), Suit.SPADES)
-
-        self.phase = "playing"
-        self.trick_number = 0
-        self.leader_id = self.bid_winner_id
-        self.team_tricks = [0, 0]
-
-        self._instruction.config(text="Playing — AI tells you what to play")
-        self._build_playing_panel()
-        self._start_next_trick()
+        """Called from _show_trump_and_start — phase is already 'playing'."""
+        pass  # Playing is started from _show_trump_and_start.
 
     def _build_playing_panel(self) -> None:
         """Build the right panel for trick play."""
