@@ -1629,12 +1629,12 @@ class GameScreen:
                 bg_color = (40, 80, 40)
                 border_color = HIGHLIGHT_GREEN
                 text_color = TEXT_GREEN
-                icon = "🎯 "
+                icon = ""
             else:
                 bg_color = (50, 40, 10)
                 border_color = TEXT_GOLD
                 text_color = TEXT_GOLD
-                icon = "💬 " if is_bid else ""
+                icon = ""
 
             display_text = f"{icon}{text}"
             surf = bid_font.render(display_text, True, text_color)
@@ -1716,10 +1716,10 @@ class GameScreen:
         # --- Rank & Points ---
         self.screen.blit(title_font.render(self._get_rank_name(), True, TEXT_GOLD),
                          (panel_x + pad, y))
-        y += 20
+        y += 22
         self.screen.blit(label_font.render(f"{self._player_points} pts", True, TEXT_LIGHT),
                          (panel_x + pad, y))
-        y += 14
+        y += 18
         # Rank progress bar.
         prog = self._get_rank_progress()
         prog_x = panel_x + pad
@@ -1727,11 +1727,11 @@ class GameScreen:
         pygame.draw.rect(self.screen, (30, 50, 30), (prog_x, y, prog_w, 4), border_radius=2)
         if prog > 0:
             pygame.draw.rect(self.screen, TEXT_GOLD, (prog_x, y, int(prog_w * prog), 4), border_radius=2)
-        y += 12
+        y += 14
 
         # ========== GAME INFO CARD (fixed height) ==========
         game_card_y = y
-        game_card_h = 215
+        game_card_h = 230
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, game_card_y, panel_w - 10, game_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1784,7 +1784,7 @@ class GameScreen:
         ]
         for lbl, val, clr in rows:
             self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font, lbl, val, clr)
-            y += 17
+            y += 19
 
         # Team tricks + momentum.
         t1_arrow = " ↑" if self._team_streak[0] >= 3 else (" →" if self._team_streak[0] >= 2 else "")
@@ -1871,7 +1871,7 @@ class GameScreen:
 
         # ========== PROBABILITIES CARD ==========
         prob_card_y = game_card_y + game_card_h + 8 + stats_card_h + 8
-        prob_card_h = 120
+        prob_card_h = 140
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1910,7 +1910,7 @@ class GameScreen:
         self.screen.blit(label_font.render(win_label, True, TEXT_LIGHT), (bar_x, py))
         pct_surf = value_font.render(f"{win_prob:.0f}%", True, win_display_color)
         self.screen.blit(pct_surf, (panel_x + panel_w - pad - 4 - pct_surf.get_width(), py))
-        py += 15
+        py += 17
         pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
         win_fill = win_prob / 100.0
         # Color shifts: green when >60%, yellow 40-60%, orange <40%.
@@ -1921,7 +1921,7 @@ class GameScreen:
         else:
             bar_color = TEAM2_ORANGE
         pygame.draw.rect(self.screen, bar_color, (bar_x, py, int(bar_w * win_fill), 6), border_radius=3)
-        py += 12
+        py += 14
 
         # Seek probability.
         # Seek = one team wins all 13. Probability spikes as one team approaches 10+.
@@ -1940,12 +1940,12 @@ class GameScreen:
         seek_text = f"{seek_prob:.0f}%" if seek_prob > 0 else "-"
         sk_surf = value_font.render(seek_text, True, seek_color if seek_prob > 0 else TEXT_LIGHT)
         self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
-        py += 15
+        py += 17
         pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
         if seek_prob > 0:
             pygame.draw.rect(self.screen, seek_color,
                              (bar_x, py, int(bar_w * seek_prob / 100.0), 6), border_radius=3)
-        py += 12
+        py += 14
 
         # Bid success chance.
         # Will the shooter's team make their bid?
