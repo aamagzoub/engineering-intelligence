@@ -267,6 +267,10 @@ class GameScreen:
         # Fan card data for hit detection.
         self._fan_card_data: list[dict] = []
 
+        # Trick resolution state.
+        self._pending_trick_winner: int | None = None
+        self._pending_trick = None
+
         # Vignette cache.
         self._vignette_cache: pygame.Surface | None = None
         self._vignette_cache_key: tuple = (0, 0)
@@ -1053,10 +1057,15 @@ class GameScreen:
             self._start_next_trick()
             return
 
+        # State 98 = highlight pause done, now collect cards to winner.
+        if self._play_idx == 98:
+            self._collect_trick_to_winner()
+            return
+
         if self._play_idx >= 4:
-            # Trick complete — resolve.
+            # Trick complete — show highlight then resolve.
             self._active_turn_pid = None
-            self._resolve_trick()
+            self._start_trick_highlight()
             return
 
         # Safety: if no play order or index out of bounds, skip to resolve.
@@ -1146,8 +1155,8 @@ class GameScreen:
         anim = AnimatingCard(surf, start, end, frames=15, start_scale=1.2, end_scale=1.0)
         self._play_animations.append(anim)
 
-    def _resolve_trick(self):
-        """Determine winner and clean up."""
+    def _start_trick_highlight(self):
+        """Phase 1: Determine winner, highlight the winning card, pause."""
         trick = self.round.state.current_trick
         if trick is None or len(trick.played_cards) < 4:
             self.round.state.current_trick = None
@@ -1156,6 +1165,28 @@ class GameScreen:
             return
 
         winner = trick_winner(trick, self.trump_suit)
+
+        # Store winner info for phase 2.
+        self._pending_trick_winner = winner
+        self._pending_trick = trick
+
+        # Feature 9: Gold highlight the winning card on the table.
+        self._trick_winner_id = winner
+        self._trick_winner_timer = 60
+
+        # Play sound.
+        self._play_sound("trick_win")
+
+        # Pause with all 4 cards visible + gold highlight, then move to phase 2.
+        self._ai_timer = 45  # ~0.75s pause at 60fps.
+        self._play_idx = 98  # Signals: next tick after timer → _collect_trick_to_winner.
+
+    def _collect_trick_to_winner(self):
+        """Phase 2: Animate cards sliding to winner, update scores."""
+        winner = self._pending_trick_winner
+        trick = self._pending_trick
+
+        # Commit game state.
         self.round.state.completed_tricks.append(trick)
         self.round.state.current_trick = None
         self.round.next_leading_player_id = winner
@@ -1170,14 +1201,9 @@ class GameScreen:
 
         # Stats panel animations: highlight + momentum.
         self._stat_highlight_timers["tricks"] = 30
-        # Track momentum streaks.
         other_team = 1 - team
         self._team_streak[team] += 1
         self._team_streak[other_team] = 0
-
-        # Feature 9: Highlight winner.
-        self._trick_winner_id = winner
-        self._trick_winner_timer = 50
 
         # Animate cards sliding to winner's pile.
         cx_t, cy_t = TABLE_WIDTH // 2, SCREEN_HEIGHT // 2
@@ -1197,9 +1223,12 @@ class GameScreen:
         team_name = "Team 1" if team == 0 else "Team 2"
         self._message = f"{winner_name} wins! ({team_name}: {self.team_tricks[team]})"
         self._message_timer = 50
-        self._ai_timer = 50
+        self._ai_timer = 40
         self._play_idx = 99
         self._log_game_event(f"Trick {self.trick_number}: {DISPLAY_NAMES[winner]} wins")
+
+        # Clear the trick highlight after cards start moving.
+        self._trick_played = {}
 
         # Frame-based delay — _ai_timer counts down, then update loop calls _start_next_trick.
 
