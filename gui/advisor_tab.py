@@ -531,7 +531,7 @@ class AdvisorTab:
         self._finalize_bidding()
 
     def _declare_dak(self) -> None:
-        """Dak declared — re-deal: clear hand and go back to card selection."""
+        """Dak declared — rotate Qabool, re-deal, go back to card selection."""
         self.ai_hand.clear()
         self.trick_cards.clear()
         self.trump_suit = None
@@ -539,15 +539,21 @@ class AdvisorTab:
         self.phase = "hand"
         self.team_tricks = [0, 0]
 
+        # Pass-based Dak: Qabool rotates to next player.
+        self.qabool_id = (self.qabool_id + 1) % 4
+
         # Reset card buttons.
         for card, btn in self._card_buttons.items():
             fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
             btn.config(bg=COLORS["card_bg"], fg=fg, relief="solid",
                        command=lambda c=card: self._card_clicked(c))
 
+        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
         self._deck_label.config(text="AI HAND — Click 13 cards (0/13)")
-        self._command_label.config(text="DAK! Select your new 13 cards after re-deal.", fg="#ff5252")
-        self._instruction.config(text="Dak declared — cards re-dealt. Select your new hand.")
+        self._trump_display.config(text="", bg="#252525", relief="flat", bd=0)
+        self._command_label.config(
+            text=f"DAK! Qabool moves to {player_names[self.qabool_id]}. Re-deal.", fg="#ff9800")
+        self._instruction.config(text="Dak declared — Qabool rotated. Select your new hand.")
         self._build_right_panel()
 
     def _finalize_bidding(self) -> None:
