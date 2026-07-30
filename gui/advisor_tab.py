@@ -57,6 +57,12 @@ class AdvisorTab:
         # Phase: "hand", "bidding", "setup", "playing", "done"
         self.phase = "hand"
 
+        # Track which players are known to be void in which suits.
+        # {pid: set of suits they've shown void in}
+        self._known_voids: dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
+        # Pending off-suit confirmation (player tried off-suit, needs confirm).
+        self._pending_offsuit: tuple | None = None
+
         # AI agent.
         self._agent = None
 
@@ -775,30 +781,42 @@ class AdvisorTab:
                     text=f"⚠ First card must be trump ({sym})!", fg="#ff5252")
                 return
 
-        # Validation: must follow led suit if this is not the leader.
+        # Validation: must follow led suit unless proven void.
         if self.trick_cards:
             leading_suit = self.trick_cards[0][1].suit
             if card.suit != leading_suit:
-                # Check how many of the led suit are still unaccounted for.
-                # If many remain among opponents, this is suspicious.
-                suit_in_ai_hand = sum(1 for c in self.ai_hand if c.suit == leading_suit)
-                suit_total = 13
-                # Cards of this suit already played (greyed out on grid).
-                suit_played = sum(1 for c, btn in self._card_buttons.items()
-                                  if c.suit == leading_suit and
-                                  btn.cget("bg") in ("#666666", "#1e88e5"))
-                suit_remaining_with_opponents = suit_total - suit_in_ai_hand - suit_played
-                sym = SUIT_SYMBOLS[leading_suit]
+                # Check if this player is known to be void in the led suit.
+                if leading_suit not in self._known_voids.get(pid, set()):
+                    # Not known void — check if there are still cards of that suit out.
+                    suit_in_ai_hand = sum(1 for c in self.ai_hand if c.suit == leading_suit)
+                    suit_played = sum(1 for c, btn in self._card_buttons.items()
+                                      if c.suit == leading_suit and
+                                      btn.cget("bg") in ("#666666", "#1e88e5"))
+                    suit_remaining = 13 - suit_in_ai_hand - suit_played
+                    sym = SUIT_SYMBOLS[leading_suit]
 
-                if suit_remaining_with_opponents >= 3:
-                    # Very likely they should have it — strong warning.
-                    self._command_label.config(
-                        text=f"⚠ {suit_remaining_with_opponents} {sym} still out! Are they void?",
-                        fg="#ff5252")
-                elif suit_remaining_with_opponents > 0:
-                    self._command_label.config(
-                        text=f"Note: {suit_remaining_with_opponents} {sym} unaccounted — off-suit",
-                        fg="#ff9800")
+                    if suit_remaining > 0:
+                        # Block — they might have it. Show confirm button.
+                        if self._pending_offsuit == (pid, card):
+                            # Already confirmed — allow it and mark void.
+                            self._known_voids.setdefault(pid, set()).add(leading_suit)
+                            self._pending_offsuit = None
+                        else:
+                            self._pending_offsuit = (pid, card)
+                            player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+                            self._command_label.config(
+                                text=f"⚠ {player_names[pid]} has no {sym}? Click again to confirm",
+                                fg="#ff5252")
+                            return
+                    else:
+                        # All cards of that suit accounted for — they're void, allow.
+                        self._known_voids.setdefault(pid, set()).add(leading_suit)
+                else:
+                    # Known void — allow silently.
+                    pass
+            else:
+                # Following suit — clear any pending.
+                self._pending_offsuit = None
 
         # Mark the card as played on grid.
         btn = self._card_buttons[card]
@@ -890,6 +908,8 @@ class AdvisorTab:
         self.trick_number = 0
         self.team_tricks = [0, 0]
         self.phase = "hand"
+        self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
+        self._pending_offsuit = None
 
         # Rotate Qabool: P1→P2→P3→P4→P1.
         self.qabool_id = (self.qabool_id + 1) % 4
@@ -961,6 +981,8 @@ class AdvisorTab:
         self.trick_number = 0
         self.phase = "hand"
         self.team_tricks = [0, 0]
+        self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
+        self._pending_offsuit = None
         self._agent = None
 
         for card, btn in self._card_buttons.items():
