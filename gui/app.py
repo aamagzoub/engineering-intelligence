@@ -94,11 +94,6 @@ class WistAILabApp:
         from gui.advisor_tab import AdvisorTab
         self._advisor_tab = AdvisorTab(advisor_tab_frame, self.root)
 
-        # Tab 3: Game Table (AI vs AI)
-        game_tab = tk.Frame(self.notebook, bg=COLORS["table_border"])
-        self.notebook.add(game_tab, text="  🃏 Game Table  ")
-        self._build_game_tab(game_tab)
-
         # Bottom: controls (visible on all tabs)
         self._build_controls()
 
