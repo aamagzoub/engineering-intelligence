@@ -43,8 +43,21 @@ def create_card_surface(rank: str, suit: str, width: int = CARD_WIDTH,
     img_path = _get_card_image_path(rank, suit)
     if img_path:
         try:
-            img = pygame.image.load(img_path).convert_alpha()
-            surf = pygame.transform.smoothscale(img, (width, height))
+            img = pygame.image.load(img_path).convert()
+            # Create a white card background with rounded corners.
+            surf = pygame.Surface((width, height), pygame.SRCALPHA)
+            card_rect = pygame.Rect(0, 0, width, height)
+            pygame.draw.rect(surf, CARD_WHITE, card_rect, border_radius=CARD_RADIUS)
+            # Scale the PNG to fit inside with a small margin.
+            margin = 3
+            inner_w = width - margin * 2
+            inner_h = height - margin * 2
+            scaled_img = pygame.transform.smoothscale(img, (inner_w, inner_h))
+            # Replace black background pixels with white before blitting.
+            scaled_img.set_colorkey((0, 0, 0))
+            surf.blit(scaled_img, (margin, margin))
+            # Card border.
+            pygame.draw.rect(surf, (150, 150, 150), card_rect, width=1, border_radius=CARD_RADIUS)
             _card_image_cache[cache_key] = surf
             return surf
         except Exception:
