@@ -2650,17 +2650,47 @@ class GameScreen:
         self.screen.blit(self._vignette_cache, table_rect.topleft)
 
     def _render_opponent(self, pid, x, y, horizontal=True):
-        """Render face-down cards for an opponent."""
+        """Render face-down cards as a fanned arc for an opponent."""
         if self.players is None:
             return
         count = len(self.players[pid].hand)
+        if count == 0:
+            return
+
+        # Use larger card back (60x85).
+        card_w, card_h = 60, 85
+        if not hasattr(self, '_card_back_opp'):
+            from gui_pygame.card_renderer import create_card_back
+            self._card_back_opp = create_card_back(card_w, card_h)
+
+        # Fan parameters.
+        max_spread = 20.0  # Total arc degrees.
+        fan_spread = min(max_spread, count * 2.0)
+        half_spread = fan_spread / 2.0
 
         for i in range(count):
-            if horizontal:
-                pos = (x + i * 12, y)
+            # Calculate angle for each card in the fan.
+            if count == 1:
+                angle_deg = 0.0
             else:
-                pos = (x, y + i * 8)
-            self.screen.blit(self._card_back_mini, pos)
+                angle_deg = -half_spread + (i / (count - 1)) * fan_spread
+
+            if horizontal:
+                # Top player: fan horizontally with slight rotation.
+                spacing = min(14, (160) // max(count, 1))
+                card_x = x + i * spacing
+                card_y = y
+                rotated = pygame.transform.rotate(self._card_back_opp, -angle_deg * 0.5)
+                rect = rotated.get_rect(center=(card_x + card_w // 2, card_y + card_h // 2))
+                self.screen.blit(rotated, rect)
+            else:
+                # Side players: fan vertically with slight rotation.
+                spacing = min(10, (120) // max(count, 1))
+                card_x = x
+                card_y = y + i * spacing
+                rotated = pygame.transform.rotate(self._card_back_opp, angle_deg * 0.5)
+                rect = rotated.get_rect(center=(card_x + card_w // 2, card_y + card_h // 2))
+                self.screen.blit(rotated, rect)
 
     def _render_turn_glow(self, cx, cy):
         """Render a soft radial glow behind the active player's card area."""
