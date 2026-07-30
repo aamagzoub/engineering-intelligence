@@ -2666,8 +2666,8 @@ class GameScreen:
             self._card_back_opp_landscape = pygame.transform.rotate(self._card_back_opp, 90)
 
         # Fan parameters.
-        max_spread = 30.0
-        fan_spread = min(max_spread, count * 2.5)
+        max_spread = 20.0
+        fan_spread = min(max_spread, count * 2.0)
         half_spread = fan_spread / 2.0
 
         for i in range(count):
@@ -2677,15 +2677,13 @@ class GameScreen:
                 angle_deg = -half_spread + (i / (count - 1)) * fan_spread
 
             if horizontal:
-                # Top player: cards portrait, fan curves DOWN (toward centre).
                 spacing = min(14, 160 // max(count, 1))
                 card_x = x + i * spacing
                 card_y = y
-                rotated = pygame.transform.rotate(self._card_back_opp, angle_deg)
+                rotated = pygame.transform.rotate(self._card_back_opp, angle_deg * 0.5)
                 rect = rotated.get_rect(center=(card_x + card_w // 2, card_y + card_h // 2))
                 self.screen.blit(rotated, rect)
             else:
-                # Side players: cards landscape, fan curves toward centre.
                 lw = card_h
                 lh = card_w
                 spacing = min(10, 120 // max(count, 1))
@@ -2693,7 +2691,7 @@ class GameScreen:
                 card_y = y + i * spacing
                 direction = 1.0 if pid == 3 else -1.0
                 rotated = pygame.transform.rotate(self._card_back_opp_landscape,
-                                                  angle_deg * direction)
+                                                  angle_deg * 0.5 * direction)
                 rect = rotated.get_rect(center=(card_x + lw // 2, card_y + lh // 2))
                 self.screen.blit(rotated, rect)
 
