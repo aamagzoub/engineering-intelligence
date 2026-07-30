@@ -287,7 +287,7 @@ class AdvisorTab:
         else:
             current_pid = self.qabool_id
 
-        slot_positions = {2: (0, 1), 3: (1, 0), 1: (1, 2), 0: (2, 1)}
+        slot_positions = {2: (0, 1), 1: (1, 0), 3: (1, 2), 0: (2, 1)}
         for pid, (row, col) in slot_positions.items():
             # Determine what to show in the slot.
             bid_text = ""
@@ -295,7 +295,7 @@ class AdvisorTab:
                 if h_pid == pid:
                     bid_text = "Pass" if h_val is None else f"Bid {h_val}"
             if pid == self.qabool_id:
-                name = f"👑{player_names[pid]}"
+                name = f"● {player_names[pid]}"
             else:
                 name = player_names[pid]
 
@@ -309,9 +309,13 @@ class AdvisorTab:
             else:
                 bg, fg = "#2a3a2a", "#666666"
 
+            # Red highlight for Qabool.
+            border_color = "#cc3333" if pid == self.qabool_id else "#444444"
+
             slot = tk.Label(table_frame, text=display,
                             font=("Segoe UI", 9, "bold"), fg=fg, bg=bg,
-                            width=9, height=2, relief="ridge", bd=1)
+                            width=9, height=2, relief="solid", bd=2,
+                            highlightbackground=border_color, highlightthickness=2)
             slot.grid(row=row, column=col, padx=3, pady=3)
 
         # Full player names reference.
@@ -630,7 +634,7 @@ class AdvisorTab:
 
         # Card slot widgets (label-based, will show card text or player name).
         self._trick_slots = {}
-        slot_positions = {2: (0, 1), 3: (1, 0), 1: (1, 2), 0: (2, 1)}  # pid: (row, col)
+        slot_positions = {2: (0, 1), 1: (1, 0), 3: (1, 2), 0: (2, 1)}  # P3=top, P2=left, P4=right, AI=bottom
 
         for pid, (row, col) in slot_positions.items():
             slot = tk.Label(table_frame, text=player_names[pid],
@@ -848,8 +852,8 @@ class AdvisorTab:
         self.team_tricks = [0, 0]
         self.phase = "hand"
 
-        # Rotate Qabool clockwise (to the right from your view).
-        self.qabool_id = (self.qabool_id + 3) % 4
+        # Rotate Qabool: P1→P2→P3→P4→P1.
+        self.qabool_id = (self.qabool_id + 1) % 4
 
         # Reset card buttons.
         for card, btn in self._card_buttons.items():
