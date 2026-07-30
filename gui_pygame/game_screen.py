@@ -60,7 +60,7 @@ RANK_SYMBOLS = {r: s for r, s in zip(Rank, ["2","3","4","5","6","7","8","9","10"
 HUMAN_ID = 2  # Internal ID for human player.
 
 # Display names.
-DISPLAY_NAMES = {2: "Abubakr", 1: "Gaafar", 0: "Hima", 3: "Musaab"}
+DISPLAY_NAMES = {2: "Omer", 1: "Gaafar", 0: "Ibrahim", 3: "Musaab"}
 
 # Stats panel width (right side, dedicated area).
 STATS_PANEL_WIDTH = 200
@@ -2059,7 +2059,7 @@ class GameScreen:
         if 1 == self.qabool_id:
             pygame.draw.circle(self.screen, qabool_color, (name_rect.left - 10, name_rect.centery), qabool_radius)
 
-        # Human (pid 2 = Abubakr) — YOUR area.
+        # Human (pid 2 = Omer) — YOUR area.
         surf = font.render(f"{DISPLAY_NAMES[HUMAN_ID]} (You) - Team 1", True, TEXT_GOLD)
         name_rect = surf.get_rect(centerx=cx_table, y=SCREEN_HEIGHT - CARD_HEIGHT - 70)
         self.screen.blit(surf, name_rect)

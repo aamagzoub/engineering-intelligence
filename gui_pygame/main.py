@@ -65,13 +65,13 @@ class WistApp:
                 if self.state == "name_entry":
                     if event.key == pygame.K_RETURN:
                         if not self._player_name.strip():
-                            self._player_name = "Abubakr"
+                            self._player_name = "Omer"
                         self._apply_player_name()
                         self.state = "menu"
                     elif event.key == pygame.K_BACKSPACE:
                         self._player_name = self._player_name[:-1]
                     elif event.key == pygame.K_ESCAPE:
-                        self._player_name = "Abubakr"
+                        self._player_name = "Omer"
                         self._apply_player_name()
                         self.state = "menu"
                     elif len(self._player_name) < 15 and event.unicode.isprintable() and event.unicode:
@@ -94,7 +94,7 @@ class WistApp:
                     btn_rect = pygame.Rect(cx - 80, cy + 60, 160, 45)
                     if btn_rect.collidepoint(event.pos):
                         if not self._player_name.strip():
-                            self._player_name = "Abubakr"
+                            self._player_name = "Omer"
                         self._apply_player_name()
                         self.state = "menu"
                     # Reset points button.
@@ -139,10 +139,10 @@ class WistApp:
             if os.path.exists(stats_file):
                 with open(stats_file, 'r') as f:
                     data = json.load(f)
-                return data.get("name", "Abubakr")
+                return data.get("name", "Omer")
         except Exception:
             pass
-        return "Abubakr"
+        return "Omer"
 
     def _save_player_name(self):
         """Save player name to stats file."""
@@ -220,7 +220,7 @@ class WistApp:
         self.screen.blit(name_surf, name_surf.get_rect(center=box_rect.center))
 
         # Default hint.
-        hint = self.fonts["medium"].render(f"Default: Abubakr", True, TEXT_DIM)
+        hint = self.fonts["medium"].render(f"Default: Omer", True, TEXT_DIM)
         self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 38))
 
         # Continue button.
