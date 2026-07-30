@@ -8,36 +8,65 @@ from gui_pygame.constants import *
 
 def create_card_surface(rank: str, suit: str, width: int = CARD_WIDTH,
                         height: int = CARD_HEIGHT) -> pygame.Surface:
-    """Create a card surface with proper styling."""
+    """Create a card surface with proper styling. Face cards get colored backgrounds."""
     surf = pygame.Surface((width, height), pygame.SRCALPHA)
+
+    # Face card background colors.
+    face_colors = {"K": (180, 150, 40), "Q": (120, 60, 150), "J": (40, 100, 160)}
+    is_face = rank in face_colors
 
     # Card body (rounded rectangle).
     rect = pygame.Rect(0, 0, width, height)
-    pygame.draw.rect(surf, CARD_WHITE, rect, border_radius=CARD_RADIUS)
-    pygame.draw.rect(surf, (180, 180, 180), rect, width=1, border_radius=CARD_RADIUS)
+    if is_face:
+        bg = face_colors[rank]
+        pygame.draw.rect(surf, bg, rect, border_radius=CARD_RADIUS)
+        # Inner lighter area.
+        inner = pygame.Rect(4, 4, width - 8, height - 8)
+        lighter = (min(255, bg[0] + 30), min(255, bg[1] + 30), min(255, bg[2] + 30))
+        pygame.draw.rect(surf, lighter, inner, border_radius=5)
+        # Decorative border.
+        pygame.draw.rect(surf, (255, 255, 255, 80), inner, width=1, border_radius=5)
+        pygame.draw.rect(surf, (50, 50, 50), rect, width=2, border_radius=CARD_RADIUS)
+        text_color = (255, 255, 255)
+    else:
+        pygame.draw.rect(surf, CARD_WHITE, rect, border_radius=CARD_RADIUS)
+        pygame.draw.rect(surf, (180, 180, 180), rect, width=1, border_radius=CARD_RADIUS)
+        text_color = RED_SUIT if suit in ("♥", "♦") else BLACK_SUIT
 
-    # Suit color.
-    color = RED_SUIT if suit in ("♥", "♦") else BLACK_SUIT
+    # Suit color (for suit symbols).
+    suit_color = RED_SUIT if suit in ("♥", "♦") else BLACK_SUIT
+    # For face cards, rank text is always white; suit symbols use suit color on face bg.
+    rank_color = text_color if is_face else suit_color
 
     # Rank in top-left.
     font_size = max(12, width // 5)
     font = pygame.font.SysFont("Consolas", font_size, bold=True)
-    rank_surf = font.render(rank, True, color)
+    rank_surf = font.render(rank, True, rank_color)
     surf.blit(rank_surf, (5, 3))
 
     # Suit symbol in top-left (below rank).
     suit_font = pygame.font.SysFont("Segoe UI", font_size - 2)
-    suit_small = suit_font.render(suit, True, color)
+    suit_small = suit_font.render(suit, True, suit_color if not is_face else (255, 255, 255))
     surf.blit(suit_small, (5, 3 + font_size))
 
-    # Large suit in centre.
-    big_font = pygame.font.SysFont("Segoe UI", max(20, width // 2))
-    big_suit = big_font.render(suit, True, color)
-    big_rect = big_suit.get_rect(center=(width // 2, height // 2 + 5))
-    surf.blit(big_suit, big_rect)
+    # Centre: face cards show large rank letter, number cards show large suit.
+    if is_face:
+        big_font = pygame.font.SysFont("Segoe UI", max(24, width // 2), bold=True)
+        big_rank = big_font.render(rank, True, (255, 255, 255))
+        big_rect = big_rank.get_rect(center=(width // 2, height // 2))
+        surf.blit(big_rank, big_rect)
+        # Small suit below the letter.
+        small_suit = pygame.font.SysFont("Segoe UI", max(12, width // 5)).render(
+            suit, True, (255, 255, 255, 180))
+        surf.blit(small_suit, small_suit.get_rect(centerx=width // 2, y=height // 2 + 18))
+    else:
+        big_font = pygame.font.SysFont("Segoe UI", max(20, width // 2))
+        big_suit = big_font.render(suit, True, suit_color)
+        big_rect = big_suit.get_rect(center=(width // 2, height // 2 + 5))
+        surf.blit(big_suit, big_rect)
 
     # Rank in bottom-right (rotated).
-    rank_br = font.render(rank, True, color)
+    rank_br = font.render(rank, True, rank_color)
     rank_br = pygame.transform.rotate(rank_br, 180)
     surf.blit(rank_br, (width - rank_br.get_width() - 5, height - rank_br.get_height() - 3))
 
