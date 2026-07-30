@@ -747,7 +747,10 @@ class AdvisorTab:
                 btn.config(bg="#666666", fg="#999999", relief="flat")
 
             self.trick_cards.append((0, card))
-            self._trick_slots[0].config(text=sym, fg="#4caf50", bg="#1a3a1a")
+            # Make the slot look like an actual card (white bg, colored suit text).
+            card_fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#1a1a1a"
+            self._trick_slots[0].config(text=sym, fg=card_fg, bg="#ffffff",
+                                        font=("Consolas", 14, "bold"))
             self._play_idx += 1
             self._deck_label.config(text=f"AI HAND — {len(self.ai_hand)} cards left")
 
@@ -786,9 +789,11 @@ class AdvisorTab:
         btn = self._card_buttons[card]
         btn.config(bg="#1e88e5", fg="#ffffff", relief="sunken")
 
-        # Update the slot on the mini-table.
+        # Update the slot on the mini-table — make it look like a card.
         sym = card_str(card)
-        self._trick_slots[pid].config(text=sym, fg="#ffffff", bg="#1a3a5a")
+        card_fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#1a1a1a"
+        self._trick_slots[pid].config(text=sym, fg=card_fg, bg="#ffffff",
+                                      font=("Consolas", 14, "bold"))
 
         self.trick_cards.append((pid, card))
         self._play_idx += 1
