@@ -686,7 +686,7 @@ class AdvisorTab:
                         highlightbackground="#444444")
 
         # Reset card grid highlights.
-        self._reset_card_highlights()
+        pass
 
         # Determine play order.
         self._play_order = [(self.leader_id + i) % 4 for i in range(4)]
@@ -713,10 +713,6 @@ class AdvisorTab:
             self._deck_label.config(text=f"Click the card {player_names[pid]} played")
             self._command_label.config(
                 text=f"⏳ {player_names[pid]}'s turn — click their card", fg="#ff9800")
-
-            # Visual hint: if a suit was led and this player isn't known void,
-            # highlight only the led-suit cards as valid choices.
-            self._highlight_valid_cards(pid)
 
     def _ai_play(self) -> None:
         """AI decides which card to play."""
@@ -798,7 +794,6 @@ class AdvisorTab:
             if card.suit != leading_suit:
                 # Check if this player is known to be void in the led suit.
                 if leading_suit not in self._known_voids.get(pid, set()):
-                    # Not known void — check if there are still cards of that suit out.
                     suit_in_ai_hand = sum(1 for c in self.ai_hand if c.suit == leading_suit)
                     suit_played = sum(1 for c, btn in self._card_buttons.items()
                                       if c.suit == leading_suit and
@@ -807,26 +802,12 @@ class AdvisorTab:
                     sym = SUIT_SYMBOLS[leading_suit]
 
                     if suit_remaining > 0:
-                        # Block — they might have it. Show confirm button.
-                        if self._pending_offsuit == (pid, card):
-                            # Already confirmed — allow it and mark void.
-                            self._known_voids.setdefault(pid, set()).add(leading_suit)
-                            self._pending_offsuit = None
-                        else:
-                            self._pending_offsuit = (pid, card)
-                            player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
-                            self._command_label.config(
-                                text=f"⚠ \"{player_names[pid]}, you must play {sym}! There are {suit_remaining} {sym} cards still out!\" — Click again if they insist",
-                                fg="#ff5252")
-                            return
-                    else:
-                        # All cards of that suit accounted for — they're void, allow.
+                        # Mark player as void in this suit (they played off-suit).
                         self._known_voids.setdefault(pid, set()).add(leading_suit)
+                    self._pending_offsuit = None
                 else:
-                    # Known void — allow silently.
                     pass
             else:
-                # Following suit — clear any pending.
                 self._pending_offsuit = None
 
         # Mark the card as played on grid.
@@ -840,7 +821,6 @@ class AdvisorTab:
 
         self.trick_cards.append((pid, card))
         self._play_idx += 1
-        self._reset_card_highlights()
         self._advance_play()
 
     def _resolve_trick(self) -> None:
