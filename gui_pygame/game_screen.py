@@ -2650,7 +2650,7 @@ class GameScreen:
         self.screen.blit(self._vignette_cache, table_rect.topleft)
 
     def _render_opponent(self, pid, x, y, horizontal=True):
-        """Render face-down cards as a fanned arc for an opponent."""
+        """Render face-down cards as a fanned arc curving toward table centre."""
         if self.players is None:
             return
         count = len(self.players[pid].hand)
@@ -2677,21 +2677,25 @@ class GameScreen:
                 angle_deg = -half_spread + (i / (count - 1)) * fan_spread
 
             if horizontal:
-                # Top player: cards portrait, fanned horizontally.
+                # Top player: cards portrait, fan curves DOWN (toward centre).
                 spacing = min(14, 160 // max(count, 1))
                 card_x = x + i * spacing
                 card_y = y
-                rotated = pygame.transform.rotate(self._card_back_opp, -angle_deg * 0.5)
+                # Positive angle = curve down (opposite of user's hand).
+                rotated = pygame.transform.rotate(self._card_back_opp, angle_deg * 0.5)
                 rect = rotated.get_rect(center=(card_x + card_w // 2, card_y + card_h // 2))
                 self.screen.blit(rotated, rect)
             else:
-                # Side players: cards landscape (rotated 90°), fanned vertically.
-                lw = card_h  # Landscape width = portrait height.
-                lh = card_w  # Landscape height = portrait width.
+                # Side players: cards landscape, fan curves toward centre.
+                lw = card_h
+                lh = card_w
                 spacing = min(10, 120 // max(count, 1))
                 card_x = x
                 card_y = y + i * spacing
-                rotated = pygame.transform.rotate(self._card_back_opp_landscape, angle_deg * 0.5)
+                # pid 3 = left (curve right), pid 1 = right (curve left).
+                direction = 1.0 if pid == 3 else -1.0
+                rotated = pygame.transform.rotate(self._card_back_opp_landscape,
+                                                  angle_deg * 0.5 * direction)
                 rect = rotated.get_rect(center=(card_x + lw // 2, card_y + lh // 2))
                 self.screen.blit(rotated, rect)
 
