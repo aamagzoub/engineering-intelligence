@@ -1226,7 +1226,7 @@ class GameScreen:
         btn_h = 30
 
         # Load AI Model button.
-        btn_y = SCREEN_HEIGHT - 85
+        btn_y = SCREEN_HEIGHT - 155 + 30 + 8
         load_btn = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
         if load_btn.collidepoint(pos):
             self._open_model_dialog()
@@ -1717,7 +1717,7 @@ class GameScreen:
 
         # ========== GAME INFO CARD (fixed height) ==========
         game_card_y = y
-        game_card_h = 240
+        game_card_h = 275
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, game_card_y, panel_w - 10, game_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1786,6 +1786,34 @@ class GameScreen:
         y += 16
         self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font,
                             "T2", f"{self.team_tricks[1]}{t2_arrow}", TEAM2_ORANGE)
+
+        # Bid progress after T2.
+        y += 20
+        tricks_played = self.team_tricks[0] + self.team_tricks[1]
+        tricks_left = 13 - tricks_played
+        if self.bid_value > 0:
+            shooter_team = 0 if self.shooter_id in (0, 2) else 1
+            shooter_tricks = self.team_tricks[shooter_team]
+            bid_fill = min(1.0, shooter_tricks / self.bid_value)
+            bid_met = shooter_tricks >= self.bid_value
+            bid_failed = (shooter_tricks + tricks_left) < self.bid_value
+            if bid_met:
+                bid_color = HIGHLIGHT_GREEN
+            elif bid_failed:
+                bid_color = BUTTON_RED
+            else:
+                bid_color = TEXT_GOLD
+            bid_label = f"Bid {shooter_tricks}/{self.bid_value}"
+            status = "MET" if bid_met else ("FAILED" if bid_failed else DISPLAY_NAMES.get(self.shooter_id, ""))
+            self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font,
+                                bid_label, status, bid_color)
+            y += 19
+            bx = panel_x + pad + 4
+            bw = inner_w - 8
+            pygame.draw.rect(self.screen, (30, 50, 30), (bx, y, bw, 6), border_radius=3)
+            fill_w = int(bw * bid_fill)
+            if fill_w > 0:
+                pygame.draw.rect(self.screen, bid_color, (bx, y, fill_w, 6), border_radius=3)
 
         # ========== STATS CARD (fixed position) ==========
         y = game_card_y + game_card_h + 8
@@ -1856,103 +1884,31 @@ class GameScreen:
         self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font,
                             "Bids met", met_text, TEXT_LIGHT)
 
-        # ========== PROBABILITIES CARD ==========
-        prob_card_y = game_card_y + game_card_h + 8 + stats_card_h + 8
-        prob_card_h = 155
-        pygame.draw.rect(self.screen, (22, 40, 22),
-                         (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), border_radius=8)
-        pygame.draw.rect(self.screen, (45, 90, 45),
-                         (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), width=1, border_radius=8)
-
-        py = prob_card_y + 10
-        self.screen.blit(title_font.render("Live Odds", True, (180, 140, 255)), (panel_x + pad + 4, py))
-        py += 24
-
-        # Calculate probabilities.
-        tricks_played = self.team_tricks[0] + self.team_tricks[1]
-        tricks_left = 13 - tricks_played
-
-        bar_x = panel_x + pad + 4
-        bar_w = inner_w - 8
-
-        # Bid progress: shooter tricks / bid value.
-        if self.bid_value > 0:
-            shooter_team = 0 if self.shooter_id in (0, 2) else 1
-            shooter_tricks = self.team_tricks[shooter_team]
-            bid_fill = min(1.0, shooter_tricks / self.bid_value)
-            bid_met = shooter_tricks >= self.bid_value
-            bid_failed = (shooter_tricks + tricks_left) < self.bid_value
-
-            if bid_met:
-                win_color = HIGHLIGHT_GREEN
-            elif bid_failed:
-                win_color = BUTTON_RED
-            else:
-                win_color = TEXT_GOLD
-
-            shooter_name = DISPLAY_NAMES.get(self.shooter_id, "?")
-            win_label = f"Bid {shooter_tricks}/{self.bid_value}"
-            self.screen.blit(label_font.render(win_label, True, TEXT_LIGHT), (bar_x, py))
-            status = "MET" if bid_met else ("FAILED" if bid_failed else shooter_name)
-            ws_surf = value_font.render(status, True, win_color)
-            self.screen.blit(ws_surf, (panel_x + panel_w - pad - 4 - ws_surf.get_width(), py))
-            py += 21
-            pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
-            fill_w = int(bar_w * bid_fill)
-            if fill_w > 0:
-                pygame.draw.rect(self.screen, win_color, (bar_x, py, fill_w, 6), border_radius=3)
-        else:
-            self.screen.blit(label_font.render("Bid", True, TEXT_LIGHT), (bar_x, py))
-            ws_surf = value_font.render("-", True, TEXT_LIGHT)
-            self.screen.blit(ws_surf, (panel_x + panel_w - pad - 4 - ws_surf.get_width(), py))
-            py += 21
-        py += 14
-
-        # Seek: alive (100%) if one team has all tricks, dead (0%) otherwise.
-        t1_tricks = self.team_tricks[0]
-        t2_tricks = self.team_tricks[1]
-
-        if tricks_played == 0:
-            # No tricks played yet — seek is possible for both.
-            seek_label = "Seek"
-            seek_status = "possible"
-            seek_color = TEXT_LIGHT
-            seek_fill = 1.0
-        elif t2_tricks == 0:
-            # T1 has all tricks — seek alive for T1.
-            seek_label = f"T1 Seek {t1_tricks}/13"
-            seek_status = "ALIVE"
-            seek_color = TEAM1_BLUE
-            seek_fill = 1.0
-        elif t1_tricks == 0:
-            # T2 has all tricks — seek alive for T2.
-            seek_label = f"T2 Seek {t2_tricks}/13"
-            seek_status = "ALIVE"
-            seek_color = TEAM2_ORANGE
-            seek_fill = 1.0
-        else:
-            # Both have tricks — seek is dead.
-            seek_label = "Seek"
-            seek_status = "DEAD"
-            seek_color = BUTTON_RED
-            seek_fill = 0.0
-
-        self.screen.blit(label_font.render(seek_label, True, TEXT_LIGHT), (bar_x, py))
-        sk_surf = value_font.render(seek_status, True, seek_color)
-        self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
-        py += 21
-        pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
-        if seek_fill > 0:
-            pygame.draw.rect(self.screen, seek_color,
-                             (bar_x, py, int(bar_w * seek_fill), 6), border_radius=3)
-        py += 14
-
         # ========== BUTTONS (fixed at bottom) ==========
-        btn_y = SCREEN_HEIGHT - 85
+        btn_y = SCREEN_HEIGHT - 155
         btn_w = panel_w - pad * 2
         btn_h = 30
         mx, my = pygame.mouse.get_pos()
 
+        # Seek indicator (non-clickable).
+        tricks_played = self.team_tricks[0] + self.team_tricks[1]
+        t1_t = self.team_tricks[0]
+        t2_t = self.team_tricks[1]
+        seek_possible = (tricks_played == 0) or (t1_t == 0) or (t2_t == 0)
+
+        seek_rect = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
+        if seek_possible:
+            pygame.draw.rect(self.screen, BUTTON_RED, seek_rect, border_radius=5)
+            seek_font = pygame.font.SysFont("Segoe UI", 12, bold=True)
+            seek_txt = seek_font.render("Seek Possible", True, TEXT_GOLD)
+        else:
+            pygame.draw.rect(self.screen, BUTTON_GREY, seek_rect, border_radius=5)
+            seek_font = pygame.font.SysFont("Segoe UI", 12)
+            seek_txt = seek_font.render("Seek Dead", True, TEXT_WHITE)
+        self.screen.blit(seek_txt, seek_txt.get_rect(center=seek_rect.center))
+
+        # Load AI Model button.
+        btn_y += btn_h + 8
         load_rect = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
         bg = (255, 230, 50) if load_rect.collidepoint(mx, my) else (255, 213, 79)
         pygame.draw.rect(self.screen, bg, load_rect, border_radius=5)
@@ -1964,7 +1920,9 @@ class GameScreen:
                 label_font.render(os.path.basename(self._ai_model_path)[:22], True, TEXT_GREEN),
                 (panel_x + pad, btn_y - 16))
 
-        restart_rect = pygame.Rect(panel_x + pad, btn_y + btn_h + 8, btn_w, btn_h)
+        # Restart button.
+        btn_y += btn_h + 8
+        restart_rect = pygame.Rect(panel_x + pad, btn_y, btn_w, btn_h)
         rbg = (50, 120, 50) if restart_rect.collidepoint(mx, my) else (40, 95, 40)
         pygame.draw.rect(self.screen, rbg, restart_rect, border_radius=5)
         pygame.draw.rect(self.screen, (30, 70, 30), restart_rect, width=1, border_radius=5)
