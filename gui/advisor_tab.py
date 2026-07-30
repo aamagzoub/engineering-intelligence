@@ -110,16 +110,18 @@ class AdvisorTab:
         self._card_buttons: dict[Card, tk.Button] = {}
         self._build_deck_grid()
 
-        # Right: controls panel (changes per phase).
-        self._right = tk.Frame(main, bg="#252525", bd=1, relief="groove", padx=12, pady=8)
+        # Right: controls panel (changes per phase, fixed size to prevent jumps).
+        self._right = tk.Frame(main, bg="#252525", bd=1, relief="groove", padx=12, pady=8,
+                               width=320, height=500)
         self._right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self._right.pack_propagate(False)
 
         self._build_right_panel()
 
     def _build_deck_grid(self) -> None:
         for suit in ALL_SUITS:
             row = tk.Frame(self._deck_frame, bg="#252525")
-            row.pack(fill="x", pady=3)
+            row.pack(fill="x", pady=6)
             fg = "#c62828" if suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
             for rank in reversed(ALL_RANKS):
                 card = Card(suit, rank)
@@ -433,10 +435,24 @@ class AdvisorTab:
         self._finalize_bidding()
 
     def _declare_dak(self) -> None:
-        """Dak declared — reset for new shota."""
-        self._command_label.config(text="DAK! Re-deal and start over.", fg="#ff5252")
-        self._instruction.config(text="Dak declared. Click Reset to re-deal.")
-        self.phase = "done"
+        """Dak declared — re-deal: clear hand and go back to card selection."""
+        self.ai_hand.clear()
+        self.trick_cards.clear()
+        self.trump_suit = None
+        self.trick_number = 0
+        self.phase = "hand"
+        self.team_tricks = [0, 0]
+
+        # Reset card buttons.
+        for card, btn in self._card_buttons.items():
+            fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
+            btn.config(bg=COLORS["card_bg"], fg=fg, relief="solid",
+                       command=lambda c=card: self._card_clicked(c))
+
+        self._deck_label.config(text="AI HAND — Click 13 cards (0/13)")
+        self._command_label.config(text="DAK! Select your new 13 cards after re-deal.", fg="#ff5252")
+        self._instruction.config(text="Dak declared — cards re-dealt. Select your new hand.")
+        self._build_right_panel()
 
     def _finalize_bidding(self) -> None:
         """Bidding resolved — determine trump and start play."""
