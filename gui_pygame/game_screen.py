@@ -1872,7 +1872,7 @@ class GameScreen:
 
         # ========== PROBABILITIES CARD ==========
         prob_card_y = game_card_y + game_card_h + 8 + stats_card_h + 8
-        prob_card_h = 140
+        prob_card_h = 155
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1911,7 +1911,7 @@ class GameScreen:
         self.screen.blit(label_font.render(win_label, True, TEXT_LIGHT), (bar_x, py))
         pct_surf = value_font.render(f"{win_prob:.0f}%", True, win_display_color)
         self.screen.blit(pct_surf, (panel_x + panel_w - pad - 4 - pct_surf.get_width(), py))
-        py += 17
+        py += 21
         pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
         win_fill = win_prob / 100.0
         # Color shifts: green when >60%, yellow 40-60%, orange <40%.
@@ -1941,7 +1941,7 @@ class GameScreen:
         seek_text = f"{seek_prob:.0f}%" if seek_prob > 0 else "-"
         sk_surf = value_font.render(seek_text, True, seek_color if seek_prob > 0 else TEXT_LIGHT)
         self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
-        py += 17
+        py += 21
         pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
         if seek_prob > 0:
             pygame.draw.rect(self.screen, seek_color,
@@ -1977,7 +1977,7 @@ class GameScreen:
         bid_color = HIGHLIGHT_GREEN if bid_prob >= 60 else (TEXT_GOLD if bid_prob >= 40 else BUTTON_RED)
         bp_surf = value_font.render(bid_pct_text, True, bid_color if self.bid_value > 0 else TEXT_LIGHT)
         self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
-        py += 15
+        py += 21
         if self.bid_value > 0:
             pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
             pygame.draw.rect(self.screen, bid_color,
