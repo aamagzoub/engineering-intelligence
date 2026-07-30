@@ -644,17 +644,6 @@ class AdvisorTab:
             slot.grid(row=row, column=col, padx=4, pady=4)
             self._trick_slots[pid] = slot
 
-        # Buttons.
-        btn_row = tk.Frame(self._right, bg="#252525")
-        btn_row.pack(fill="x", pady=(8, 0))
-
-        self._next_trick_btn = tk.Button(
-            btn_row, text="→ Next Trick", command=self._start_next_trick,
-            font=("Segoe UI", 10, "bold"), fg="#fff", bg=COLORS["btn_green"],
-            bd=0, padx=12, pady=5, cursor="hand2")
-        self._next_trick_btn.pack(side="left", padx=3)
-        self._next_trick_btn.config(state="disabled")
-
         # Score display.
         self._score_label = tk.Label(self._right, text="Tricks — T1: 0 | T2: 0",
                                      font=("Segoe UI", 10, "bold"),
@@ -670,7 +659,6 @@ class AdvisorTab:
         """Start a new trick."""
         self.trick_number += 1
         self.trick_cards = []
-        self._next_trick_btn.config(state="disabled")
 
         if self.trick_number > 13:
             self._end_shota()
@@ -682,7 +670,8 @@ class AdvisorTab:
 
         # Reset slot visuals.
         for pid, slot in self._trick_slots.items():
-            slot.config(text=player_names[pid], fg="#555555", bg="#2a3a2a")
+            slot.config(text=player_names[pid], fg="#555555", bg="#2a3a2a",
+                        font=("Consolas", 11, "bold"))
 
         # Determine play order.
         self._play_order = [(self.leader_id + i) % 4 for i in range(4)]
@@ -825,8 +814,10 @@ class AdvisorTab:
             text=f"Tricks — T1: {self.team_tricks[0]} | T2: {self.team_tricks[1]}")
 
         self.leader_id = winner
-        self._next_trick_btn.config(state="normal")
         self._deck_label.config(text=f"AI HAND — {len(self.ai_hand)} cards left")
+
+        # Auto-advance to next trick after a brief pause.
+        self.root.after(1200, self._start_next_trick)
 
     def _update_trick_display(self) -> None:
         """No-op — display is now handled by slot widgets."""
