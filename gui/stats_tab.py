@@ -367,7 +367,7 @@ class StatsTab:
                 w_wins, w_total = 0, 0
 
             done += 1
-            if done % 50 == 0 or done == count:
+            if done % 10 == 0 or done == count:
                 self.root.after(0, self._progress_update, done, count)
 
         if isinstance(t1_agent, LearningAgent):
