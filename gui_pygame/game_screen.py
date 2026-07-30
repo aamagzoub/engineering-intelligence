@@ -1804,7 +1804,7 @@ class GameScreen:
         # ========== STATS CARD (fixed position) ==========
         y = game_card_y + game_card_h + 8
         stats = getattr(self, '_game_stats', {})
-        stats_card_h = 200
+        stats_card_h = 220
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, y, panel_w - 10, stats_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1826,14 +1826,14 @@ class GameScreen:
             self.screen.blit(label_font.render(name, True, color), (panel_x + pad + 4, y))
             c_surf = value_font.render(str(count), True, TEXT_WHITE)
             self.screen.blit(c_surf, (panel_x + panel_w - pad - 4 - c_surf.get_width(), y))
-            y += 16
+            y += 20
             bx = panel_x + pad + 4
             bw = inner_w - 8
             pygame.draw.rect(self.screen, (30, 50, 30), (bx, y, bw, 4), border_radius=2)
             ratio = count / max_t
             if ratio > 0:
                 pygame.draw.rect(self.screen, color, (bx, y, int(bw * ratio), 4), border_radius=2)
-            y += 9
+            y += 12
 
         y += 6
 
