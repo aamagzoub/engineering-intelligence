@@ -764,6 +764,24 @@ class AdvisorTab:
         if pid == 0:
             return
 
+        # Validation: bid winner's first card must be trump.
+        if self.trick_number == 1 and pid == self.bid_winner_id and len(self.trick_cards) == 0:
+            if card.suit != self.trump_suit:
+                sym = SUIT_SYMBOLS[self.trump_suit]
+                self._command_label.config(
+                    text=f"⚠ First card must be trump ({sym})!", fg="#ff5252")
+                return
+
+        # Validation: must follow led suit if this is not the leader.
+        # (We can't know their hand, but if they're leading they can play anything.)
+        if self.trick_cards:
+            leading_suit = self.trick_cards[0][1].suit
+            if card.suit != leading_suit:
+                # They might not have the led suit — show a warning but allow it.
+                sym = SUIT_SYMBOLS[leading_suit]
+                self._command_label.config(
+                    text=f"Note: led suit is {sym} — playing off-suit", fg="#ff9800")
+
         # Mark the card as played on grid.
         btn = self._card_buttons[card]
         btn.config(bg="#1e88e5", fg="#ffffff", relief="sunken")
