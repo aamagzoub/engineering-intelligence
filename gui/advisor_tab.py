@@ -209,15 +209,43 @@ class AdvisorTab:
             self._command_label.config(text="⚠ Select exactly 13 cards first!")
             return
 
+        # Check for card-based Dak before bidding.
+        from collections import Counter as _Counter
+        suit_counts = _Counter(c.suit for c in self.ai_hand)
+        has_picture = any(c.rank in (Rank.ACE, Rank.KING, Rank.QUEEN, Rank.JACK)
+                          for c in self.ai_hand)
+        max_suit_count = max(suit_counts.values()) if suit_counts else 0
+
+        if not has_picture or max_suit_count >= 8:
+            reason = "No picture cards" if not has_picture else f"8+ cards in one suit ({max_suit_count})"
+            self._command_label.config(
+                text=f"📢 Declare CARD DAK! ({reason})", fg="#ff5252")
+            self._instruction.config(text="You must declare Card-Based Dak. Show proof and re-deal.")
+
+            # Show declare button.
+            for w in self._right.winfo_children():
+                w.destroy()
+            tk.Label(self._right, text=f"Card-Based Dak Detected",
+                     font=("Segoe UI", 12, "bold"), fg="#ff5252", bg="#252525"
+                     ).pack(anchor="w", pady=(8, 4))
+            tk.Label(self._right, text=f"Reason: {reason}",
+                     font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525"
+                     ).pack(anchor="w", pady=(0, 12))
+            tk.Button(self._right, text="Declare Dak (Re-deal)",
+                      command=self._declare_dak,
+                      font=("Segoe UI", 11, "bold"), fg="#fff", bg=COLORS["btn_red"],
+                      bd=0, padx=16, pady=8, cursor="hand2").pack(anchor="w")
+            return
+
         qabool_map = {"P1 (You)": 0, "P2 (Left)": 1, "P3 (Opposite)": 2, "P4 (Right)": 3}
         self.qabool_id = qabool_map.get(self._qabool_var.get(), 0)
         self.phase = "bidding"
 
-        # Bidding order: left of Qabool → opposite → right → Qabool last.
+        # Bidding order: clockwise from left of Qabool.
         order = [(self.qabool_id + 1) % 4,
                  (self.qabool_id + 2) % 4,
                  (self.qabool_id + 3) % 4]
-        self._bid_order = order  # 3 players then Qabool decides.
+        self._bid_order = order
         self._bid_history: list[tuple[int, int | None]] = []  # (pid, value or None=pass)
         self._highest_bid: int | None = None
         self._highest_bidder: int | None = None
@@ -672,6 +700,12 @@ class AdvisorTab:
         winner_team = 0 if winner in (0, 2) else 1
         self.team_tricks[winner_team] += 1
 
+        # Grey out all opponent cards played this trick.
+        for pid, card in self.trick_cards:
+            if pid != 0:  # Not the AI's card (already greyed).
+                btn = self._card_buttons[card]
+                btn.config(bg="#666666", fg="#999999", relief="flat")
+
         player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
         self._command_label.config(
             text=f"🏆 Winner: {player_names[winner]}", fg="#ffd54f")
@@ -683,12 +717,17 @@ class AdvisorTab:
         self._deck_label.config(text=f"AI HAND — {len(self.ai_hand)} cards left")
 
     def _update_trick_display(self) -> None:
-        """Show cards played in current trick."""
+        """Show cards played in current trick with leader indicator."""
         player_names = {0: "P1", 1: "P2", 2: "P3", 3: "P4"}
         lines = []
+        leader = self._play_order[0] if hasattr(self, '_play_order') and self._play_order else None
         for pid, card in self.trick_cards:
-            lines.append(f"  {player_names[pid]}: {card_str(card)}")
-        self._trick_display.config(text="\n".join(lines) if lines else "  (no cards yet)")
+            prefix = "→ " if pid == leader else "  "
+            lines.append(f"{prefix}{player_names[pid]}: {card_str(card)}")
+        if not lines:
+            leader_name = player_names.get(self.leader_id, "?")
+            lines.append(f"  Leader: {leader_name} (waiting...)")
+        self._trick_display.config(text="\n".join(lines))
 
     def _end_game(self) -> None:
         """Show end-of-shota summary."""
