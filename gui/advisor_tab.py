@@ -155,8 +155,8 @@ class AdvisorTab:
                  font=("Segoe UI", 10, "bold"), fg="#ffffff", bg="#252525"
                  ).pack(anchor="w", pady=(12, 4))
 
-        self._qabool_var = tk.StringVar(value="You (AI)")
-        options = ["You (AI)", "Right (P2)", "Partner (P3)", "Left (P4)"]
+        self._qabool_var = tk.StringVar(value="P1 (You)")
+        options = ["P1 (You)", "P2 (Left)", "P3 (Opposite)", "P4 (Right)"]
         tk.OptionMenu(self._right, self._qabool_var, *options).pack(anchor="w")
 
         # Start button.
@@ -207,7 +207,7 @@ class AdvisorTab:
             self._command_label.config(text="⚠ Select exactly 13 cards first!")
             return
 
-        qabool_map = {"You (AI)": 0, "Right (P2)": 1, "Partner (P3)": 2, "Left (P4)": 3}
+        qabool_map = {"P1 (You)": 0, "P2 (Left)": 1, "P3 (Opposite)": 2, "P4 (Right)": 3}
         self.qabool_id = qabool_map.get(self._qabool_var.get(), 0)
         self.phase = "bidding"
 
@@ -230,7 +230,7 @@ class AdvisorTab:
         for w in self._right.winfo_children():
             w.destroy()
 
-        player_names = {0: "AI (You)", 1: "P2 (Right)", 2: "P3 (Partner)", 3: "P4 (Left)"}
+        player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
 
         # Show bid history so far.
         if self._bid_history:
@@ -440,7 +440,7 @@ class AdvisorTab:
 
     def _finalize_bidding(self) -> None:
         """Bidding resolved — determine trump and start play."""
-        player_names = {0: "AI (You)", 1: "P2 (Right)", 2: "P3 (Partner)", 3: "P4 (Left)"}
+        player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
 
         # If AI won the bid, AI picks trump (longest suit).
         if self.bid_winner_id == 0:
@@ -574,7 +574,7 @@ class AdvisorTab:
             self._ai_play()
         else:
             # Other player's turn — wait for user to click their card.
-            player_names = {0: "AI (You)", 1: "P2 (Right)", 2: "P3 (Partner)", 3: "P4 (Left)"}
+            player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
             self._deck_label.config(text=f"Click the card P{pid+1} played")
             self._command_label.config(
                 text=f"⏳ Waiting: What did {player_names[pid]} play?", fg="#ff9800")
@@ -656,7 +656,7 @@ class AdvisorTab:
         winner_team = 0 if winner in (0, 2) else 1
         self.team_tricks[winner_team] += 1
 
-        player_names = {0: "AI (You)", 1: "P2", 2: "P3 (Partner)", 3: "P4"}
+        player_names = {0: "P1 (You)", 1: "P2 (Left)", 2: "P3 (Opposite)", 3: "P4 (Right)"}
         self._command_label.config(
             text=f"🏆 Winner: {player_names[winner]}", fg="#ffd54f")
         self._score_label.config(
@@ -668,7 +668,7 @@ class AdvisorTab:
 
     def _update_trick_display(self) -> None:
         """Show cards played in current trick."""
-        player_names = {0: "AI", 1: "P2", 2: "P3", 3: "P4"}
+        player_names = {0: "P1", 1: "P2", 2: "P3", 3: "P4"}
         lines = []
         for pid, card in self.trick_cards:
             lines.append(f"  {player_names[pid]}: {card_str(card)}")

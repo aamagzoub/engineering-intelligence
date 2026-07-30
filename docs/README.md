@@ -33,10 +33,10 @@ Wist is a traditional Sudanese trick-taking card game for 4 players. This docume
 Cards rank from lowest to highest: 2, 3, 4, 5, 6, 7, 8, 9, 10, Jack, Queen, King, Ace.
 
 ## Direction of Play
-Everything — dealing, Al-Tasmiya (التسمية), and playing — moves counter-clockwise.
+Everything — dealing, Al-Tasmiya (التسمية), and playing — moves clockwise.
 
 ## Sahib Al-Qabool (صاحب القبول) — The One with the Right of Acceptance
-One player each Shota (شوتة) holds Al-Qabool (القبول). He has the final say on Al-Tasmiya (التسمية). First Shota (شوتة) only: all four players each draw a random card from anywhere in the deck; since all 52 cards are unique there can never be a tie, and the team whose players drew the higher card between their two drawn cards wins Al-Qabool (القبول). Every Shota (شوتة) after: Al-Qabool (القبول) passes to the next player to the left (counter-clockwise), regardless of who won or lost.
+One player each Shota (شوتة) holds Al-Qabool (القبول). He has the final say on Al-Tasmiya (التسمية). First Shota (شوتة) only: all four players each draw a random card from anywhere in the deck; since all 52 cards are unique there can never be a tie, and the team whose players drew the higher card between their two drawn cards wins Al-Qabool (القبول). Every Shota (شوتة) after: Al-Qabool (القبول) passes to the next player to the left (clockwise), regardless of who won or lost.
 
 ## Seating Roles
 All roles are anchored to Sahib Al-Qabool (صاحب القبول) each Shota (شوتة):
@@ -45,7 +45,7 @@ All roles are anchored to Sahib Al-Qabool (صاحب القبول) each Shota (ش
 - The player to his left starts Al-Tasmiya (التسمية)
 
 ## Dealing
-The deck is shuffled freely. The player opposite Sahib Al-Qabool (صاحب القبول) cuts it — the cut can be as little as one card, anywhere in the deck. The player to his right then deals all 52 cards counter-clockwise — one card to each player at a time — until each player holds 13 cards. The last card dealt goes to Sahib Al-Qabool's (صاحب القبول) partner — the one who cut the deck.
+The deck is shuffled freely. The player opposite Sahib Al-Qabool (صاحب القبول) cuts it — the cut can be as little as one card, anywhere in the deck. The player to his right then deals all 52 cards clockwise — one card to each player at a time — until each player holds 13 cards. The last card dealt goes to Sahib Al-Qabool's (صاحب القبول) partner — the one who cut the deck.
 
 ## Dak (دك) — Void
 There are two completely different situations that trigger Dak (دك):
@@ -74,7 +74,7 @@ Pass-based Dak (دك) can only happen twice per game. If the conditions for Dak 
 **Important:** If Dak (دك) happens in the very first Shota (شوتة) of the game, it does not count toward the 5 Shotas (شوتات) — the game still has all 5 remaining. However, from the second Shota (شوتة) onward, any Dak (دك) — regardless of whether it is card-based or pass-based, and regardless of whether Al-Qabool (القبول) moved or not — counts as one Shota (شوتة) out of the five.
 
 ## Al-Tasmiya (التسمية) — The Bid
-Al-Tasmiya (التسمية) starts from the player to Sahib Al-Qabool's (صاحب القبول) left and moves counter-clockwise: left of Sahib Al-Qabool (صاحب القبول) → opposite → right (dealer) → then Sahib Al-Qabool (صاحب القبول) decides last.
+Al-Tasmiya (التسمية) starts from the player to Sahib Al-Qabool's (صاحب القبول) left and moves clockwise: left of Sahib Al-Qabool (صاحب القبول) → opposite → right (dealer) → then Sahib Al-Qabool (صاحب القبول) decides last.
 
 Each player bids a number only — no suit is named. A player may say pass instead of bidding. If a previous player passed, the next player can still start from 7 — Marboota (مربوطة) — passes do not impose a minimum.
 
