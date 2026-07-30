@@ -1671,7 +1671,7 @@ class GameScreen:
 
         # ========== GAME INFO CARD (fixed height) ==========
         game_card_y = y
-        game_card_h = 230
+        game_card_h = 215
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, game_card_y, panel_w - 10, game_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1743,7 +1743,7 @@ class GameScreen:
         # ========== STATS CARD (fixed position) ==========
         y = game_card_y + game_card_h + 8
         stats = getattr(self, '_game_stats', {})
-        stats_card_h = 210
+        stats_card_h = 185
         pygame.draw.rect(self.screen, (22, 40, 22),
                          (panel_x + 5, y, panel_w - 10, stats_card_h), border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45),
@@ -1805,6 +1805,115 @@ class GameScreen:
             self.screen.blit(hl, (panel_x + pad + 4, y - 1))
         self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font,
                             "Bids met", met_text, TEXT_LIGHT)
+
+        # ========== PROBABILITIES CARD ==========
+        prob_card_y = game_card_y + game_card_h + 8 + stats_card_h + 8
+        prob_card_h = 120
+        pygame.draw.rect(self.screen, (22, 40, 22),
+                         (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), border_radius=8)
+        pygame.draw.rect(self.screen, (45, 90, 45),
+                         (panel_x + 5, prob_card_y, panel_w - 10, prob_card_h), width=1, border_radius=8)
+
+        py = prob_card_y + 8
+        self.screen.blit(title_font.render("Live Odds", True, (180, 140, 255)), (panel_x + pad + 4, py))
+        py += 22
+
+        # Calculate probabilities.
+        tricks_played = self.team_tricks[0] + self.team_tricks[1]
+        tricks_left = 13 - tricks_played
+
+        # Win probability: based on current game score + shota progress.
+        # Simple heuristic: who's closer to 25 considering tricks in this shota.
+        t1_total = self.game_scores[0]
+        t2_total = self.game_scores[1]
+        # Project current shota contribution.
+        if tricks_played > 0:
+            t1_rate = self.team_tricks[0] / tricks_played
+            t2_rate = self.team_tricks[1] / tricks_played
+        else:
+            t1_rate = 0.5
+            t2_rate = 0.5
+        t1_projected = t1_total + self.team_tricks[0] + t1_rate * tricks_left
+        t2_projected = t2_total + self.team_tricks[1] + t2_rate * tricks_left
+        total_proj = t1_projected + t2_projected
+        win_prob = (t1_projected / total_proj * 100) if total_proj > 0 else 50.0
+        win_prob = max(5.0, min(95.0, win_prob))
+
+        # Win probability bar.
+        bar_x = panel_x + pad + 4
+        bar_w = inner_w - 8
+        self.screen.blit(label_font.render("Win", True, TEXT_LIGHT), (bar_x, py))
+        pct_surf = value_font.render(f"{win_prob:.0f}%", True, TEAM1_BLUE)
+        self.screen.blit(pct_surf, (panel_x + panel_w - pad - 4 - pct_surf.get_width(), py))
+        py += 15
+        pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
+        win_fill = win_prob / 100.0
+        # Color shifts: green when >60%, yellow 40-60%, orange <40%.
+        if win_prob >= 60:
+            bar_color = HIGHLIGHT_GREEN
+        elif win_prob >= 40:
+            bar_color = TEXT_GOLD
+        else:
+            bar_color = TEAM2_ORANGE
+        pygame.draw.rect(self.screen, bar_color, (bar_x, py, int(bar_w * win_fill), 6), border_radius=3)
+        py += 12
+
+        # Seek probability.
+        # Seek = one team wins all 13. Probability spikes as one team approaches 10+.
+        t1_seek = 0.0
+        t2_seek = 0.0
+        if tricks_played > 0:
+            if self.team_tricks[1] == 0 and self.team_tricks[0] >= 6:
+                t1_seek = min(95, (self.team_tricks[0] / 13.0) ** 3 * 100)
+            if self.team_tricks[0] == 0 and self.team_tricks[1] >= 6:
+                t2_seek = min(95, (self.team_tricks[1] / 13.0) ** 3 * 100)
+        seek_prob = max(t1_seek, t2_seek)
+        seek_team_label = "T1" if t1_seek >= t2_seek else "T2"
+        seek_color = TEAM1_BLUE if t1_seek >= t2_seek else TEAM2_ORANGE
+
+        self.screen.blit(label_font.render("Seek", True, TEXT_LIGHT), (bar_x, py))
+        seek_text = f"{seek_prob:.0f}%" if seek_prob > 0 else "-"
+        sk_surf = value_font.render(seek_text, True, seek_color if seek_prob > 0 else TEXT_LIGHT)
+        self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
+        py += 15
+        pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
+        if seek_prob > 0:
+            pygame.draw.rect(self.screen, seek_color,
+                             (bar_x, py, int(bar_w * seek_prob / 100.0), 6), border_radius=3)
+        py += 12
+
+        # Bid success chance.
+        # Will the shooter's team make their bid?
+        bid_prob = 50.0
+        if self.bid_value > 0 and tricks_played > 0:
+            shooter_team = 0 if self.shooter_id in (0, 2) else 1
+            shooter_tricks = self.team_tricks[shooter_team]
+            needed = self.bid_value - shooter_tricks
+            if needed <= 0:
+                bid_prob = 95.0
+            elif needed > tricks_left:
+                bid_prob = 5.0
+            else:
+                # Rate-based projection.
+                rate = shooter_tricks / tricks_played if tricks_played > 0 else 0.5
+                expected = shooter_tricks + rate * tricks_left
+                if expected >= self.bid_value:
+                    bid_prob = min(90, 50 + (expected - self.bid_value) * 15)
+                else:
+                    bid_prob = max(10, 50 - (self.bid_value - expected) * 15)
+        elif self.bid_value == 0:
+            bid_prob = 0  # No bid yet.
+
+        self.screen.blit(label_font.render("Bid", True, TEXT_LIGHT), (bar_x, py))
+        bid_pct_text = f"{bid_prob:.0f}%" if self.bid_value > 0 else "-"
+        bid_color = HIGHLIGHT_GREEN if bid_prob >= 60 else (TEXT_GOLD if bid_prob >= 40 else BUTTON_RED)
+        bp_surf = value_font.render(bid_pct_text, True, bid_color if self.bid_value > 0 else TEXT_LIGHT)
+        self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
+        py += 15
+        if self.bid_value > 0:
+            pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
+            pygame.draw.rect(self.screen, bid_color,
+                             (bar_x, py, int(bar_w * bid_prob / 100.0), 6), border_radius=3)
 
         # ========== BUTTONS (fixed at bottom) ==========
         btn_y = SCREEN_HEIGHT - 85
