@@ -1934,40 +1934,37 @@ class GameScreen:
                              (bar_x, py, int(bar_w * seek_prob / 100.0), 6), border_radius=3)
         py += 14
 
-        # Bid success chance.
-        # Will the shooter's team make their bid?
-        bid_prob = 50.0
-        if self.bid_value > 0 and tricks_played > 0:
+        # Bid progress: tricks won / bid value.
+        if self.bid_value > 0:
             shooter_team = 0 if self.shooter_id in (0, 2) else 1
             shooter_tricks = self.team_tricks[shooter_team]
-            needed = self.bid_value - shooter_tricks
-            if needed <= 0:
-                bid_prob = 100.0
-            elif needed > tricks_left:
-                bid_prob = 0.0
-            else:
-                # Rate-based projection.
-                rate = shooter_tricks / tricks_played if tricks_played > 0 else 0.5
-                expected = shooter_tricks + rate * tricks_left
-                if expected >= self.bid_value:
-                    bid_prob = min(90, 50 + (expected - self.bid_value) * 15)
-                else:
-                    bid_prob = max(10, 50 - (self.bid_value - expected) * 15)
-        elif self.bid_value == 0:
-            bid_prob = 0  # No bid yet.
+            bid_fill = min(1.0, shooter_tricks / self.bid_value)
+            bid_met = shooter_tricks >= self.bid_value
+            bid_failed = (shooter_tricks + tricks_left) < self.bid_value
 
-        self.screen.blit(label_font.render(
-            f"Bid ({DISPLAY_NAMES.get(self.shooter_id, '?')})" if self.bid_value > 0 else "Bid",
-            True, TEXT_LIGHT), (bar_x, py))
-        bid_pct_text = f"{bid_prob:.0f}%" if self.bid_value > 0 else "-"
-        bid_color = HIGHLIGHT_GREEN if bid_prob >= 60 else (TEXT_GOLD if bid_prob >= 40 else BUTTON_RED)
-        bp_surf = value_font.render(bid_pct_text, True, bid_color if self.bid_value > 0 else TEXT_LIGHT)
-        self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
-        py += 21
-        if self.bid_value > 0:
+            if bid_met:
+                bid_color = HIGHLIGHT_GREEN
+            elif bid_failed:
+                bid_color = BUTTON_RED
+            else:
+                bid_color = TEXT_GOLD
+
+            bid_label = f"Bid {shooter_tricks}/{self.bid_value}"
+            self.screen.blit(label_font.render(bid_label, True, TEXT_LIGHT), (bar_x, py))
+            status = "MET" if bid_met else ("FAILED" if bid_failed else "")
+            bp_surf = value_font.render(status, True, bid_color) if status else value_font.render(
+                f"{DISPLAY_NAMES.get(self.shooter_id, '?')}", True, TEXT_LIGHT)
+            self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
+            py += 21
             pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
-            pygame.draw.rect(self.screen, bid_color,
-                             (bar_x, py, int(bar_w * bid_prob / 100.0), 6), border_radius=3)
+            fill_w = int(bar_w * bid_fill)
+            if fill_w > 0:
+                pygame.draw.rect(self.screen, bid_color, (bar_x, py, fill_w, 6), border_radius=3)
+        else:
+            self.screen.blit(label_font.render("Bid", True, TEXT_LIGHT), (bar_x, py))
+            bp_surf = value_font.render("-", True, TEXT_LIGHT)
+            self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
+            py += 21
 
         # ========== BUTTONS (fixed at bottom) ==========
         btn_y = SCREEN_HEIGHT - 85
