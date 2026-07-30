@@ -1872,69 +1872,10 @@ class GameScreen:
         tricks_played = self.team_tricks[0] + self.team_tricks[1]
         tricks_left = 13 - tricks_played
 
-        # Win probability: based on current game score + shota progress.
-        # Simple heuristic: who's closer to 25 considering tricks in this shota.
-        t1_total = self.game_scores[0]
-        t2_total = self.game_scores[1]
-        # Project current shota contribution.
-        if tricks_played > 0:
-            t1_rate = self.team_tricks[0] / tricks_played
-            t2_rate = self.team_tricks[1] / tricks_played
-        else:
-            t1_rate = 0.5
-            t2_rate = 0.5
-        t1_projected = t1_total + self.team_tricks[0] + t1_rate * tricks_left
-        t2_projected = t2_total + self.team_tricks[1] + t2_rate * tricks_left
-        total_proj = t1_projected + t2_projected
-        win_prob = (t1_projected / total_proj * 100) if total_proj > 0 else 50.0
-        win_prob = max(5.0, min(95.0, win_prob))
-
-        # Win probability bar.
         bar_x = panel_x + pad + 4
         bar_w = inner_w - 8
-        win_label = "T1 Win Game" if win_prob >= 50 else "T2 Win Game"
-        win_display_color = TEAM1_BLUE if win_prob >= 50 else TEAM2_ORANGE
-        self.screen.blit(label_font.render(win_label, True, TEXT_LIGHT), (bar_x, py))
-        pct_surf = value_font.render(f"{win_prob:.0f}%", True, win_display_color)
-        self.screen.blit(pct_surf, (panel_x + panel_w - pad - 4 - pct_surf.get_width(), py))
-        py += 21
-        pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
-        win_fill = win_prob / 100.0
-        # Color shifts: green when >60%, yellow 40-60%, orange <40%.
-        if win_prob >= 60:
-            bar_color = HIGHLIGHT_GREEN
-        elif win_prob >= 40:
-            bar_color = TEXT_GOLD
-        else:
-            bar_color = TEAM2_ORANGE
-        pygame.draw.rect(self.screen, bar_color, (bar_x, py, int(bar_w * win_fill), 6), border_radius=3)
-        py += 14
 
-        # Seek probability.
-        # Seek = one team wins all 13. Probability spikes as one team approaches 10+.
-        t1_seek = 0.0
-        t2_seek = 0.0
-        if tricks_played > 0:
-            if self.team_tricks[1] == 0 and self.team_tricks[0] >= 6:
-                t1_seek = min(95, (self.team_tricks[0] / 13.0) ** 3 * 100)
-            if self.team_tricks[0] == 0 and self.team_tricks[1] >= 6:
-                t2_seek = min(95, (self.team_tricks[1] / 13.0) ** 3 * 100)
-        seek_prob = max(t1_seek, t2_seek)
-        seek_team_label = "T1 Seek" if t1_seek >= t2_seek else "T2 Seek"
-        seek_color = TEAM1_BLUE if t1_seek >= t2_seek else TEAM2_ORANGE
-
-        self.screen.blit(label_font.render(seek_team_label, True, TEXT_LIGHT), (bar_x, py))
-        seek_text = f"{seek_prob:.0f}%" if seek_prob > 0 else "-"
-        sk_surf = value_font.render(seek_text, True, seek_color if seek_prob > 0 else TEXT_LIGHT)
-        self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
-        py += 21
-        pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
-        if seek_prob > 0:
-            pygame.draw.rect(self.screen, seek_color,
-                             (bar_x, py, int(bar_w * seek_prob / 100.0), 6), border_radius=3)
-        py += 14
-
-        # Bid progress: tricks won / bid value.
+        # Bid progress: shooter tricks / bid value.
         if self.bid_value > 0:
             shooter_team = 0 if self.shooter_id in (0, 2) else 1
             shooter_tricks = self.team_tricks[shooter_team]
@@ -1943,28 +1884,64 @@ class GameScreen:
             bid_failed = (shooter_tricks + tricks_left) < self.bid_value
 
             if bid_met:
-                bid_color = HIGHLIGHT_GREEN
+                win_color = HIGHLIGHT_GREEN
             elif bid_failed:
-                bid_color = BUTTON_RED
+                win_color = BUTTON_RED
             else:
-                bid_color = TEXT_GOLD
+                win_color = TEXT_GOLD
 
-            bid_label = f"Bid {shooter_tricks}/{self.bid_value}"
-            self.screen.blit(label_font.render(bid_label, True, TEXT_LIGHT), (bar_x, py))
-            status = "MET" if bid_met else ("FAILED" if bid_failed else "")
-            bp_surf = value_font.render(status, True, bid_color) if status else value_font.render(
-                f"{DISPLAY_NAMES.get(self.shooter_id, '?')}", True, TEXT_LIGHT)
-            self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
+            shooter_name = DISPLAY_NAMES.get(self.shooter_id, "?")
+            win_label = f"Bid {shooter_tricks}/{self.bid_value}"
+            self.screen.blit(label_font.render(win_label, True, TEXT_LIGHT), (bar_x, py))
+            status = "MET" if bid_met else ("FAILED" if bid_failed else shooter_name)
+            ws_surf = value_font.render(status, True, win_color)
+            self.screen.blit(ws_surf, (panel_x + panel_w - pad - 4 - ws_surf.get_width(), py))
             py += 21
             pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
             fill_w = int(bar_w * bid_fill)
             if fill_w > 0:
-                pygame.draw.rect(self.screen, bid_color, (bar_x, py, fill_w, 6), border_radius=3)
+                pygame.draw.rect(self.screen, win_color, (bar_x, py, fill_w, 6), border_radius=3)
         else:
             self.screen.blit(label_font.render("Bid", True, TEXT_LIGHT), (bar_x, py))
-            bp_surf = value_font.render("-", True, TEXT_LIGHT)
-            self.screen.blit(bp_surf, (panel_x + panel_w - pad - 4 - bp_surf.get_width(), py))
+            ws_surf = value_font.render("-", True, TEXT_LIGHT)
+            self.screen.blit(ws_surf, (panel_x + panel_w - pad - 4 - ws_surf.get_width(), py))
             py += 21
+        py += 14
+
+        # Seek: leading team tricks / 13.
+        t1_tricks = self.team_tricks[0]
+        t2_tricks = self.team_tricks[1]
+        # Only show seek if one team has all tricks so far (other has 0).
+        if t2_tricks == 0 and t1_tricks > 0:
+            seek_team = 0
+            seek_tricks = t1_tricks
+            seek_color = TEAM1_BLUE
+            seek_label = f"T1 Seek {seek_tricks}/13"
+        elif t1_tricks == 0 and t2_tricks > 0:
+            seek_team = 1
+            seek_tricks = t2_tricks
+            seek_color = TEAM2_ORANGE
+            seek_label = f"T2 Seek {seek_tricks}/13"
+        else:
+            seek_team = -1
+            seek_tricks = 0
+            seek_color = TEXT_LIGHT
+            seek_label = "Seek"
+
+        self.screen.blit(label_font.render(seek_label, True, TEXT_LIGHT), (bar_x, py))
+        if seek_team >= 0:
+            seek_fill = seek_tricks / 13.0
+            sk_surf = value_font.render(f"{seek_tricks}/13", True, seek_color)
+        else:
+            seek_fill = 0
+            sk_surf = value_font.render("-", True, TEXT_LIGHT)
+        self.screen.blit(sk_surf, (panel_x + panel_w - pad - 4 - sk_surf.get_width(), py))
+        py += 21
+        pygame.draw.rect(self.screen, (30, 50, 30), (bar_x, py, bar_w, 6), border_radius=3)
+        if seek_fill > 0:
+            pygame.draw.rect(self.screen, seek_color,
+                             (bar_x, py, int(bar_w * seek_fill), 6), border_radius=3)
+        py += 14
 
         # ========== BUTTONS (fixed at bottom) ==========
         btn_y = SCREEN_HEIGHT - 85
