@@ -379,12 +379,24 @@ class StatsTab:
     def _done(self, count):
         self._batch_progress_label.config(text=f"✓ DONE — {count} games completed.")
         self.update_display()
+        # Show a prominent "Complete" chip badge.
+        if not hasattr(self, '_done_chip') or self._done_chip is None:
+            self._done_chip = tk.Label(
+                self._batch_progress_label.master,
+                text="  ✓ RUN COMPLETE  ",
+                font=("Segoe UI", 10, "bold"),
+                fg="#ffffff", bg="#4caf50",
+                padx=10, pady=3, bd=0)
+        self._done_chip.grid(row=2, column=4, columnspan=2, pady=(8, 0), padx=(12, 0))
 
     def _reset_stats(self):
         self.stats.reset()
         self._learning_win_history.clear()
         self.update_display()
         self._batch_progress_label.config(text="Stats reset.")
+        # Remove the done chip.
+        if hasattr(self, '_done_chip') and self._done_chip is not None:
+            self._done_chip.grid_forget()
 
     def _save_model(self):
         if self._learning_agent_instance is None:

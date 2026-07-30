@@ -195,7 +195,7 @@ class AdvisorTab:
     def _build_deck_grid(self) -> None:
         for suit in ALL_SUITS:
             row = tk.Frame(self._deck_frame, bg="#252525")
-            row.pack(fill="x", pady=2)
+            row.pack(fill="x", pady=3)
 
             fg = "#c62828" if suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
 
@@ -204,11 +204,11 @@ class AdvisorTab:
                 text = f"{RANK_SYMBOLS[rank]}{SUIT_SYMBOLS[suit]}"
 
                 btn = tk.Button(
-                    row, text=text, font=("Consolas", 9, "bold"),
+                    row, text=text, font=("Consolas", 13, "bold"),
                     fg=fg, bg=COLORS["card_bg"], relief="solid", bd=1,
-                    padx=2, pady=1, width=3, cursor="hand2",
+                    padx=5, pady=4, width=4, cursor="hand2",
                     command=lambda c=card: self._card_clicked(c))
-                btn.pack(side="left", padx=1)
+                btn.pack(side="left", padx=2)
                 self._card_buttons[card] = btn
 
     # ----------------------------------------------------------
