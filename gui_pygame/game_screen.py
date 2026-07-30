@@ -1804,7 +1804,7 @@ class GameScreen:
             else:
                 bid_color = TEXT_GOLD
             bid_label = f"Bid {shooter_tricks}/{self.bid_value}"
-            status = "MET" if bid_met else ("FAILED" if bid_failed else DISPLAY_NAMES.get(self.shooter_id, ""))
+            status = "MET" if bid_met else ("FAILED" if bid_failed else "")
             self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font,
                                 bid_label, status, bid_color)
             y += 19
