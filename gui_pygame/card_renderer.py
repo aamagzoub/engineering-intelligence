@@ -99,11 +99,3 @@ def create_card_back(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> pyga
     pygame.draw.rect(surf, (13, 50, 120), rect, width=2, border_radius=CARD_RADIUS)
 
     return surf
-
-
-def create_shadow(width: int, height: int, offset: int = 3) -> pygame.Surface:
-    """Create a card shadow surface."""
-    surf = pygame.Surface((width + offset * 2, height + offset * 2), pygame.SRCALPHA)
-    shadow_rect = pygame.Rect(offset, offset, width, height)
-    pygame.draw.rect(surf, (0, 0, 0, 50), shadow_rect, border_radius=CARD_RADIUS)
-    return surf

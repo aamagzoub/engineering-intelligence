@@ -12,7 +12,6 @@ Flow:
 
 import tkinter as tk
 from tkinter import filedialog
-from collections import Counter
 
 from gui.colors import COLORS
 from intelligence.core.cards.card import Card
@@ -621,10 +620,6 @@ class AdvisorTab:
     # Playing phase
     # ----------------------------------------------------------
 
-    def _start_playing(self) -> None:
-        """Called from _show_trump_and_start — phase is already 'playing'."""
-        pass  # Playing is started from _show_trump_and_start.
-
     def _build_playing_panel(self) -> None:
         """Build the right panel with a visual mini-table for trick play."""
         for w in self._right.winfo_children():
@@ -862,59 +857,6 @@ class AdvisorTab:
         # Auto-advance to next trick after a brief pause.
         self.root.after(1200, self._start_next_trick)
 
-    def _update_trick_display(self) -> None:
-        """No-op — display is now handled by slot widgets."""
-        pass
-
-    def _highlight_valid_cards(self, pid: int) -> None:
-        """Visually highlight which cards are valid for this player to play.
-
-        If a suit was led and the player isn't known void in it,
-        dim all non-led-suit cards (except already-used ones).
-        If the player IS known void or is leading, show all available.
-        """
-        # Determine the led suit (if any cards have been played this trick).
-        leading_suit = None
-        if self.trick_cards:
-            leading_suit = self.trick_cards[0][1].suit
-
-        # If this player is leading (no cards played yet), or known void, allow all.
-        is_void = leading_suit in self._known_voids.get(pid, set()) if leading_suit else True
-
-        for card, btn in self._card_buttons.items():
-            # Skip cards already played (greyed out).
-            current_bg = btn.cget("bg")
-            if current_bg in ("#666666", "#1e88e5"):
-                continue
-            # Skip AI's own cards (green).
-            if card in self.ai_hand:
-                continue
-
-            if leading_suit and not is_void:
-                # Must follow suit — highlight led-suit cards, dim others.
-                if card.suit == leading_suit:
-                    # Valid card — bright border.
-                    fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
-                    btn.config(bg="#e8f5e9", fg=fg, relief="solid")
-                else:
-                    # Invalid (unless they're void) — dim it.
-                    btn.config(bg="#3a3a3a", fg="#555555", relief="flat")
-            else:
-                # Can play anything — reset to normal.
-                fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
-                btn.config(bg=COLORS["card_bg"], fg=fg, relief="solid")
-
-    def _reset_card_highlights(self) -> None:
-        """Reset all non-used card buttons back to normal appearance."""
-        for card, btn in self._card_buttons.items():
-            current_bg = btn.cget("bg")
-            if current_bg in ("#666666", "#1e88e5"):
-                continue  # Already played.
-            if card in self.ai_hand:
-                continue  # AI's cards stay green.
-            fg = "#c62828" if card.suit in (Suit.HEARTS, Suit.DIAMONDS) else "#303030"
-            btn.config(bg=COLORS["card_bg"], fg=fg, relief="solid")
-
     def _end_shota(self) -> None:
         """Show end-of-shota summary with option to continue."""
         self.phase = "shota_end"
@@ -924,7 +866,6 @@ class AdvisorTab:
         self._command_label.config(
             text=f"Shota Complete — {winner} wins! ({t1}-{t2})", fg="#ffd54f")
         self._instruction.config(text="Shota done. Start next shota or reset.")
-        self._next_trick_btn.config(state="disabled")
 
         # Replace next trick button with next shota button.
         for w in self._right.winfo_children():

@@ -36,7 +36,7 @@ import random
 from tkinter import Tk, filedialog
 
 from gui_pygame.constants import *
-from gui_pygame.card_renderer import create_card_surface, create_card_back, create_shadow
+from gui_pygame.card_renderer import create_card_surface, create_card_back
 
 from agents.rule_based.rule_based_agent import RuleBasedAgent
 from environments.wist.environment import WistEnvironment
@@ -373,16 +373,6 @@ class GameScreen:
                 next_threshold = ranks[i - 1][0]
                 return (pts - threshold) / (next_threshold - threshold)
         return 0.0
-
-    def _shape_arabic(self, text: str) -> str:
-        """Reshape Arabic text for proper RTL connected rendering."""
-        try:
-            import arabic_reshaper
-            from bidi.algorithm import get_display
-            reshaped = arabic_reshaper.reshape(text)
-            return get_display(reshaped)
-        except ImportError:
-            return text
 
     # ----------------------------------------------------------
     # Game lifecycle
@@ -847,7 +837,6 @@ class GameScreen:
         self._play_order = [(leader + i) % 4 for i in range(4)]
         self._play_idx = 0
         self._ai_timer = 30
-        print(f"[Trick {self.trick_number}] Leader: {DISPLAY_NAMES[leader]}, Order: {[DISPLAY_NAMES[p] for p in self._play_order]}")
 
     def _end_shota(self):
         """Score the Shota and start next or end game."""
@@ -1057,12 +1046,10 @@ class GameScreen:
         if pid == HUMAN_ID:
             # Safety checks — if state is broken, skip human turn.
             if self.round.state.current_trick is None:
-                print(f"[Trick {self.trick_number}] No current trick — skipping {DISPLAY_NAMES[pid]}")
                 self._play_idx += 1
                 self._ai_timer = 5
                 return
             if not self.players[HUMAN_ID].hand:
-                print(f"[Trick {self.trick_number}] {DISPLAY_NAMES[pid]} has no cards — skipping")
                 self._play_idx += 1
                 self._ai_timer = 5
                 return
@@ -1088,7 +1075,6 @@ class GameScreen:
                 # Feature 17: Play animation.
                 self._start_play_animation(pid, r, s)
             except Exception as e:
-                print(f"[PyGame AI Error] {DISPLAY_NAMES.get(pid, pid)}: {e}")
                 # Fallback: try to play any legal card.
                 try:
                     hand = self.players[pid].hand

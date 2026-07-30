@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pygame
 from gui_pygame.constants import *
-from gui_pygame.card_renderer import create_card_surface, create_card_back
+from gui_pygame.card_renderer import create_card_surface
 from gui_pygame.game_screen import GameScreen
 
 
