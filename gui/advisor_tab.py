@@ -638,10 +638,11 @@ class AdvisorTab:
 
         for pid, (row, col) in slot_positions.items():
             slot = tk.Label(table_frame, text=player_names[pid],
-                            font=("Consolas", 11, "bold"),
+                            font=("Segoe UI", 9, "bold"),
                             fg="#555555", bg="#2a3a2a",
-                            width=8, height=3, relief="ridge", bd=1)
-            slot.grid(row=row, column=col, padx=4, pady=4)
+                            width=9, height=2, relief="solid", bd=2,
+                            highlightbackground="#444444", highlightthickness=2)
+            slot.grid(row=row, column=col, padx=3, pady=3)
             self._trick_slots[pid] = slot
 
         # Score display.
@@ -671,7 +672,8 @@ class AdvisorTab:
         # Reset slot visuals.
         for pid, slot in self._trick_slots.items():
             slot.config(text=player_names[pid], fg="#555555", bg="#2a3a2a",
-                        font=("Consolas", 11, "bold"))
+                        font=("Segoe UI", 9, "bold"),
+                        highlightbackground="#444444")
 
         # Determine play order.
         self._play_order = [(self.leader_id + i) % 4 for i in range(4)]
