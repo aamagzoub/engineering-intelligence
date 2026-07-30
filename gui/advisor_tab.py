@@ -757,6 +757,16 @@ class AdvisorTab:
         if pid == 0:
             return
 
+        # Block clicking AI's own cards for an opponent.
+        if card in self.ai_hand:
+            self._command_label.config(text="⚠ That card is in AI's hand!", fg="#ff5252")
+            return
+
+        # Block clicking already-played cards.
+        already_played = [c for _, c in self.trick_cards]
+        if card in already_played:
+            return
+
         # Validation: bid winner's first card must be trump.
         if self.trick_number == 1 and pid == self.bid_winner_id and len(self.trick_cards) == 0:
             if card.suit != self.trump_suit:
@@ -766,14 +776,29 @@ class AdvisorTab:
                 return
 
         # Validation: must follow led suit if this is not the leader.
-        # (We can't know their hand, but if they're leading they can play anything.)
         if self.trick_cards:
             leading_suit = self.trick_cards[0][1].suit
             if card.suit != leading_suit:
-                # They might not have the led suit — show a warning but allow it.
+                # Check how many of the led suit are still unaccounted for.
+                # If many remain among opponents, this is suspicious.
+                suit_in_ai_hand = sum(1 for c in self.ai_hand if c.suit == leading_suit)
+                suit_total = 13
+                # Cards of this suit already played (greyed out on grid).
+                suit_played = sum(1 for c, btn in self._card_buttons.items()
+                                  if c.suit == leading_suit and
+                                  btn.cget("bg") in ("#666666", "#1e88e5"))
+                suit_remaining_with_opponents = suit_total - suit_in_ai_hand - suit_played
                 sym = SUIT_SYMBOLS[leading_suit]
-                self._command_label.config(
-                    text=f"Note: led suit is {sym} — playing off-suit", fg="#ff9800")
+
+                if suit_remaining_with_opponents >= 3:
+                    # Very likely they should have it — strong warning.
+                    self._command_label.config(
+                        text=f"⚠ {suit_remaining_with_opponents} {sym} still out! Are they void?",
+                        fg="#ff5252")
+                elif suit_remaining_with_opponents > 0:
+                    self._command_label.config(
+                        text=f"Note: {suit_remaining_with_opponents} {sym} unaccounted — off-suit",
+                        fg="#ff9800")
 
         # Mark the card as played on grid.
         btn = self._card_buttons[card]
