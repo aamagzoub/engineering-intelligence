@@ -80,26 +80,19 @@ class WistAILabApp:
         self.notebook = ttk.Notebook(self.root, style="Lab.TNotebook")
         self.notebook.pack(fill="both", expand=True, padx=10, pady=(2, 4))
 
-        # Tab 1: Human vs AI
-        human_tab_frame = tk.Frame(self.notebook, bg=COLORS["table_border"])
-        self.notebook.add(human_tab_frame, text="  🧑 Human vs AI  ")
-
-        from gui.human_tab import HumanTab
-        self._human_tab = HumanTab(human_tab_frame, self.root)
-
-        # Tab 2: AI Advisor
+        # Tab 1: AI Advisor
         advisor_tab_frame = tk.Frame(self.notebook, bg="#1a1a1a")
         self.notebook.add(advisor_tab_frame, text="  🔬 AI Advisor  ")
 
         from gui.advisor_tab import AdvisorTab
         self._advisor_tab = AdvisorTab(advisor_tab_frame, self.root)
 
-        # Tab 3: Game Table
+        # Tab 2: Game Table (AI vs AI)
         game_tab = tk.Frame(self.notebook, bg=COLORS["table_border"])
         self.notebook.add(game_tab, text="  🃏 Game Table  ")
         self._build_game_tab(game_tab)
 
-        # Tab 4: Stats & Lab
+        # Tab 3: Stats & Lab
         stats_tab = tk.Frame(self.notebook, bg=COLORS["header_bg"])
         self.notebook.add(stats_tab, text="  📊 Stats & Lab  ")
 
