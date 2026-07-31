@@ -2293,7 +2293,7 @@ class GameScreen:
 
         # Label.
         label_font = pygame.font.SysFont("Segoe UI", 9)
-        label = label_font.render("Last Trick", True, TEXT_DIM)
+        label = label_font.render("Last Trick", True, TEXT_WHITE)
         self.screen.blit(label, (x_start, y_start - 14))
 
         # Check if mouse is hovering over the area.
