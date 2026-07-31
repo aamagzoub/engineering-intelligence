@@ -2302,8 +2302,12 @@ class GameScreen:
         mx, my = pygame.mouse.get_pos()
         hovering = area_rect.collidepoint(mx, my)
 
-        # Draw 4 cards side by side.
-        for i, pid in enumerate(sorted(self._last_trick_cards.keys())):
+        # Draw 4 cards left to right starting from the shooter (bid winner).
+        trick_order = [(self.shooter_id + i) % 4 for i in range(4)]
+
+        for i, pid in enumerate(trick_order):
+            if pid not in self._last_trick_cards:
+                continue
             cx = x_start + i * (card_w + 5)
             if hovering:
                 # Reveal: show face-up card.
