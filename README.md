@@ -105,9 +105,11 @@ After the other three have bid or passed (or Al-Tasmiya (التسمية) stopped
 
 **Option 1 — Accept the highest bid:** that bidder's team plays, Sahib Al-Qabool's (صاحب القبول) team defends. No further discussion. The player whose bid was accepted leads the first card.
 
-**Option 2 — Match or outbid:** Sahib Al-Qabool (صاحب القبول) matches or exceeds the highest bid. His team plays, the other team defends. No further discussion. Sahib Al-Qabool (صاحب القبول) himself leads the first card. He declares his bid number but does not declare whether he used the extra card advantage — unless all three players before him passed, in which case he must declare whether he is using the extra card advantage or not.
+**Option 2 — Match or outbid:** Sahib Al-Qabool (صاحب القبول) matches or exceeds the highest bid. His team plays, the other team defends. No further discussion. Sahib Al-Qabool (صاحب القبول) himself leads the first card.
 
-When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula. The trump suit must still have 7 or fewer cards — holding 8 or more cards in any suit means card-based Dak (دك) must be declared, even for Sahib Al-Qabool (صاحب القبول):
+The extra card advantage is available ONLY when Sahib Al-Qabool (صاحب القبول) is matching or outbidding another player's bid. When all three players passed and Sahib Al-Qabool (صاحب القبول) must play, the standard Al-Tasmiya (التسمية) formula applies — no advantage.
+
+When using the extra card advantage (matching/outbidding only), Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula. The trump suit must still have 7 or fewer cards — holding 8 or more cards in any suit means card-based Dak (دك) must be declared, even for Sahib Al-Qabool (صاحب القبول):
 
 | Cards in strongest suit | Standard bid | With advantage |
 |---|---|---|
@@ -117,7 +119,7 @@ When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can
 | 7 | 10 | 9 or 10 |
 | 8+ | — | Must declare card-based Dak (دك) |
 
-If all three passed and he does not declare the advantage, the standard Al-Tasmiya (التسمية) formula applies.
+If all three passed, the standard Al-Tasmiya (التسمية) formula applies — Sahib Al-Qabool (صاحب القبول) cannot use the extra card advantage.
 
 **Option 3 — Declare Dak (دك):** only available under the pass-based Dak (دك) conditions described above.
 

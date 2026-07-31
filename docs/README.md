@@ -105,9 +105,11 @@ After the other three have bid or passed (or Al-Tasmiya (التسمية) stopped
 
 **Option 1 — Accept the highest bid:** that bidder's team plays, Sahib Al-Qabool's (صاحب القبول) team defends. No further discussion. The player whose bid was accepted leads the first card.
 
-**Option 2 — Match or outbid:** Sahib Al-Qabool (صاحب القبول) matches or exceeds the highest bid. His team plays, the other team defends. No further discussion. Sahib Al-Qabool (صاحب القبول) himself leads the first card. He declares his bid number but does not declare whether he used the extra card advantage — unless all three players before him passed, in which case he must declare whether he is using the extra card advantage or not.
+**Option 2 — Match or outbid:** Sahib Al-Qabool (صاحب القبول) matches or exceeds the highest bid. His team plays, the other team defends. No further discussion. Sahib Al-Qabool (صاحب القبول) himself leads the first card.
 
-When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula. The trump suit must still have 7 or fewer cards — holding 8 or more cards in any suit means card-based Dak (دك) must be declared, even for Sahib Al-Qabool (صاحب القبول):
+The extra card advantage is available ONLY when Sahib Al-Qabool (صاحب القبول) is matching or outbidding another player's bid. When all three players passed and Sahib Al-Qabool (صاحب القبول) must play, the standard Al-Tasmiya (التسمية) formula applies — no advantage.
+
+When using the extra card advantage (matching/outbidding only), Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula. The trump suit must still have 7 or fewer cards — holding 8 or more cards in any suit means card-based Dak (دك) must be declared, even for Sahib Al-Qabool (صاحب القبول):
 
 | Cards in strongest suit | Standard bid | With advantage |
 |---|---|---|
@@ -117,7 +119,7 @@ When using the extra card advantage, Sahib Al-Qabool (صاحب القبول) can
 | 7 | 10 | 9 or 10 |
 | 8+ | — | Must declare card-based Dak (دك) |
 
-If all three passed and he does not declare the advantage, the standard Al-Tasmiya (التسمية) formula applies.
+If all three passed, the standard Al-Tasmiya (التسمية) formula applies — Sahib Al-Qabool (صاحب القبول) cannot use the extra card advantage.
 
 **Option 3 — Declare Dak (دك):** only available under the pass-based Dak (دك) conditions described above.
 
@@ -234,131 +236,3 @@ If a team wins all 13 tricks in a Shota (شوتة), this is called Seek (سيك)
                                                  START NEW SHOTA
 ```
 
-
-## Project Architecture
-
-```
-Telecom-Native-Intelligence/
-├── agents/                      # AI agents
-│   ├── learning/                # Monte Carlo Learning Agent (Level 3)
-│   │   ├── learning_agent.py   # Q-table agent with play + bid learning
-│   │   └── trainer.py          # Training loop with curriculum learning
-│   ├── rule_based/             # Heuristic agent (Level 2)
-│   │   └── rule_based_agent.py
-│   └── random/                 # Random legal-move agent (Level 1)
-│       └── random_agent.py
-├── environments/wist/          # Game engine
-│   ├── environment.py          # WistEnvironment (observation + action apply)
-│   ├── game.py                 # Full game orchestrator (5 Shotas)
-│   ├── round.py                # Single Shota round management
-│   ├── tasmiya_engine.py       # Bidding (Al-Tasmiya) engine
-│   ├── playing_engine.py       # Trick play engine
-│   ├── scoring.py              # Score calculation + seek detection
-│   ├── rules.py                # Legal cards, trick winner, rank values
-│   ├── dak.py                  # Card-based Dak detection
-│   ├── trick.py                # Single trick data structure
-│   └── observation.py          # WistObservation + BiddingObservation
-├── intelligence/core/          # Abstract base classes
-│   ├── agent.py                # Agent ABC
-│   ├── action.py               # Action ABC
-│   ├── observation.py          # Observation ABC
-│   └── cards/                  # Card, Rank, Suit, Deck
-├── gui_pygame/                 # PyGame UI (Human vs AI game)
-│   ├── main.py                 # Entry point
-│   ├── game_screen.py          # Game table rendering + logic
-│   ├── card_renderer.py        # Card drawing (face + back)
-│   └── constants.py            # Colors, sizes, layout
-├── gui/                        # Tkinter UI (AI Laboratory)
-│   ├── app.py                  # Main app (2 tabs)
-│   ├── advisor_tab.py          # "Play for AI" — proxy at physical table
-│   ├── stats_tab.py            # "Stats & Lab" — batch training
-│   └── card_widget.py          # Card drawing for tkinter
-└── tests/                      # Unit tests (113 passing)
-```
-
-## AI Agent Levels
-
-| Level | Agent | Strategy | Use |
-|-------|-------|----------|-----|
-| 1 | Random | Plays any legal card randomly | Training baseline |
-| 2 | Rule-Based | Heuristic: lead high, follow suit optimally, trump strategically | Default opponent |
-| 3 | Learning | Monte Carlo Q-table with play + bid policies | Trainable via Stats & Lab |
-
-### Learning Agent Details
-
-The Learning Agent uses **First-Visit Monte Carlo** policy improvement:
-
-1. Plays a full Shota (13 tricks)
-2. At the end, assigns graduated rewards to every (state, action) pair visited
-3. Over thousands of games, learns which actions lead to winning
-
-**State encoding (9 features):** position in trick, trump strength, high cards, can follow suit, partner winning, game phase, trick number, team differential, leading suit is trump.
-
-**Reward structure:**
-- Base: +1.0 win / -1.0 loss
-- Bid met bonus: +0.5 (shooter team)
-- Bid failed penalty: -0.5
-- Trick margin: ±0.1 per trick
-- Seek: +2.0 / -1.5
-
-**Bidding policy:** Separate Q-table learns when to bid (PASS/LOW/MID/HIGH) based on hand strength.
-
-**Training pipeline:** Curriculum — 5,000 games vs Random, then 10,000 games vs Rule-Based.
-
-## Two GUIs
-
-### PyGame (Human vs AI)
-Run: `python gui_pygame/main.py` or use the `.exe`
-
-- Play Wist against AI opponents
-- Card fan hand, table vignette, animations
-- Live stats panel with probabilities
-- Military rank progression
-
-### Tkinter (AI Laboratory)
-Run: `python gui/app.py`
-
-- **Stats & Lab tab** — Batch train the Learning Agent, run experiments, compare agents
-- **Play for AI tab** — Use AI at a physical Wist table (you are the AI's eyes and hands)
-  - Step-by-step bidding with rule enforcement
-  - Visual mini-table showing all 4 player positions
-  - Follow-suit enforcement with void tracking
-  - Card-based Dak auto-detection
-  - Multi-shota flow with Qabool rotation
-
-## Seating Layout (Play for AI)
-
-```
-         P3 (Opposite / Partner)
-              ┌─────┐
-              │     │
-    ┌─────┐   │     │   ┌─────┐
-    │ P2  │   └─────┘   │ P4  │
-    │Left │             │Right│
-    └─────┘             └─────┘
-              ┌─────┐
-              │ AI  │
-              │(You)│
-              └─────┘
-```
-
-- Teams: AI + P3 vs P2 + P4
-- Direction: clockwise (P1 → P2 → P3 → P4)
-- Qabool rotates clockwise each Shota
-- Bidding starts from left of Qabool, goes clockwise
-
-## Running
-
-```bash
-# PyGame (play the game)
-python gui_pygame/main.py
-
-# AI Laboratory (train + experiment)
-python gui/app.py
-
-# Train learning agent (CLI)
-python agents/learning/trainer.py
-
-# Run tests
-python -m pytest tests/ -q
-```

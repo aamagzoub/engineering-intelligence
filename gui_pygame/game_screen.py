@@ -690,9 +690,10 @@ class GameScreen:
         someone_bid = (self._bidding_engine.highest_bid is not None)
 
         # Validate: bid must be >= trump_count + 3.
-        # Qabool advantage: bid >= trump_count + 2 (only when matching/outbidding someone).
+        # Qabool advantage: bid >= trump_count + 2 (ONLY when someone else bid — matching/outbidding).
+        # When all passed, standard formula applies (no advantage).
         if is_qabool and someone_bid:
-            min_bid = trump_count + 2  # Qabool extra card advantage.
+            min_bid = trump_count + 2  # Qabool extra card advantage (matching).
         else:
             min_bid = trump_count + 3  # Standard formula.
 
@@ -900,10 +901,6 @@ class GameScreen:
             self._award_points("bid_met")
             if self.shooter_id == HUMAN_ID:
                 self._award_points("shooter_bid_met")
-        if seek_team == human_team:
-            self._award_points("seek")
-        elif seek_team is not None:
-            self._award_points("seek_against")
 
         # Score breakdown in game log.
         result_str = "SUCCESS" if bid_met else "FAILED"
@@ -911,6 +908,23 @@ class GameScreen:
         self._log_game_event(f"  Tricks: T1={self.team_tricks[0]} T2={self.team_tricks[1]}")
         self._log_game_event(f"  Score: T1 +{shota_score_t1}, T2 +{shota_score_t2}")
         self._log_game_event(f"  Total: T1={self.game_scores[0]} T2={self.game_scores[1]}")
+
+        # Seek = instant game over regardless of score or shota count.
+        if seek_team is not None:
+            self._player_games_played += 1
+            human_team = 0
+            if seek_team == human_team:
+                self._award_points("seek")
+                self._award_points("game_won")
+                self._player_games_won += 1
+            else:
+                self._award_points("seek_against")
+                self._award_points("game_lost")
+            self._save_player_stats()
+            self.phase = "game_over"
+            self._log_game_event("=== GAME OVER (SEEK) ===")
+            self._spawn_confetti()
+            return
 
         if self.shota_number >= 5 or self.game_scores[0] >= 25 or self.game_scores[1] >= 25:
             # Award game-level points.
@@ -1350,9 +1364,9 @@ class GameScreen:
         is_qabool = (self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order))
         someone_bid = (self._bidding_engine.highest_bid is not None)
 
-        # Bid must be >= trump_count + 3 (or +2 for Qabool advantage when matching).
+        # Bid must be >= trump_count + 3 (or +2 for Qabool when matching someone's bid).
         if is_qabool and someone_bid:
-            min_bid = trump_count + 2
+            min_bid = trump_count + 2  # Advantage only when matching.
         else:
             min_bid = trump_count + 3
         if bid_value < max(7, min_bid):
