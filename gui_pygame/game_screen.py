@@ -217,6 +217,8 @@ class GameScreen:
 
         # Animation state.
         self._trick_played: dict[int, tuple[str, str]] = {}
+        self._last_trick_cards: dict[int, tuple[str, str]] = {}  # Previous trick for peek.
+        self._show_last_trick = False  # True while holding peek key.
         self._hover_card_idx = -1
         self._message = ""
         self._message_timer = 0
@@ -1205,7 +1207,8 @@ class GameScreen:
         self._play_idx = 99
         self._log_game_event(f"Trick {self.trick_number}: {DISPLAY_NAMES[winner]} wins")
 
-        # Clear the trick highlight after cards start moving.
+        # Save last trick for peek, then clear.
+        self._last_trick_cards = dict(self._trick_played)
         self._trick_played = {}
 
         # Frame-based delay — _ai_timer counts down, then update loop calls _start_next_trick.
@@ -1232,6 +1235,13 @@ class GameScreen:
                     return
                 if event.key == pygame.K_SPACE and self.phase == "game_over":
                     self.start_game()
+                # Tab = peek at last trick.
+                if event.key == pygame.K_TAB:
+                    self._show_last_trick = True
+
+        if event.type == pygame.KEYUP:
+            if event.key == pygame.K_TAB:
+                self._show_last_trick = False
 
         if self._show_quit_overlay:
             return  # Block all other input while overlay shown.
@@ -1567,6 +1577,10 @@ class GameScreen:
 
         # Feature 15: Empty slot placeholders + Feature 13: labels + centre trick.
         self._render_centre_trick(cx, cy)
+
+        # Last trick peek (Tab held).
+        if self._show_last_trick and self._last_trick_cards:
+            self._render_last_trick_peek(cx, cy)
 
         # Human hand.
         self._render_human_hand()
@@ -2278,6 +2292,26 @@ class GameScreen:
         label_text = "TRUMP" if self._trump_revealed else "TRUMP (hidden)"
         label = self.fonts["small"].render(label_text, True, TEXT_GOLD)
         self.screen.blit(label, label.get_rect(centerx=x + card_w // 2, y=y + card_h + 3))
+
+    def _render_last_trick_peek(self, cx, cy):
+        """Render the last completed trick as a semi-transparent overlay."""
+        # Dark overlay behind.
+        overlay = pygame.Surface((250, 180), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        self.screen.blit(overlay, (cx - 125, cy - 90))
+
+        # Title.
+        font = pygame.font.SysFont("Segoe UI", 11, bold=True)
+        title = font.render("Last Trick", True, TEXT_GOLD)
+        self.screen.blit(title, title.get_rect(centerx=cx, y=cy - 85))
+
+        # Show cards in cross layout.
+        offsets = {0: (0, -55), 1: (70, 0), 2: (0, 45), 3: (-70, 0)}
+        for pid, (r, s) in self._last_trick_cards.items():
+            dx, dy = offsets.get(pid, (0, 0))
+            card_surf = self._get_card_surface(r, s)
+            rect = card_surf.get_rect(center=(cx + dx, cy + dy))
+            self.screen.blit(card_surf, rect)
 
     def _render_centre_trick(self, cx, cy):
         """Render centre trick with placeholders (Feature 15) and labels (Feature 13)."""
