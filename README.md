@@ -80,7 +80,7 @@ Each player bids a number only — no suit is named. A player may say pass inste
 
 **Al-Tasmiya (التسمية) rules:**
 - Each bid must be higher than the previous bid — no equal bids allowed between regular players
-- You cannot bid higher than the number of cards you hold in your strongest suit
+- You cannot bid higher than the number of cards you hold in your chosen trump suit
 - The opening bid — the first bid made by any player, not a pass — cannot exceed 11. Subsequent bids can go up to 13
 - The trump suit — Al-Ato (الأتو) — cannot come from a suit with 8 or more cards. Holding 8 or more cards in a suit means card-based Dak (دك) must be declared
 - Sahib Al-Qabool (صاحب القبول) is the only one who can match the highest bid — he does not have to go higher
@@ -88,11 +88,11 @@ Each player bids a number only — no suit is named. A player may say pass inste
 
 If any player bids 13, Al-Tasmiya (التسمية) stops immediately — no further players may bid. The remaining players in the bidding order are skipped and it goes straight to Sahib Al-Qabool (صاحب القبول) to accept or match. This applies whether it is the first player or Sahib Al-Qabool's (صاحب القبول) partner who bids 13.
 
-The bid does not have to come from one suit. It can be based on your strongest cards across all suits. However, Al-Ato (الأتو) — the trump suit — must be the suit the bidder holds the most cards in, and that suit must have 7 or fewer cards.
+The bid does not have to come from one suit. It can be based on your strongest cards across all suits. Al-Ato (الأتو) — the trump suit — can be any suit the bidder chooses, as long as that suit has 7 or fewer cards. The bid value must be at least (number of cards in the chosen trump suit) + 3.
 
 **Standard Al-Tasmiya (التسمية) reference:**
 
-| Cards in strongest suit | Bid | Notes |
+| Cards in chosen trump suit | Bid | Notes |
 |---|---|---|
 | 4 | 7 — Marboota (مربوطة) | |
 | 5 | 8 | |
@@ -111,7 +111,7 @@ The extra card advantage is available ONLY when Sahib Al-Qabool (صاحب الق
 
 When using the extra card advantage (matching/outbidding only), Sahib Al-Qabool (صاحب القبول) can bid one lower than the standard formula. The trump suit must still have 7 or fewer cards — holding 8 or more cards in any suit means card-based Dak (دك) must be declared, even for Sahib Al-Qabool (صاحب القبول):
 
-| Cards in strongest suit | Standard bid | With advantage |
+| Cards in chosen trump suit | Standard bid | With advantage |
 |---|---|---|
 | 4 | 7 — Marboota (مربوطة) | 7 — Marboota (مربوطة) only |
 | 5 | 8 | 7 or 8 |
@@ -124,7 +124,7 @@ If all three passed, the standard Al-Tasmiya (التسمية) formula applies �
 **Option 3 — Declare Dak (دك):** only available under the pass-based Dak (دك) conditions described above.
 
 ## Al-Ato (الأتو) — The Trump Suit
-The trump suit — Al-Ato (الأتو) — is never declared out loud. It is revealed only when the winning bidder plays their very first card — that suit becomes Al-Ato (الأتو) for the entire Shota (شوتة). Al-Ato (الأتو) must be from the suit the bidder holds the most cards in. The first card played must be from the Al-Ato (الأتو) suit.
+The trump suit — Al-Ato (الأتو) — is never declared out loud. It is revealed only when the winning bidder plays their very first card — that suit becomes Al-Ato (الأتو) for the entire Shota (شوتة). Al-Ato (الأتو) can be any suit the bidder chose (with 7 or fewer cards). The first card played must be from the Al-Ato (الأتو) suit.
 
 ## Playing a Shota (شوتة)
 The player whose bid was accepted leads the first card, which must be from the Al-Ato (الأتو) suit. Players must follow the suit led if they have it. If a player has no cards of the led suit, they may discard any card or play an Al-Ato (الأتو) card. The highest Al-Ato (الأتو) card played always wins the trick, even if only one Al-Ato (الأتو) card was played. If no Al-Ato (الأتو) card was played, the highest card of the led suit wins. The winner of each trick leads the next one. Once a trick is placed face down it cannot be reviewed by anyone.

@@ -40,17 +40,15 @@ class TasmiyaResult:
 
 def determine_trump_suit(hand: list[Card]) -> Suit:
     """
-    Determine the trump suit from a player's hand.
+    Determine the trump suit from a player's hand (AI heuristic).
 
-    Per the rules:
-    - Trump must be the suit the bidder holds the most cards in.
-    - That suit must have 7 or fewer cards (8+ triggers card-based Dak).
-
-    If there is a tie in suit length, choose arbitrarily (first found).
+    The player can choose any suit as trump (as long as it has ≤7 cards).
+    As a strategy, the AI picks the longest suit (most cards = strongest trump).
     """
 
     suit_counts = Counter(card.suit for card in hand)
 
+    # Pick the longest suit as trump (AI strategy — not a rule requirement).
     longest_suit = max(suit_counts, key=suit_counts.get)
 
     return longest_suit
@@ -61,8 +59,9 @@ def max_bid_for_hand(hand: list[Card]) -> int:
     Determine the maximum bid a regular player can make.
 
     Per the rules:
-    - You cannot bid higher than the number of cards in your strongest suit.
+    - The bid must be at least (cards in chosen trump suit) + 3.
     - The trump suit must have 7 or fewer cards.
+    - The maximum bid equals the number of cards in the chosen trump suit + 3.
     - So the maximum bid based on suit length alone is capped at 7
       from the trump constraint, but the bid itself represents total
       expected tricks and can be based on cards across all suits.
