@@ -452,6 +452,9 @@ class GameScreen:
             self.round.deal()
 
         if card_dak_detected:
+            # From 2nd shota onward, card-based Dak counts as a shota.
+            if self.shota_number >= 2:
+                self.shota_number += 1
             self._message = "Card Dak detected! Re-dealing..."
             self._message_timer = 60
             self._log_game_event("Card Dak detected — re-dealt")
@@ -604,6 +607,27 @@ class GameScreen:
             # Bid of 13 stops bidding — skip remaining players, go to Qabool.
             if isinstance(action, BidAction) and action.value == 13:
                 self._bid_index = len(self._bid_order)
+
+            # First-shota special rule: if first two pass and third declares Dak
+            # (passes with no bids made), it's automatic Dak — Qabool has no say.
+            if (self.shota_number == 1 and self._bid_index == 3
+                    and not self._has_opening_bid
+                    and self._bidding_engine.highest_bid is None):
+                # Check if the 3rd player (dealer) wants to declare auto-Dak.
+                # In our implementation: if all 3 passed in first shota, auto-Dak.
+                # (The 3rd player "declares" it by being the third pass.)
+                passes_count = sum(1 for _, v in self._bid_history if v is None)
+                if passes_count >= 2 and self._bid_index == 3:
+                    self._dak_count += 1
+                    if hasattr(self, '_game_stats'):
+                        self._game_stats["daks"] = self._dak_count
+                    self._dak_shake_timer = 30
+                    self._message = "First Shota Auto-DAK! (3rd player declared)"
+                    self._message_timer = 120
+                    self._bidding_done = True
+                    self._ai_timer = 120
+                    self._log_game_event("Auto-DAK! 3rd player declared in first shota.")
+                    return
 
             self._ai_timer = 60
 
