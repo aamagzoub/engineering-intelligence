@@ -122,6 +122,12 @@ def determine_first_shota_qabool() -> int:
     Teams: Player 0+2 (Team 0), Player 1+3 (Team 1).
     The player with the highest card on the winning team becomes Qabool.
     """
+    qabool_id, _ = determine_first_shota_qabool_with_cards()
+    return qabool_id
+
+
+def determine_first_shota_qabool_with_cards() -> tuple[int, list]:
+    """Same as determine_first_shota_qabool but also returns the 4 drawn cards."""
     from environments.wist.rules import rank_value
 
     deck = Deck()
@@ -135,17 +141,15 @@ def determine_first_shota_qabool() -> int:
     team_1_best = max(rank_value(drawn[1].rank), rank_value(drawn[3].rank))
 
     if team_0_best >= team_1_best:
-        # Team 0 wins. The player with the higher card is Qabool.
         if rank_value(drawn[0].rank) >= rank_value(drawn[2].rank):
-            return 0
+            return 0, drawn
         else:
-            return 2
+            return 2, drawn
     else:
-        # Team 1 wins.
         if rank_value(drawn[1].rank) >= rank_value(drawn[3].rank):
-            return 1
+            return 1, drawn
         else:
-            return 3
+            return 3, drawn
 
 
 class TasmiyaEngine:

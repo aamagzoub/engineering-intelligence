@@ -44,7 +44,7 @@ from environments.wist.actions import PlayCardAction
 from environments.wist.round import Round
 from environments.wist.rules import legal_cards, trick_winner, rank_value
 from environments.wist.setup import create_standard_players
-from environments.wist.tasmiya_engine import TasmiyaEngine, determine_first_shota_qabool, determine_trump_suit
+from environments.wist.tasmiya_engine import TasmiyaEngine, determine_first_shota_qabool, determine_first_shota_qabool_with_cards, determine_trump_suit
 from environments.wist.trick import Trick
 from intelligence.core.cards.card import Card
 from intelligence.core.cards.rank import Rank
@@ -415,7 +415,18 @@ class GameScreen:
         self.shota_number += 1
         # Rotate Qabool for new shotas (not for Dak re-deals).
         if self.shota_number == 1:
-            self.qabool_id = determine_first_shota_qabool()
+            self.qabool_id, self._qabool_draw_cards = determine_first_shota_qabool_with_cards()
+            # Show the Qabool draw phase before dealing.
+            self.phase = "qabool_draw"
+            self._qabool_draw_timer = 180  # ~3 seconds at 60fps.
+            self._message = "Drawing cards to determine Qabool..."
+            self._message_timer = 180
+            self._log_game_event("=== QABOOL DRAW ===")
+            for i, card in enumerate(self._qabool_draw_cards):
+                r, s = card_key(card)
+                self._log_game_event(f"  {DISPLAY_NAMES[i]} draws {r}{s}")
+            self._log_game_event(f"  Qabool: {DISPLAY_NAMES[self.qabool_id]}")
+            return
         else:
             self.qabool_id = (self.qabool_id + 1) % 4
         self._start_shota_common()
