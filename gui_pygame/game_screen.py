@@ -599,6 +599,11 @@ class GameScreen:
 
             self._message_timer = 60
             self._bid_index += 1
+
+            # Bid of 13 stops bidding — skip remaining players, go to Qabool.
+            if isinstance(action, BidAction) and action.value == 13:
+                self._bid_index = len(self._bid_order)
+
             self._ai_timer = 60
 
     def _bid_qabool(self):
@@ -737,6 +742,9 @@ class GameScreen:
             self._finalize_bidding()
         else:
             self._bid_index += 1
+            # Bid of 13 stops bidding — skip to Qabool.
+            if bid_value == 13:
+                self._bid_index = len(self._bid_order)
             self._ai_timer = 60
 
     def _human_pass_action(self):
