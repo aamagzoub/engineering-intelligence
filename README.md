@@ -139,7 +139,7 @@ If a team wins all 13 tricks in a Shota, the game ends immediately and that team
 
 ## Legal Moves (Card Play Rules)
 
-These are the rules that determine which cards a player is legally allowed to play during trick play:
+These rules are separate from the game rules above. They determine which cards a player is legally allowed to play during trick play:
 
 1. **First card of a Shota (Shooter leads):** Must play a card from the trump suit (Al-Ato). This is how trump is revealed.
 
@@ -154,6 +154,32 @@ These are the rules that determine which cards a player is legally allowed to pl
 6. **Winner leads next:** The winner of each trick leads the next one.
 
 7. **No review:** Once a trick is placed face down it cannot be reviewed by anyone.
+
+**Note:** Legal moves are enforced by the game engine. The UI will only allow you to play valid cards and will highlight illegal attempts.
+
+---
+
+## Game UI Features
+
+### Seek Risk Indicator
+During play, two chips are displayed (one per team) showing a live **seek risk percentage**. This helps the player gauge how likely a seek is:
+
+- **0%** — Seek is dead (the team already lost a trick)
+- **1–15%** — Low risk (green chip, safe to play normally)
+- **16–40%** — Medium risk (amber chip, be cautious)
+- **41%+** — High risk (red chip, danger of seek)
+
+The percentage is calculated from your visible hand: trump cards, high cards (Aces, Kings), suit voids, and tricks remaining. It updates after every trick.
+
+### Other Features
+- Trump hidden until first card played (card flip animation)
+- Interactive Qabool draw ceremony
+- Card-based and pass-based Dak with visual proof display
+- AI recommendation system (rule-based or trained model)
+- Whip detection and double-whip animation
+- Player rating and XP progression
+- Game statistics tracking
+- Confetti celebration on game end
 
 ---
 
@@ -187,6 +213,7 @@ environments/wist/   - Game engine (rules, bidding, scoring, tricks)
 gui/                 - Tkinter GUI (Stats & Lab, Play for AI tabs)
 gui_pygame/          - PyGame GUI (full interactive game)
 intelligence/        - Core abstractions (cards, agents, environments)
+distributable/       - Build scripts and packaged .exe distribution
 ```
 
 ## Running the Game
@@ -198,3 +225,12 @@ python gui_pygame/main.py
 # Tkinter version (AI laboratory)
 python gui/app.py
 ```
+
+## Building the Executable
+
+```bash
+# From the distributable/ folder
+build.bat
+```
+
+The built `.exe` will be placed in the `dist/` folder.

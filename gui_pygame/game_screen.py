@@ -152,6 +152,9 @@ class GameScreen:
             "small": pygame.font.SysFont("Segoe UI", 10),
             "card": pygame.font.SysFont("Consolas", 11, bold=True),
             "log": pygame.font.SysFont("Consolas", 10),
+            "chip": pygame.font.SysFont("Segoe UI", 8, bold=True),
+            "chip_light": pygame.font.SysFont("Segoe UI", 8),
+            "chip_label": pygame.font.SysFont("Segoe UI", 7),
         }
 
         # Card cache.
@@ -3145,23 +3148,108 @@ class GameScreen:
         self.screen.blit(l2, (x + 70, y))
         self.screen.blit(t2, (x + 72, y + 14))
 
-        # Seek chip — below team scores.
-        tricks_played_s = self.team_tricks[0] + self.team_tricks[1]
-        seek_alive = (tricks_played_s == 0) or (self.team_tricks[0] == 0) or (self.team_tricks[1] == 0)
+        # Seek risk chips — one per team, below team scores.
         chip_y = y + 42
-        chip_w = 90
-        chip_h = 18
-        chip_surf = pygame.Surface((chip_w, chip_h), pygame.SRCALPHA)
-        if seek_alive:
-            pygame.draw.rect(chip_surf, (180, 40, 40, 200), (0, 0, chip_w, chip_h), border_radius=9)
-            chip_font = pygame.font.SysFont("Segoe UI", 9, bold=True)
-            chip_text = chip_font.render("Seek Possible", True, TEXT_GOLD)
-        else:
-            pygame.draw.rect(chip_surf, (50, 50, 50, 160), (0, 0, chip_w, chip_h), border_radius=9)
-            chip_font = pygame.font.SysFont("Segoe UI", 9)
-            chip_text = chip_font.render("Seek Dead", True, (150, 150, 150))
-        chip_surf.blit(chip_text, chip_text.get_rect(center=(chip_w // 2, chip_h // 2)))
-        self.screen.blit(chip_surf, (x, chip_y))
+        chip_w = 68
+        chip_h = 16
+        chip_font = self.fonts["chip"]
+        chip_font_light = self.fonts["chip_light"]
+        lbl_font = self.fonts["chip_label"]
+
+        t1_risk = self._calc_seek_risk(team_id=0)
+        t2_risk = self._calc_seek_risk(team_id=1)
+
+        for i, (risk, team_color) in enumerate([(t1_risk, TEAM1_BLUE), (t2_risk, TEAM2_ORANGE)]):
+            chip_x = x + i * (chip_w + 4)
+            chip_surf = pygame.Surface((chip_w, chip_h), pygame.SRCALPHA)
+
+            if risk == 0:
+                pygame.draw.rect(chip_surf, (50, 50, 50, 160), (0, 0, chip_w, chip_h), border_radius=8)
+                chip_text = chip_font_light.render("0% Seek", True, (150, 150, 150))
+            elif risk <= 15:
+                pygame.draw.rect(chip_surf, (30, 100, 30, 200), (0, 0, chip_w, chip_h), border_radius=8)
+                chip_text = chip_font.render(f"{risk}% Seek", True, (180, 255, 180))
+            elif risk <= 40:
+                pygame.draw.rect(chip_surf, (160, 120, 20, 200), (0, 0, chip_w, chip_h), border_radius=8)
+                chip_text = chip_font.render(f"{risk}% Seek", True, TEXT_GOLD)
+            else:
+                pygame.draw.rect(chip_surf, (180, 40, 40, 200), (0, 0, chip_w, chip_h), border_radius=8)
+                chip_text = chip_font.render(f"{risk}% Seek", True, TEXT_GOLD)
+
+            chip_surf.blit(chip_text, chip_text.get_rect(center=(chip_w // 2, chip_h // 2)))
+            self.screen.blit(chip_surf, (chip_x, chip_y))
+
+            # Team label above chip.
+            lbl = lbl_font.render(f"T{i+1}", True, team_color)
+            self.screen.blit(lbl, (chip_x + chip_w // 2 - lbl.get_width() // 2, chip_y - 9))
+
+    def _calc_seek_risk(self, team_id: int) -> int:
+        """
+        Estimate seek risk % for a team based on the human player's visible hand.
+        Returns 0 when seek is impossible, otherwise 1-95.
+        """
+        other_team = 1 - team_id
+
+        # Seek is dead if the other team already won a trick.
+        if self.team_tricks[other_team] > 0:
+            return 0
+
+        if self.players is None or self.phase not in ("playing", "shota_end"):
+            return 0
+        if self.trump_suit is None:
+            return 0
+
+        human_hand = self.players[HUMAN_ID].hand
+        if not human_hand:
+            return 0
+
+        tricks_remaining = 13 - self.team_tricks[0] - self.team_tricks[1]
+        if tricks_remaining <= 0:
+            return 0
+
+        # Score each card's "winning probability" based on rank and trump status.
+        trump = self.trump_suit
+        probable_winners = 0.0
+        suits_seen = set()
+
+        for c in human_hand:
+            rv = rank_value(c.rank)
+            suits_seen.add(c.suit)
+            if c.suit == trump:
+                if rv >= 14:
+                    probable_winners += 0.95
+                elif rv >= 13:
+                    probable_winners += 0.80
+                elif rv >= 12:
+                    probable_winners += 0.60
+                elif rv >= 11:
+                    probable_winners += 0.40
+                else:
+                    probable_winners += 0.15
+            else:
+                if rv >= 14:
+                    probable_winners += 0.75
+                elif rv >= 13:
+                    probable_winners += 0.45
+                elif rv >= 12:
+                    probable_winners += 0.20
+
+        voids = 4 - len(suits_seen)
+        strength_ratio = probable_winners / tricks_remaining
+
+        if team_id == 0:  # Human's team
+            raw = (strength_ratio + voids * 0.08) * 100
+            risk = int(min(85, raw * 0.65))
+        else:  # Opponent team
+            weakness = 1.0 - min(1.0, strength_ratio + voids * 0.05)
+            risk = int(min(70, weakness * 55))
+
+        # Momentum boost when seeking team is dominating late.
+        if tricks_remaining <= 4 and self.team_tricks[team_id] > 0:
+            momentum = (13 - tricks_remaining) / 13.0
+            risk = int(min(95, risk * (1.0 + momentum * 0.5)))
+
+        return max(0, min(100, risk))
 
     def _render_trump_display(self):
         """Feature 1: Trump hidden until first card played. Card flip animation on reveal."""
