@@ -127,8 +127,17 @@ def determine_first_shota_qabool() -> int:
 
 
 def determine_first_shota_qabool_with_cards() -> tuple[int, list]:
-    """Same as determine_first_shota_qabool but also returns the 4 drawn cards."""
+    """Determine first Qabool via card draw. Returns (winner_pid, drawn_cards_list).
+
+    Tie-breaking rules (ties = same rank value regardless of suit):
+    - If tied winners are both on user's team (team 0: pids 0,2) → user (pid 2) wins.
+    - If tied winners are from different teams → redraw only for those two until broken.
+    - If tied winners are both on non-user team (team 1: pids 1,3) → random pick.
+    """
+    import random
     from environments.wist.rules import rank_value
+
+    HUMAN_PID = 2
 
     deck = Deck()
     deck.shuffle()
@@ -136,20 +145,51 @@ def determine_first_shota_qabool_with_cards() -> tuple[int, list]:
     # Each player draws one card.
     drawn = [deck.deal(1)[0] for _ in range(4)]
 
-    # Each team's best card.
-    team_0_best = max(rank_value(drawn[0].rank), rank_value(drawn[2].rank))
-    team_1_best = max(rank_value(drawn[1].rank), rank_value(drawn[3].rank))
+    # Find the highest rank value drawn.
+    values = [rank_value(drawn[i].rank) for i in range(4)]
+    max_val = max(values)
 
-    if team_0_best >= team_1_best:
-        if rank_value(drawn[0].rank) >= rank_value(drawn[2].rank):
-            return 0, drawn
-        else:
-            return 2, drawn
+    # Find all players who drew the max value.
+    winners = [i for i in range(4) if values[i] == max_val]
+
+    if len(winners) == 1:
+        return winners[0], drawn
+
+    # Multiple players tied for highest card.
+    # Determine team membership of tied players.
+    team_0_winners = [p for p in winners if p in (0, 2)]
+    team_1_winners = [p for p in winners if p in (1, 3)]
+
+    # First: determine which team wins.
+    # If only one team has winners, that team wins.
+    if team_0_winners and not team_1_winners:
+        # Both tied winners on user's team → user gets Qabool.
+        return HUMAN_PID, drawn
+    elif team_1_winners and not team_0_winners:
+        # Both on non-user team → random pick.
+        return random.choice(team_1_winners), drawn
     else:
-        if rank_value(drawn[1].rank) >= rank_value(drawn[3].rank):
-            return 1, drawn
-        else:
-            return 3, drawn
+        # Tied across teams → redraw between the tied players until broken.
+        contenders = list(winners)
+        while True:
+            deck2 = Deck()
+            deck2.shuffle()
+            redraw = {pid: deck2.deal(1)[0] for pid in contenders}
+            redraw_values = {pid: rank_value(redraw[pid].rank) for pid in contenders}
+            max_redraw = max(redraw_values.values())
+            new_winners = [pid for pid in contenders if redraw_values[pid] == max_redraw]
+
+            if len(new_winners) == 1:
+                return new_winners[0], drawn
+            # Still tied — check team composition of remaining.
+            t0 = [p for p in new_winners if p in (0, 2)]
+            t1 = [p for p in new_winners if p in (1, 3)]
+            if t0 and not t1:
+                return HUMAN_PID, drawn
+            elif t1 and not t0:
+                return random.choice(t1), drawn
+            # Still cross-team tie — loop again with narrowed contenders.
+            contenders = new_winners
 
 
 class TasmiyaEngine:

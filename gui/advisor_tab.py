@@ -52,6 +52,9 @@ class AdvisorTab:
         self.trick_cards: list[tuple[int, Card]] = []
         self.leader_id: int = 0
         self.team_tricks = [0, 0]  # Team 0 (AI+Partner) vs Team 1
+        self.game_scores = [0, 0]  # Cumulative game scores.
+        self._shota_scores: list[tuple[int, int]] = []  # Per-shota scores.
+        self.shota_number = 0
 
         # Phase: "hand", "bidding", "setup", "playing", "done"
         self.phase = "hand"
@@ -862,6 +865,13 @@ class AdvisorTab:
         self.phase = "shota_end"
         t1 = self.team_tricks[0]
         t2 = self.team_tricks[1]
+
+        # Record shota score.
+        self.shota_number += 1
+        self._shota_scores.append((t1, t2))
+        self.game_scores[0] += t1
+        self.game_scores[1] += t2
+
         winner = "Your Team (AI+P3)" if t1 > t2 else "Opponents (P2+P4)"
         self._command_label.config(
             text=f"Shota Complete — {winner} wins! ({t1}-{t2})", fg="#ffd54f")
@@ -881,10 +891,46 @@ class AdvisorTab:
                  font=("Segoe UI", 10), fg="#aaaaaa", bg="#252525"
                  ).pack(anchor="w", pady=(0, 12))
 
-        tk.Button(self._right, text="▶  Next Shota", command=self._next_shota,
+        # Scoreboard table.
+        score_frame = tk.Frame(self._right, bg="#252525")
+        score_frame.pack(anchor="w", pady=(0, 12), fill="x")
+        tk.Label(score_frame, text="Shota Scores", font=("Segoe UI", 10, "bold"),
+                 fg="#ffd54f", bg="#252525").pack(anchor="w")
+        # Header.
+        hdr = tk.Frame(score_frame, bg="#252525")
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="#", width=4, font=("Consolas", 9, "bold"),
+                 fg="#888", bg="#252525").pack(side="left")
+        tk.Label(hdr, text="T1", width=6, font=("Consolas", 9, "bold"),
+                 fg="#42a5f5", bg="#252525").pack(side="left")
+        tk.Label(hdr, text="T2", width=6, font=("Consolas", 9, "bold"),
+                 fg="#ff7043", bg="#252525").pack(side="left")
+        # Rows.
+        for idx, (s1, s2) in enumerate(self._shota_scores):
+            row = tk.Frame(score_frame, bg="#252525")
+            row.pack(fill="x")
+            tk.Label(row, text=str(idx + 1), width=4, font=("Consolas", 9),
+                     fg="#888", bg="#252525").pack(side="left")
+            c1 = "#ffffff" if s1 >= 0 else "#ef5350"
+            c2 = "#ffffff" if s2 >= 0 else "#ef5350"
+            tk.Label(row, text=str(s1), width=6, font=("Consolas", 9),
+                     fg=c1, bg="#252525").pack(side="left")
+            tk.Label(row, text=str(s2), width=6, font=("Consolas", 9),
+                     fg=c2, bg="#252525").pack(side="left")
+        # Total.
+        tot = tk.Frame(score_frame, bg="#252525")
+        tot.pack(fill="x")
+        tk.Label(tot, text="Tot", width=4, font=("Consolas", 9, "bold"),
+                 fg="#ffd54f", bg="#252525").pack(side="left")
+        tk.Label(tot, text=str(self.game_scores[0]), width=6, font=("Consolas", 9, "bold"),
+                 fg="#42a5f5", bg="#252525").pack(side="left")
+        tk.Label(tot, text=str(self.game_scores[1]), width=6, font=("Consolas", 9, "bold"),
+                 fg="#ff7043", bg="#252525").pack(side="left")
+
+        tk.Button(self._right, text="Next Shota", command=self._next_shota,
                   font=("Segoe UI", 11, "bold"), fg="#fff", bg=COLORS["btn_green"],
                   bd=0, padx=16, pady=8, cursor="hand2").pack(anchor="w", pady=(4, 0))
-        tk.Button(self._right, text="↺ Reset All", command=self._reset_all,
+        tk.Button(self._right, text="Reset All", command=self._reset_all,
                   font=("Segoe UI", 9), fg="#fff", bg=COLORS["btn_grey"],
                   bd=0, padx=8, pady=4, cursor="hand2").pack(anchor="w", pady=(12, 0))
 
@@ -969,6 +1015,9 @@ class AdvisorTab:
         self.trick_number = 0
         self.phase = "hand"
         self.team_tricks = [0, 0]
+        self.game_scores = [0, 0]
+        self._shota_scores = []
+        self.shota_number = 0
         self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
         self._pending_offsuit = None
         self._agent = None

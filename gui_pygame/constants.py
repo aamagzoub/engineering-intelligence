@@ -2,7 +2,7 @@
 
 # Window.
 SCREEN_WIDTH = 1400
-SCREEN_HEIGHT = 850
+SCREEN_HEIGHT = 800
 FPS = 60
 TITLE = "Sudanese Wist — AI Laboratory"
 

@@ -196,12 +196,15 @@ class RuleBasedAgent(Agent):
 
     # ==========================================================
     # CARD PLAY STRATEGY
+    #
+    # Goal hierarchy:
+    # 1. WIN ALL 13 TRICKS (Seek) — always play to maximize this chance
+    # 2. If Seek is lost, maximize your own tricks won
+    # 3. If you can't win many, minimize opponent's tricks
     # ==========================================================
 
     def _act_play(self, obs: WistObservation) -> Action:
-        """
-        Card play strategy dispatcher.
-        """
+        """Card play strategy — always play to win every trick."""
         if not obs.hand:
             raise ValueError("RuleBasedAgent cannot act with an empty hand.")
 
@@ -219,34 +222,27 @@ class RuleBasedAgent(Agent):
             must_lead_trump=must_lead_trump,
         )
 
-        # If only one legal card, play it.
         if len(playable) == 1:
             return PlayCardAction(player_id=obs.player_id, card=playable[0])
 
-        # Determine our position in the trick.
         if obs.current_trick is None or len(obs.current_trick.played_cards) == 0:
-            # We're leading.
             card = self._choose_lead(obs, playable)
         else:
-            # We're following.
             card = self._choose_follow(obs, playable, leading_suit)
 
         return PlayCardAction(player_id=obs.player_id, card=card)
 
     # ----------------------------------------------------------
-    # Leading strategy
+    # Leading strategy — aggressive, Seek-oriented
     # ----------------------------------------------------------
 
     def _choose_lead(self, obs: WistObservation, playable: list[Card]) -> Card:
         """
-        Choose which card to lead with.
-
-        Strategy:
-        1. If must lead trump → lead highest trump.
-        2. If we have lots of trumps → lead trump to draw them out.
-        3. Otherwise lead an Ace from a side suit (guaranteed winner).
-        4. Otherwise lead from our longest side suit.
-        5. Fallback: lead lowest card.
+        Leading strategy (Seek-first mindset):
+        1. Must lead trump (first trick) → highest trump.
+        2. Lead trump to flush out opponents' trumps (dominate trump suit).
+        3. Once trumps are likely exhausted, lead side-suit Aces/Kings (guaranteed wins).
+        4. Lead from longest side suit to establish long cards.
         """
         trump = obs.trump_suit
 
@@ -254,112 +250,112 @@ class RuleBasedAgent(Agent):
         if obs.must_lead_trump:
             return self._highest_card(playable)
 
-        # Count our trumps.
-        trump_cards = [c for c in obs.hand if c.suit == trump]
+        # Count trumps in hand.
+        trump_in_hand = [c for c in obs.hand if c.suit == trump]
+        trump_playable = [c for c in playable if c.suit == trump]
 
-        # If we have 4+ trumps, lead trump to extract opponents' trumps.
-        if len(trump_cards) >= 4:
-            trump_playable = [c for c in playable if c.suit == trump]
-            if trump_playable:
-                return self._highest_card(trump_playable)
+        # Aggressively lead trump while we have them — flush out opponents' trumps.
+        # This is the Seek strategy: control the trump suit entirely.
+        if trump_playable and len(trump_in_hand) >= 2:
+            return self._highest_card(trump_playable)
 
-        # Lead an Ace from a side suit (guaranteed winner if no trump).
+        # If we have one trump left, save it for later (ruffing opportunity).
+        # Lead guaranteed side-suit winners instead.
+
+        # Lead Aces (guaranteed winners when no trump is out).
         side_aces = [c for c in playable if c.rank == Rank.ACE and c.suit != trump]
         if side_aces:
+            # Lead from the shortest side suit first (clear it for future voids).
+            suit_counts = Counter(c.suit for c in obs.hand)
+            side_aces.sort(key=lambda c: suit_counts.get(c.suit, 0))
             return side_aces[0]
 
-        # Lead from longest side suit (to establish long cards).
+        # Lead Kings from suits where Ace is already played (likely winners).
+        side_kings = [c for c in playable if c.rank == Rank.KING and c.suit != trump]
+        if side_kings:
+            return side_kings[0]
+
+        # Lead from longest side suit — high card to try to win.
         suit_counts = Counter(c.suit for c in obs.hand)
-        side_suits = [(s, cnt) for s, cnt in suit_counts.items()
-                      if s != trump and cnt > 0]
+        side_suits = [(s, cnt) for s, cnt in suit_counts.items() if s != trump and cnt > 0]
         if side_suits:
             side_suits.sort(key=lambda x: -x[1])
-            best_side_suit = side_suits[0][0]
-            suit_cards = [c for c in playable if c.suit == best_side_suit]
+            best_side = side_suits[0][0]
+            suit_cards = [c for c in playable if c.suit == best_side]
             if suit_cards:
-                # Lead highest from longest side suit.
                 return self._highest_card(suit_cards)
 
-        # Fallback: lead lowest card.
-        return self._lowest_card(playable)
+        # Last resort — lead highest remaining trump.
+        if trump_playable:
+            return self._highest_card(trump_playable)
+
+        return self._highest_card(playable)
 
     # ----------------------------------------------------------
-    # Following strategy
+    # Following strategy — always try to WIN the trick
     # ----------------------------------------------------------
 
     def _choose_follow(self, obs: WistObservation, playable: list[Card],
                        leading_suit: Suit | None) -> Card:
         """
-        Choose which card to play when following.
-
-        Strategy depends on whether we're following suit, trumping, or discarding.
+        Following strategy (Seek mindset — win every trick):
+        - If we can win the trick, play the card that wins.
+        - Only concede if partner is safely winning AND we're 4th to play.
+        - Trump aggressively when void in led suit.
         """
         trump = obs.trump_suit
         trick = obs.current_trick
         partner_id = self._partner_id(obs.player_id)
 
-        # Determine current winning card in the trick.
-        current_winner_id, current_winner_card = self._current_trick_winner(
-            trick, trump
-        )
-
-        # Is our partner currently winning?
+        current_winner_id, current_winner_card = self._current_trick_winner(trick, trump)
         partner_winning = (current_winner_id == partner_id)
+        cards_played_in_trick = len(trick.played_cards) if trick else 0
 
-        # Case 1: We have cards in the leading suit (following suit).
+        # Case 1: Following suit.
         if leading_suit and playable[0].suit == leading_suit:
-            return self._follow_suit(
-                playable, current_winner_card, partner_winning, trump
-            )
+            # Partner is winning AND they have the highest possible card AND we're last.
+            if partner_winning and cards_played_in_trick == 3:
+                return self._lowest_card(playable)
 
-        # Case 2: We're void in the leading suit.
-        # Can we trump?
-        trump_cards = [c for c in playable if c.suit == trump]
+            # Try to win — play highest card that beats the current winner.
+            if current_winner_card and current_winner_card.suit == leading_suit:
+                winners = [c for c in playable
+                           if rank_value(c.rank) > rank_value(current_winner_card.rank)]
+                if winners:
+                    # Play highest to secure the trick (Seek mindset).
+                    return self._highest_card(winners)
 
-        if trump_cards and not partner_winning:
-            # Trump with the lowest trump that wins.
-            current_trump_in_trick = self._highest_trump_in_trick(trick, trump)
-            if current_trump_in_trick is not None:
-                # Need to beat existing trump.
-                winning_trumps = [c for c in trump_cards
-                                  if rank_value(c.rank) > rank_value(current_trump_in_trick.rank)]
-                if winning_trumps:
-                    return self._lowest_card(winning_trumps)
-            else:
-                # No trump in trick yet — any trump wins.
-                return self._lowest_card(trump_cards)
+            # No current winner in our suit (they trumped) — play lowest.
+            if current_winner_card and current_winner_card.suit != leading_suit:
+                return self._lowest_card(playable)
 
-        # Case 3: Partner is winning or we can't trump effectively.
-        # Discard lowest from weakest suit.
-        return self._best_discard(playable, trump, obs.hand)
-
-    def _follow_suit(self, playable: list[Card], current_winner_card: Card | None,
-                     partner_winning: bool, trump: Suit | None) -> Card:
-        """
-        Follow suit strategy.
-
-        - If partner is winning: play lowest (don't waste high cards).
-        - If we can beat the current winner: play the lowest card that wins.
-        - If we can't beat it: play lowest (save high cards for later).
-        """
-        if partner_winning:
-            return self._lowest_card(playable)
-
-        if current_winner_card is None:
-            # We're second to play — play highest to try to win.
+            # We're early in the trick or no one winning yet — play highest.
             return self._highest_card(playable)
 
-        # Can we beat the current winner?
-        # Only matters if winner is in the same suit (not a trump).
-        if current_winner_card.suit == playable[0].suit:
-            winners = [c for c in playable
-                       if rank_value(c.rank) > rank_value(current_winner_card.rank)]
-            if winners:
-                # Play the lowest card that still wins.
-                return self._lowest_card(winners)
+        # Case 2: Void in led suit — TRUMP aggressively.
+        trump_cards = [c for c in playable if c.suit == trump]
 
-        # Can't beat it — play lowest to save high cards.
-        return self._lowest_card(playable)
+        if trump_cards:
+            # Partner is winning safely and we're last — don't over-trump partner.
+            if partner_winning and cards_played_in_trick == 3:
+                return self._best_discard(playable, trump, obs.hand)
+
+            # Trump to win — use highest trump to guarantee we take it.
+            current_trump = self._highest_trump_in_trick(trick, trump)
+            if current_trump is not None:
+                # Need to beat existing trump.
+                beating = [c for c in trump_cards
+                           if rank_value(c.rank) > rank_value(current_trump.rank)]
+                if beating:
+                    return self._highest_card(beating)
+                # Can't beat their trump — discard instead.
+                return self._best_discard(playable, trump, obs.hand)
+            else:
+                # No trump in trick — our trump wins for sure. Use highest.
+                return self._highest_card(trump_cards)
+
+        # Case 3: Can't follow suit and can't trump — discard strategically.
+        return self._best_discard(playable, trump, obs.hand)
 
     # ----------------------------------------------------------
     # Helpers
@@ -414,22 +410,19 @@ class RuleBasedAgent(Agent):
     def _best_discard(self, playable: list[Card], trump: Suit | None,
                       full_hand: list[Card]) -> Card:
         """
-        Choose the best card to discard when void in led suit
-        and not trumping.
-
-        Strategy: discard lowest card from the suit with fewest cards
-        (weakest suit — least chance of winning tricks there anyway).
+        Discard strategy (Seek-defensive):
+        - Throw from shortest non-trump suit to create voids faster.
+        - Voids let us trump in the future (win more tricks).
+        - Always discard the lowest card from the weakest suit.
         """
-        # Prefer discarding non-trump low cards.
         non_trump = [c for c in playable if c.suit != trump]
         if non_trump:
-            # From non-trump playable, find the suit with fewest remaining cards.
+            # Discard from the suit with fewest remaining cards (create void).
             suit_counts = Counter(c.suit for c in full_hand if c.suit != trump)
-            # Sort by suit count (ascending), then by rank (ascending).
             non_trump.sort(key=lambda c: (suit_counts.get(c.suit, 0), rank_value(c.rank)))
             return non_trump[0]
 
-        # Only trump cards available — discard lowest trump.
+        # Only trump available — discard lowest trump.
         return self._lowest_card(playable)
 
     def _highest_card(self, cards: list[Card]) -> Card:
