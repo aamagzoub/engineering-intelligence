@@ -185,7 +185,7 @@ class WistApp:
             root.withdraw()
             path = filedialog.askopenfilename(
                 title="Load AI Model",
-                filetypes=[("Model files", "*.pt *.pth *.h5 *.onnx"), ("All files", "*.*")]
+                filetypes=[("JSON Model", "*.json"), ("All files", "*.*")]
             )
             root.destroy()
             if path:

@@ -118,17 +118,22 @@ The trump suit is never declared out loud. It is revealed only when the winning 
 - If the playing team falls short: they lose points equal to their bid. Defending team scores their actual tricks won.
 - Scores can go negative.
 
-| Playing team bid | Tricks won | Playing team score | Defending team score |
-|---|---|---|---|
-| 8 | 10 | +10 | +0 |
-| 8 | 6 | -8 | +6 |
-| 8 | 3 | -8 | +10 |
+**Winning a Shota:**
+- The playing team wins if they won tricks **equal to or more than** their bid (met or exceeded their commitment)
+- The defending team wins if the playing team won **fewer tricks than** their bid (the playing team failed their commitment)
+
+| Playing team bid | Tricks won | Playing team score | Defending team score | Who won the Shota |
+|---|---|---|---|---|
+| 8 | 10 | +10 | +0 | Playing team |
+| 8 | 8 | +8 | +0 | Playing team |
+| 8 | 6 | -8 | +7 | Defending team |
+| 8 | 3 | -8 | +10 | Defending team |
 
 ### Winning the Game
 A game consists of 5 Shotas. The first team to reach 25 points wins.
 
 ### Seek
-If a team wins all 13 tricks in a Shota, the game ends immediately and that team wins — regardless of score or Shotas played.
+If a team wins all 13 tricks in a Shota, the game ends immediately and that team wins — regardless of score or Shotas played. Seek overrides everything.
 
 ---
 

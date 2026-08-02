@@ -215,6 +215,8 @@ class GameScreen:
 
         # Feature 22: Loaded AI model path.
         self._ai_model_path: str | None = None
+        self._ai_advisor: object | None = None  # Loaded LearningAgent for recommendations.
+        self._ai_recommendation: str = ""  # Current recommendation text.
 
         # Animation state.
         self._trick_played: dict[int, tuple[str, str]] = {}
@@ -321,6 +323,66 @@ class GameScreen:
         self._player_points += pts
         self._save_player_stats()
 
+    def _load_ai_advisor(self):
+        """Load the AI model file as a LearningAgent for recommendations."""
+        if not self._ai_model_path:
+            self._ai_advisor = None
+            return
+        try:
+            from agents.learning.learning_agent import LearningAgent
+            self._ai_advisor = LearningAgent.load(self._ai_model_path, training=False)
+            self._ai_recommendation = f"Model loaded ({self._ai_advisor.q_table_size} entries)"
+        except Exception as e:
+            self._ai_advisor = None
+            self._ai_recommendation = f"Load failed: {str(e)[:30]}"
+
+    def _get_ai_recommendation(self):
+        """Query the AI advisor for a recommendation based on current game state."""
+        if not self._ai_advisor or not self.players:
+            return
+
+        try:
+            if self.phase == "playing" and self._play_idx < 4:
+                pid = self._play_order[self._play_idx] if self._play_idx < len(self._play_order) else -1
+                if pid == HUMAN_ID:
+                    obs = self.environment.observe(HUMAN_ID)
+                    action = self._ai_advisor.act(obs)
+                    if hasattr(action, 'card'):
+                        r, s = card_key(action.card)
+                        self._ai_recommendation = f"Play: {r}{s}"
+                    else:
+                        self._ai_recommendation = "Thinking..."
+                    return
+
+            if self.phase == "bidding":
+                is_human_turn = False
+                if self._bid_index < len(self._bid_order) and self._bid_order[self._bid_index] == HUMAN_ID:
+                    is_human_turn = True
+                if self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order):
+                    is_human_turn = True
+
+                if is_human_turn:
+                    from environments.wist.observation import BiddingObservation
+                    obs = BiddingObservation(
+                        player_id=HUMAN_ID,
+                        hand=list(self.players[HUMAN_ID].hand),
+                        previous_bids=list(self._bid_history),
+                        current_highest_bid=(self._bidding_engine.highest_bid.value
+                                             if self._bidding_engine.highest_bid else None),
+                        is_sahib_al_qabool=(self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order)),
+                        is_opening_bid=(not self._has_opening_bid),
+                    )
+                    action = self._ai_advisor.act(obs)
+                    from environments.wist.actions import BidAction
+                    if isinstance(action, BidAction):
+                        self._ai_recommendation = f"Bid: {action.value}"
+                    else:
+                        self._ai_recommendation = "Pass"
+                    return
+
+        except Exception:
+            self._ai_recommendation = "Error in inference"
+
     def _get_rank_name(self) -> str:
         """Get military rank based on points."""
         ranks = [
@@ -391,6 +453,9 @@ class GameScreen:
         self._game_log = []
         self._log_game_event("=== NEW GAME ===")
         self._show_quit_overlay = False
+
+        # Load AI advisor if model path is set.
+        self._load_ai_advisor()
 
         # Live game stats.
         self._game_stats = {
@@ -1091,6 +1156,10 @@ class GameScreen:
         if self._message_timer > 0:
             self._message_timer -= 1
 
+        # AI recommendation (query every 30 frames to avoid overhead).
+        if self._ai_advisor and self._pulse_frame % 30 == 0:
+            self._get_ai_recommendation()
+
         # Feature 10: Pulse animation.
         self._pulse_frame = (self._pulse_frame + 1) % 60
 
@@ -1320,6 +1389,7 @@ class GameScreen:
                 and self.round.state.current_trick.leading_suit != self.trump_suit
                 and suit == SUIT_SYMBOLS.get(self.trump_suit, "")):
             is_whip = True
+            self._play_whip_sound()
 
         if is_whip:
             # Create yellow card for whipping animation.
@@ -1370,8 +1440,6 @@ class GameScreen:
             self._trick_is_whip = True
             if trump_count_in_trick >= 2:
                 self._trick_is_double_whip = True
-            # Play whip sound.
-            self._play_whip_sound()
 
         # Store winner info for phase 2.
         self._pending_trick_winner = winner
@@ -1601,7 +1669,7 @@ class GameScreen:
             root.withdraw()
             path = filedialog.askopenfilename(
                 title="Load AI Model",
-                filetypes=[("Model files", "*.pt *.pth *.h5 *.onnx"), ("All files", "*.*")]
+                filetypes=[("JSON Model", "*.json"), ("All files", "*.*")]
             )
             root.destroy()
             if path:
@@ -2145,21 +2213,25 @@ class GameScreen:
         # ========== AI RECOMMENDATION BOX (only if model loaded) ==========
         y = game_card_y + game_card_h + 12
         if self._ai_model_path:
-            ai_box_h = 72
+            ai_box_h = 82
             ai_box_rect = pygame.Rect(panel_x + 5, y, panel_w - 10, ai_box_h)
             pygame.draw.rect(self.screen, (22, 40, 22), ai_box_rect, border_radius=8)
             pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
+            pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
             self.screen.blit(header_font.render("AI Recommendation", True, TEXT_GREEN),
-                             (panel_x + pad + 4, y + 4))
+                             (panel_x + pad + 4, y + 6))
             import os as _os
             model_name = _os.path.basename(self._ai_model_path)[:20]
             self.screen.blit(label_font.render(f"Model: {model_name}", True, TEXT_DIM),
-                             (panel_x + pad + 4, y + 20))
-            # Placeholder lines — future: actual model inference.
-            self.screen.blit(label_font.render("Inference not connected yet.", True, TEXT_LIGHT),
-                             (panel_x + pad + 4, y + 36))
-            self.screen.blit(label_font.render("Connect model logic to enable.", True, TEXT_DIM),
-                             (panel_x + pad + 4, y + 52))
+                             (panel_x + pad + 4, y + 24))
+            # Show live recommendation.
+            rec_text = self._ai_recommendation if self._ai_recommendation else "Waiting..."
+            rec_color = TEXT_GOLD if ("Play:" in rec_text or "Bid:" in rec_text) else TEXT_LIGHT
+            self.screen.blit(label_font.render(rec_text, True, rec_color),
+                             (panel_x + pad + 4, y + 44))
+            q_size = self._ai_advisor.q_table_size if self._ai_advisor else 0
+            self.screen.blit(label_font.render(f"Q-table: {q_size} entries", True, TEXT_DIM),
+                             (panel_x + pad + 4, y + 62))
             y += ai_box_h + 8
 
         # ========== SHOTA SCOREBOARD TABLE (always visible) ==========
@@ -2389,8 +2461,15 @@ class GameScreen:
         title = title_font.render(f"Shota {self.shota_number} Complete", True, TEXT_WHITE)
         self.screen.blit(title, title.get_rect(centerx=cx, y=panel_rect.top + 20))
 
-        # Result.
-        your_team_won = self.team_tricks[0] > self.team_tricks[1]
+        # Result — based on bid outcome, not raw trick count.
+        human_team = 0  # Human is on team 0.
+        if bid_met:
+            # Playing team won the shota.
+            your_team_won = (playing_team == human_team)
+        else:
+            # Playing team failed — defending team won.
+            your_team_won = (playing_team != human_team)
+
         if your_team_won:
             result_text = "Your Team WON"
             result_color = HIGHLIGHT_GREEN
