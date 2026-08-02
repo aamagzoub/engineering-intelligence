@@ -866,15 +866,38 @@ class AdvisorTab:
         t1 = self.team_tricks[0]
         t2 = self.team_tricks[1]
 
+        # Proper scoring using bid outcome.
+        from environments.wist.scoring import score_shota
+        playing_team = 0 if self.bid_winner_id in (0, 2) else 1
+        defending_team = 1 - playing_team
+        bid_met = self.team_tricks[playing_team] >= self.bid_value
+
+        try:
+            score_delta = score_shota(
+                playing_team_id=playing_team, defending_team_id=defending_team,
+                bid=self.bid_value,
+                playing_team_tricks=self.team_tricks[playing_team],
+                defending_team_tricks=self.team_tricks[defending_team])
+            self.game_scores[0] += score_delta.get(0, 0)
+            self.game_scores[1] += score_delta.get(1, 0)
+        except Exception:
+            self.game_scores[0] += t1
+            self.game_scores[1] += t2
+
         # Record shota score.
         self.shota_number += 1
         self._shota_scores.append((t1, t2))
-        self.game_scores[0] += t1
-        self.game_scores[1] += t2
 
-        winner = "Your Team (AI+P3)" if t1 > t2 else "Opponents (P2+P4)"
+        # Winner based on bid outcome, not trick count.
+        human_team = 0
+        if bid_met:
+            your_team_won = (playing_team == human_team)
+        else:
+            your_team_won = (playing_team != human_team)
+        winner = "Your Team (AI+P3)" if your_team_won else "Opponents (P2+P4)"
+
         self._command_label.config(
-            text=f"Shota Complete — {winner} wins! ({t1}-{t2})", fg="#ffd54f")
+            text=f"Shota Complete — {winner}! ({t1}-{t2})", fg="#ffd54f")
         self._instruction.config(text="Shota done. Start next shota or reset.")
 
         # Replace next trick button with next shota button.
