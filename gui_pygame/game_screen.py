@@ -1485,11 +1485,14 @@ class GameScreen:
         end = (cx + dx - CARD_WIDTH // 2, cy + dy - CARD_HEIGHT // 2)
 
         # Detect whipping: trump card played when leading suit is not trump.
+        # NOT whipping if: trick led with trump (just following suit), or player IS the leader.
         is_whip = False
         if (self.trump_suit is not None and self.round.state.current_trick
                 and self.round.state.current_trick.leading_suit is not None
                 and self.round.state.current_trick.leading_suit != self.trump_suit
-                and suit == SUIT_SYMBOLS.get(self.trump_suit, "")):
+                and suit == SUIT_SYMBOLS.get(self.trump_suit, "")
+                and len(self.round.state.current_trick.played_cards) > 1):
+            # Only whip if this is NOT the first card (leader can't whip their own lead).
             is_whip = True
             self._play_whip_sound()
 
