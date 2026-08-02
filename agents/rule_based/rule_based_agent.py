@@ -175,19 +175,19 @@ class RuleBasedAgent(Agent):
 
         if all_passed:
             # Everyone passed — Qabool can bid or declare Dak.
-            # Extra card advantage: can bid one lower than standard formula.
-            # Standard: longest+3. With advantage: longest+2. Min is 7.
+            # NO advantage when all passed — standard formula applies.
+            # Standard: longest + 3.
             if expected_tricks >= 3:
-                advantage_bid = max(7, bid_value - 1)
-                return BidAction(player_id=obs.player_id, value=advantage_bid)
+                return BidAction(player_id=obs.player_id, value=bid_value)
             # Truly weak — declare Dak.
             return PassAction(player_id=obs.player_id)
 
         # Someone bid. Accept (pass) or match/outbid.
-        # Qabool can match — bid the same number.
+        # Qabool advantage: can bid one lower than standard (matching only).
+        advantage_bid = max(7, bid_value - 1)
         if expected_tricks >= current_bid - 2:
-            # Strong enough to contest. Match or outbid.
-            match_bid = max(current_bid, bid_value)
+            # Strong enough to contest. Match or outbid with advantage.
+            match_bid = max(current_bid, advantage_bid)
             match_bid = min(match_bid, 13)
             return BidAction(player_id=obs.player_id, value=match_bid)
 

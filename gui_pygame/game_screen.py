@@ -217,6 +217,7 @@ class GameScreen:
         self._ai_model_path: str | None = None
         self._ai_advisor: object | None = None  # Loaded LearningAgent for recommendations.
         self._ai_recommendation: str = ""  # Current recommendation text.
+        self._ai_rec_card: tuple | None = None  # (rank, suit) of recommended card.
 
         # Animation state.
         self._trick_played: dict[int, tuple[str, str]] = {}
@@ -248,6 +249,7 @@ class GameScreen:
         # Restart signal for main app.
         self._restart_to_name = False
         self._shota_only_mode = False  # Endless shota mode.
+        self._qabool_draw_done = False  # Only draw once per application run.
 
         # Stats panel animation state.
         self._score_pulse_timer = 0  # Frames remaining for score pulse.
@@ -337,8 +339,8 @@ class GameScreen:
             self._ai_recommendation = f"Load failed: {str(e)[:30]}"
 
     def _get_ai_recommendation(self):
-        """Query the AI advisor for a recommendation based on current game state."""
-        if not self._ai_advisor or not self.players:
+        """Query for a recommendation. Uses model if loaded, otherwise rule-based."""
+        if not self.players:
             return
 
         try:
@@ -346,11 +348,82 @@ class GameScreen:
                 pid = self._play_order[self._play_idx] if self._play_idx < len(self._play_order) else -1
                 if pid == HUMAN_ID:
                     obs = self.environment.observe(HUMAN_ID)
-                    action = self._ai_advisor.act(obs)
-                    if hasattr(action, 'card'):
-                        r, s = card_key(action.card)
-                        self._ai_recommendation = f"Play: {r}{s}"
+
+                    # Decide which agent to use.
+                    if self._ai_advisor:
+                        from agents.learning.learning_agent import encode_play_state
+                        state = encode_play_state(obs)
+                        has_data = any(v != 0 for v in self._ai_advisor.q_table.get(state, {}).values())
+                        if has_data:
+                            action = self._ai_advisor.act(obs)
+                        else:
+                            action = RuleBasedAgent().act(obs)
                     else:
+                        action = RuleBasedAgent().act(obs)
+
+                    if hasattr(action, 'card'):
+                        card = action.card
+                        r, s = card_key(card)
+                        self._ai_rec_card = (r, s)
+                        # Generate strategic teaching reason.
+                        leading = obs.current_trick.leading_suit if obs.current_trick else None
+                        n_played = len(obs.current_trick.played_cards) if obs.current_trick else 0
+                        trump = obs.trump_suit
+                        hand = obs.hand
+                        trump_left = sum(1 for c in hand if c.suit == trump)
+
+                        if obs.must_lead_trump:
+                            if rank_value(card.rank) == 14:
+                                reason = "Lead Ace of trump: forces opponents to spend high trumps early"
+                            elif rank_value(card.rank) >= 12:
+                                reason = "High trump lead: draws out their trumps so yours dominate later"
+                            else:
+                                reason = "Opening trump: reveals the suit and sets your team's tempo"
+                        elif leading and card.suit == trump and card.suit != leading:
+                            # Whipping.
+                            if rank_value(card.rank) >= 13:
+                                reason = "High trump whip: unbeatable, secures trick + demoralizes opponents"
+                            else:
+                                reason = "Trump whip: void in led suit, steal the trick cheaply"
+                        elif leading and card.suit == leading:
+                            # Following suit.
+                            if rank_value(card.rank) == 14:
+                                reason = "Ace wins guaranteed: no point saving it, take the trick now"
+                            elif rank_value(card.rank) >= 12:
+                                reason = "Play high to win: if you don't take it now, opponents will"
+                            elif n_played == 3:
+                                reason = "4th to play: you see all cards, play minimum needed to win"
+                            else:
+                                if trump_left >= 3:
+                                    reason = "Play low: save trumps for whipping later tricks"
+                                elif rank_value(card.rank) <= 6:
+                                    reason = "Sacrifice low card: can't win, keep high cards for later"
+                                else:
+                                    reason = "Mid card: contest but don't overspend on uncertain trick"
+                        elif not leading:
+                            # Leading a new trick.
+                            if card.suit == trump:
+                                if trump_left >= 3:
+                                    reason = "Lead trump: you hold many, force opponents to waste theirs"
+                                else:
+                                    reason = "Lead last trump: after this, your side suits are safe"
+                            elif card.rank == Rank.ACE:
+                                reason = "Lead Ace: guaranteed win without spending trump"
+                            elif card.rank == Rank.KING:
+                                reason = "Lead King: likely winner, tests if opponents still have Ace"
+                            else:
+                                suit_count = sum(1 for c in hand if c.suit == card.suit)
+                                if suit_count >= 4:
+                                    reason = "Lead long suit: opponents likely void, partner may trump"
+                                elif suit_count == 1:
+                                    reason = "Clear short suit: create void for future whipping"
+                                else:
+                                    reason = "Probe opponents: see who's void, plan future plays"
+                        else:
+                            reason = "Best available: balances risk vs reward"
+                        self._ai_recommendation = reason
+                    else:
+                        self._ai_rec_card = None
                         self._ai_recommendation = "Thinking..."
                     return
 
@@ -363,6 +436,7 @@ class GameScreen:
 
                 if is_human_turn:
                     from environments.wist.observation import BiddingObservation
+                    from environments.wist.tasmiya_engine import determine_trump_suit
                     obs = BiddingObservation(
                         player_id=HUMAN_ID,
                         hand=list(self.players[HUMAN_ID].hand),
@@ -372,15 +446,33 @@ class GameScreen:
                         is_sahib_al_qabool=(self.qabool_id == HUMAN_ID and self._bid_index >= len(self._bid_order)),
                         is_opening_bid=(not self._has_opening_bid),
                     )
-                    action = self._ai_advisor.act(obs)
+
+                    # Decide which agent to use.
+                    if self._ai_advisor:
+                        from agents.learning.learning_agent import encode_bid_state
+                        bid_state = encode_bid_state(obs)
+                        has_bid_data = any(v != 0 for v in self._ai_advisor.bid_q.get(bid_state, {}).values())
+                        if has_bid_data:
+                            action = self._ai_advisor.act(obs)
+                        else:
+                            action = RuleBasedAgent().act(obs)
+                    else:
+                        action = RuleBasedAgent().act(obs)
+
                     from environments.wist.actions import BidAction
                     if isinstance(action, BidAction):
-                        self._ai_recommendation = f"Bid: {action.value}"
+                        trump = determine_trump_suit(self.players[HUMAN_ID].hand)
+                        suit_sym = SUIT_SYMBOLS.get(trump, "?")
+                        self._ai_rec_card = None
+                        self._ai_recommendation = f"Bid {action.value} with {suit_sym}"
                     else:
+                        self._ai_rec_card = None
                         self._ai_recommendation = "Pass"
                     return
 
+            self._ai_rec_card = None
         except Exception:
+            self._ai_rec_card = None
             self._ai_recommendation = "Error in inference"
 
     def _get_rank_name(self) -> str:
@@ -482,8 +574,9 @@ class GameScreen:
     def _start_new_shota(self):
         """Deal and start bidding for a NEW shota (increments number + rotates Qabool)."""
         self.shota_number += 1
-        # Rotate Qabool for new shotas (not for Dak re-deals).
-        if self.shota_number == 1:
+        # Qabool draw only on the very first run of the application.
+        if self.shota_number == 1 and not self._qabool_draw_done:
+            self._qabool_draw_done = True
             self.qabool_id, self._qabool_draw_cards = determine_first_shota_qabool_with_cards()
             # Show the Qabool draw phase — interactive.
             self.phase = "qabool_draw"
@@ -919,6 +1012,10 @@ class GameScreen:
         self._bid_chip_anim_timer[HUMAN_ID] = 15
         self._log_game_event(f"You bid {bid_value} ({SUIT_SYMBOLS[chosen_suit]})")
 
+        # Clear recommendation after bidding.
+        self._ai_rec_card = None
+        self._ai_recommendation = ""
+
         # Reset bid step.
         self._bid_step = "number"
         self._selected_bid = None
@@ -949,6 +1046,10 @@ class GameScreen:
         self._player_bids_display[HUMAN_ID] = "Pass"
         self._bid_chip_anim_timer[HUMAN_ID] = 15
         self._log_game_event("You pass")
+
+        # Clear recommendation after passing.
+        self._ai_rec_card = None
+        self._ai_recommendation = ""
 
         if is_qabool:
             if self._bidding_engine.highest_bid is None:
@@ -1114,6 +1215,7 @@ class GameScreen:
         self._log_game_event(f"  Total: T1={self.game_scores[0]} T2={self.game_scores[1]}")
 
         # Seek = instant game over regardless of score or shota count.
+        # Seek = instant game over always.
         if seek_team is not None:
             self._player_games_played += 1
             human_team = 0
@@ -1156,8 +1258,8 @@ class GameScreen:
         if self._message_timer > 0:
             self._message_timer -= 1
 
-        # AI recommendation (query every 30 frames to avoid overhead).
-        if self._ai_advisor and self._pulse_frame % 30 == 0:
+        # AI recommendation (query every 30 frames).
+        if self._pulse_frame % 30 == 0:
             self._get_ai_recommendation()
 
         # Feature 10: Pulse animation.
@@ -1875,6 +1977,10 @@ class GameScreen:
         self._trick_played[HUMAN_ID] = (r, s)
         self._ai_timer = 15
 
+        # Clear recommendation after playing.
+        self._ai_rec_card = None
+        self._ai_recommendation = ""
+
         # Feature 1: Reveal trump on first card.
         if not self._trump_revealed:
             self._trump_revealed = True
@@ -2210,29 +2316,65 @@ class GameScreen:
             self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font, lbl, val, clr)
             y += 19
 
-        # ========== AI RECOMMENDATION BOX (only if model loaded) ==========
+        # ========== RECOMMENDATION BOX (always visible, fixed size) ==========
         y = game_card_y + game_card_h + 12
-        if self._ai_model_path:
-            ai_box_h = 82
-            ai_box_rect = pygame.Rect(panel_x + 5, y, panel_w - 10, ai_box_h)
-            pygame.draw.rect(self.screen, (22, 40, 22), ai_box_rect, border_radius=8)
-            pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
-            pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
-            self.screen.blit(header_font.render("AI Recommendation", True, TEXT_GREEN),
-                             (panel_x + pad + 4, y + 6))
-            import os as _os
-            model_name = _os.path.basename(self._ai_model_path)[:20]
-            self.screen.blit(label_font.render(f"Model: {model_name}", True, TEXT_DIM),
-                             (panel_x + pad + 4, y + 24))
-            # Show live recommendation.
-            rec_text = self._ai_recommendation if self._ai_recommendation else "Waiting..."
-            rec_color = TEXT_GOLD if ("Play:" in rec_text or "Bid:" in rec_text) else TEXT_LIGHT
-            self.screen.blit(label_font.render(rec_text, True, rec_color),
-                             (panel_x + pad + 4, y + 44))
-            q_size = self._ai_advisor.q_table_size if self._ai_advisor else 0
-            self.screen.blit(label_font.render(f"Q-table: {q_size} entries", True, TEXT_DIM),
-                             (panel_x + pad + 4, y + 62))
-            y += ai_box_h + 8
+        ai_box_h = 145
+        ai_box_rect = pygame.Rect(panel_x + 5, y, panel_w - 10, ai_box_h)
+        pygame.draw.rect(self.screen, (22, 40, 22), ai_box_rect, border_radius=8)
+        pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
+        # Title.
+        box_title = "Expert-Model Rec." if self._ai_model_path else "Rule-Based Rec."
+        self.screen.blit(header_font.render(box_title, True, TEXT_GREEN),
+                         (panel_x + pad + 6, y + 5))
+
+        # Reason text only in box — left aligned, wrapped with label_font.
+        content_x = panel_x + pad + 6
+        content_w = panel_w - pad * 2 - 12
+        rec_text = self._ai_recommendation if self._ai_recommendation else ""
+        if rec_text:
+            words = rec_text.split()
+            lines = []
+            current_line = ""
+            for word in words:
+                test = current_line + (" " if current_line else "") + word
+                if label_font.size(test)[0] <= content_w:
+                    current_line = test
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+            text_y = y + 24
+            for line in lines[:5]:
+                ls = label_font.render(line, True, TEXT_LIGHT)
+                self.screen.blit(ls, (content_x, text_y))
+                text_y += 16
+
+        y += ai_box_h + 8
+
+        # Recommended card — to the right of user's hand, vertically centered with cards.
+        rec_card = getattr(self, '_ai_rec_card', None)
+        if rec_card:
+            r, s = rec_card
+            rc_w, rc_h = 50, 72
+            # Position: right of the user's hand area, vertically centered.
+            # User cards are at base_y (SCREEN_HEIGHT - CARD_LARGE_H - 30).
+            hand_base_y = SCREEN_HEIGHT - CARD_LARGE_H - 30
+            hand_center_y = hand_base_y + CARD_LARGE_H // 2
+            rc_x = TABLE_WIDTH - rc_w - 30
+            rc_y = hand_center_y - rc_h // 2
+            # White background box.
+            box_pad = 5
+            bg_rect = pygame.Rect(rc_x - box_pad, rc_y - box_pad,
+                                  rc_w + box_pad * 2, rc_h + box_pad * 2)
+            pygame.draw.rect(self.screen, (240, 240, 240), bg_rect, border_radius=6)
+            pygame.draw.rect(self.screen, TEXT_GREEN, bg_rect, width=2, border_radius=6)
+            card_surf = self._get_card_surface_sized(r, s, rc_w, rc_h)
+            self.screen.blit(card_surf, (rc_x, rc_y))
+            # "REC" label below.
+            rec_lbl = self.fonts["small"].render("REC", True, TEXT_GREEN)
+            self.screen.blit(rec_lbl, rec_lbl.get_rect(centerx=rc_x + rc_w // 2, y=bg_rect.bottom + 2))
 
         # ========== SHOTA SCOREBOARD TABLE (always visible) ==========
         self.screen.blit(header_font.render("Shota Scores", True, TEXT_WHITE),

@@ -168,12 +168,18 @@ class WistApp:
     def _start_playing(self):
         """Start the game from menu (5-shota game mode)."""
         self.state = "playing"
+        # Reset draw if switching modes.
+        if self.game_screen._shota_only_mode:
+            self.game_screen._qabool_draw_done = False
         self.game_screen._shota_only_mode = False
         self.game_screen.start_game()
 
     def _start_playing_shotas(self):
         """Start endless shota mode — play shota after shota until exit."""
         self.state = "playing"
+        # Reset draw if switching modes.
+        if not self.game_screen._shota_only_mode:
+            self.game_screen._qabool_draw_done = False
         self.game_screen._shota_only_mode = True
         self.game_screen.start_game()
 
