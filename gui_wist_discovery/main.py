@@ -82,7 +82,7 @@ class WistDiscoveryWatcher:
         self.shota_num = 0
         self.game_num = 0
         self.team_scores = [0, 0]
-        self.game_shota_scores = [None, None, None, None, None]  # 5 slots, None = not played yet.
+        self.game_shota_scores = []  # Only actually played shotas get recorded.
         self.trick_num = 0
         self.current_trick_cards = []
         self.last_winner = -1
@@ -123,7 +123,7 @@ class WistDiscoveryWatcher:
         self.game_num += 1
         self.shota_num = 0
         self.team_scores = [0, 0]
-        self.game_shota_scores = [None, None, None, None, None]  # 5 slots, None = not played yet.
+        self.game_shota_scores = []  # Only actually played shotas get recorded.
         self._log(f"{'='*30} Game #{self.game_num} {'='*30}")
         self._start_new_shota()
 
@@ -144,10 +144,9 @@ class WistDiscoveryWatcher:
 
         if self._round.has_card_based_dak():
             self.discovery.reset_episode()
-            self._log("  Dak (re-deal)")
-            self.game_shota_scores[self.shota_num - 1] = {0: 0, 1: 0}
-            self.state = "scoring"
-            self.last_action_time = pygame.time.get_ticks()
+            self._log("  Dak (re-deal) — skipping")
+            # Skip immediately to next shota — no score, no pause.
+            self._start_new_shota()
             return
 
         # Bidding.
@@ -157,20 +156,16 @@ class WistDiscoveryWatcher:
             self._tasmiya_result = tasmiya.run(
                 players=self._players, agents=self._agents, sahib_al_qabool_id=qabool_id)
         except (ValueError, Exception):
-            # Invalid bid happened — skip this shota.
+            # Invalid bid happened — skip immediately.
             self.discovery.reset_episode()
             self._log("  Bidding error — skipping")
-            self.game_shota_scores[self.shota_num - 1] = {0: 0, 1: 0}
-            self.state = "scoring"
-            self.last_action_time = pygame.time.get_ticks()
+            self._start_new_shota()
             return
 
         if self._tasmiya_result.is_dak:
             self.discovery.reset_episode()
-            self._log("  Pass Dak")
-            self.game_shota_scores[self.shota_num - 1] = {0: 0, 1: 0}
-            self.state = "scoring"
-            self.last_action_time = pygame.time.get_ticks()
+            self._log("  Pass Dak — skipping")
+            self._start_new_shota()
             return
 
         self._log(f"  Bid: {self._tasmiya_result.winning_bid_value} by P{self._tasmiya_result.winning_bidder_id}")
@@ -240,7 +235,7 @@ class WistDiscoveryWatcher:
 
         self.team_scores[0] += scores.get(0, 0)
         self.team_scores[1] += scores.get(1, 0)
-        self.game_shota_scores[self.shota_num - 1] = {0: scores.get(0, 0), 1: scores.get(1, 0)}
+        self.game_shota_scores.append({0: scores.get(0, 0), 1: scores.get(1, 0)})
         self.discovery.reward(float(scores.get(0, 0)))
         self.shotas_played += 1
 
@@ -910,7 +905,7 @@ class WistDiscoveryWatcher:
 
             for s in range(5):
                 sx = header_x + col_name_w + s * col_shota_w
-                if self.game_shota_scores[s] is not None:
+                if s < len(self.game_shota_scores):
                     val = self.game_shota_scores[s].get(tid, 0)
                     sc_color = (100, 255, 100) if val > 0 else (255, 100, 100) if val < 0 else TEXT_LIGHT
                     self.screen.blit(self.fonts["small"].render(f"{val:+d}", True, sc_color), (sx, y))
