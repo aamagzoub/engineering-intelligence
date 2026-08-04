@@ -6,6 +6,7 @@ Usage:
     python run_wist.py lab                      (Tkinter AI laboratory)
     python run_wist.py train                    (CLI curriculum training)
     python run_wist.py train --episodes 5000    (custom episode count)
+    python run_wist.py discover                 (Watch AI learn Wist from scratch)
 """
 
 import sys
@@ -17,6 +18,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 def play():
     """Launch the PyGame interactive game."""
     from gui_wist.main import main
+    main()
+
+
+def discover():
+    """Launch the Discovery watcher — AI learns Wist from scratch."""
+    from gui_wist_discovery.main import main
     main()
 
 
@@ -53,8 +60,8 @@ def train(episodes: int = 15000):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Sudanese Wist")
-    parser.add_argument("command", choices=["play", "lab", "train"],
-                        help="play=PyGame, lab=Tkinter, train=CLI training")
+    parser.add_argument("command", choices=["play", "lab", "train", "discover"],
+                        help="play=PyGame, lab=Tkinter, train=CLI, discover=Watch AI learn")
     parser.add_argument("--episodes", type=int, default=15000)
     args = parser.parse_args()
 
@@ -64,3 +71,5 @@ if __name__ == "__main__":
         lab()
     elif args.command == "train":
         train(args.episodes)
+    elif args.command == "discover":
+        discover()

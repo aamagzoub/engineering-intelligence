@@ -1,7 +1,7 @@
 """Card rendering for Hearts PyGame GUI."""
 
 import pygame
-from gui_hearts.constants import CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS, CARD_WHITE, RED_SUIT, BLACK_SUIT
+from gui_hearts_discovery.constants import CARD_WIDTH, CARD_HEIGHT, CARD_RADIUS, CARD_WHITE, RED_SUIT, BLACK_SUIT
 
 
 def create_card_surface(rank: str, suit: str, width: int = CARD_WIDTH,

@@ -2,9 +2,9 @@
 
 # Window.
 SCREEN_WIDTH = 1200
-SCREEN_HEIGHT = 750
+SCREEN_HEIGHT = 800
 FPS = 60
-TITLE = "Sudanese Hearts — AI Discovery Lab"
+TITLE = "Sudanese Hearts -- AI Discovery Lab"
 
 # Colors.
 BG_DARK = (20, 15, 30)
@@ -28,11 +28,15 @@ BUTTON_BLUE = (30, 136, 229)
 BUTTON_RED = (180, 50, 50)
 
 # Card dimensions.
-CARD_WIDTH = 60
-CARD_HEIGHT = 85
-CARD_MINI_W = 42
-CARD_MINI_H = 60
+CARD_WIDTH = 56
+CARD_HEIGHT = 80
+CARD_MINI_W = 38
+CARD_MINI_H = 54
 CARD_RADIUS = 6
+
+# Small cards for pass/collected display.
+CARD_SMALL_W = 32
+CARD_SMALL_H = 45
 
 # Layout.
 PLAYER_NAMES = {0: "Discovery AI", 1: "Random-1", 2: "Random-2", 3: "Random-3"}
@@ -44,5 +48,5 @@ PLAYER_COLORS = {
 }
 
 # Animation speeds.
-TRICK_DELAY_MS = 800
+TRICK_DELAY_MS = 1500
 SHOTA_DELAY_MS = 2000
