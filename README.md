@@ -42,33 +42,87 @@ The Wist agent uses **Double Q-Learning with TD(λ) eligibility traces**:
 
 ### Game Rules
 
-**Setup:** 52 cards dealt equally (13 each). One player holds Al-Qabool (right of acceptance) and rotates clockwise each Shota.
+#### The Teams
+4 players sit around a table. The two players sitting opposite each other form one team.
 
-**Bidding (Al-Tasmiya):**
-- Players bid a number representing tricks they commit to win
-- Bid must equal at least (cards in chosen trump suit + 3)
-- Opening bid cannot exceed 11; subsequent bids up to 13
-- Qabool can match the highest bid without going higher
-- A bid of 13 ends bidding immediately
+#### Card Ranks
+Cards rank from lowest to highest: 2, 3, 4, 5, 6, 7, 8, 9, 10, Jack, Queen, King, Ace.
 
-**Trump (Al-Ato):**
-- Never declared aloud
-- Revealed by the winning bidder's first card — that suit becomes trump for the Shota
+#### Direction of Play
+Everything — dealing, Al-Tasmiya, and playing — moves clockwise.
 
-**Play:**
-- Must follow suit if able
-- If void in led suit, may play any card (including trump — called "whipping")
-- Highest trump wins; if no trump played, highest of led suit wins
-- Winner of each trick leads the next
+#### Sahib Al-Qabool (The One with the Right of Acceptance)
+One player each Shota holds Al-Qabool. He has the final say on Al-Tasmiya. First Shota: determined by card draw. Every Shota after: passes to the next player clockwise.
 
-**Dak (Re-deal):**
-- Card-based: no picture cards (A,K,Q,J) or 8+ cards in one suit → mandatory re-deal
-- Pass-based: all players pass → Qabool decides (limited to 2 per game)
+#### Dealing
+52 cards dealt clockwise, one at a time, until each player holds 13 cards.
 
-**Scoring:**
-- Playing team meets bid → scores tricks won. Defending team: 0.
-- Playing team fails bid → loses bid value. Defending team: scores their tricks.
-- **Seek:** Win all 13 tricks → instant game win, overrides everything.
+#### Dak (Re-deal)
+
+**Card-based Dak** — declared before bidding if a player holds:
+- No picture cards at all (A, K, Q, J) — must show entire hand as proof
+- 8 or more cards of one suit — must show those cards as proof
+
+When card-based Dak is declared, Al-Qabool stays with the same player and cards are re-dealt.
+
+**Pass-based Dak** — triggered when all players pass during bidding:
+- First Shota: if first two pass and third declares Dak → automatic. If all three pass → Qabool decides.
+- All other Shotas: all three must pass, then Qabool decides.
+- Pass-based Dak can only happen twice per game. On the third, Qabool must play.
+- Al-Qabool moves to the next player clockwise.
+
+#### Al-Tasmiya (The Bid)
+
+Starts from the player to Qabool's left, moves clockwise. Each player bids a number only — no suit is named.
+
+- Each bid must be higher than the previous
+- Bid value must be at least (cards in chosen trump suit + 3)
+- Opening bid cannot exceed 11. Subsequent bids up to 13.
+- Trump suit must have 7 or fewer cards
+- If any player bids 13, bidding stops immediately
+- Qabool can match the highest bid (does not have to go higher)
+- Both bid restrictions are lifted for Qabool
+
+| Cards in trump suit | Standard bid | Qabool advantage |
+|---|---|---|
+| 4 | 7 (Marboota) | 7 |
+| 5 | 8 | 7 or 8 |
+| 6 | 9 | 8 or 9 |
+| 7 | 10 | 9 or 10 |
+| 8+ | Must declare Dak | — |
+
+#### Al-Ato (The Trump Suit)
+
+The trump suit is never declared aloud. It is revealed only when the winning bidder plays their first card — that card's suit becomes trump for the entire Shota.
+
+#### Scoring
+
+- Playing team meets or exceeds bid → scores actual tricks won. Defending team: 0.
+- Playing team falls short → loses points equal to bid. Defending team: scores their actual tricks.
+
+| Bid | Tricks Won | Playing Team | Defending Team | Who Won |
+|---|---|---|---|---|
+| 8 | 10 | +10 | 0 | Playing |
+| 8 | 8 | +8 | 0 | Playing |
+| 8 | 6 | -8 | +7 | Defending |
+| 8 | 3 | -8 | +10 | Defending |
+
+#### Winning
+First team to reach 25 points wins. A game is 5 Shotas.
+
+#### Seek
+If a team wins all 13 tricks in a Shota, the game ends immediately and that team wins — regardless of score or Shotas played.
+
+### Legal Moves (Card Play Rules)
+
+These rules determine which cards a player is allowed to play:
+
+1. **First card of a Shota (Shooter leads):** Must play a card from the trump suit. This is how trump is revealed.
+2. **Following suit:** If a suit has been led, you must play a card of that suit if you have one.
+3. **Void in led suit:** If you have no cards of the led suit, you may play any card — including trump (called "whipping").
+4. **Trump wins:** The highest trump card played always wins the trick.
+5. **No trump played:** If no trump was played, the highest card of the led suit wins.
+6. **Winner leads next:** The winner of each trick leads the next one.
 
 ---
 
@@ -95,24 +149,51 @@ The Hearts agent uses a **Discovery Agent** with Q-Learning:
 - State abstraction over hand composition, trick position, hearts broken status, and queen tracking
 - Learns passing strategy (which 3 cards to give away)
 - Learns trick avoidance (dodge penalties) and shooting detection
+- Discovers all game mechanics purely from reward signal — no rules encoded
 
 ### Game Rules
 
-**Setup:** 52 cards dealt equally. Before play, each player passes 3 cards to the next player.
+#### Players
+4 players, each playing individually (no teams). Players compete for the highest score.
 
-**Play:**
-- Standard trick-taking: must follow suit, highest of led suit wins
-- No trump suit — all suits are equal
-- Hearts cannot be led until "broken" (a heart has been discarded on a previous trick)
+#### Card Ranks
+Same as Wist: 2, 3, 4, 5, 6, 7, 8, 9, 10, Jack, Queen, King, Ace (low to high).
 
-**Scoring (per Shota):**
-- Each heart collected: -1 point
-- Queen of Spades collected: -7 points
-- **Full Gallon:** One player takes zero tricks → +20 bonus
-- **Half Gallon:** Two players take zero tricks → +10 bonus each
-- **All Tricks:** One player wins all 13 → +18 bonus (shoot the moon equivalent)
+#### Dealing
+52 cards dealt equally — 13 per player. Dealer rotates clockwise each Shota.
 
-**Winning:** After 5 Shotas, highest cumulative score wins.
+#### Passing Phase
+Before play begins, each player selects 3 cards and passes them to the next player clockwise. This is strategic: dump dangerous cards or set up avoidance.
+
+#### Play
+- The player to the dealer's left leads the first trick
+- Standard trick-taking: must follow suit if able
+- If void in led suit, may play any card
+- **No trump suit** — all suits are equal
+- Highest card of the led suit wins the trick
+- **Hearts cannot be led** until "broken" (a heart has been discarded on a previous trick)
+- Winner of each trick leads the next
+
+#### Penalty Cards
+- Each **heart** (♥) collected: **-1 point**
+- **Queen of Spades** (Q♠) collected: **-7 points**
+- All other cards: 0 points
+
+#### Special Scoring Bonuses
+- **Full Gallon:** One player takes zero tricks in a Shota → **+20 points**
+- **Half Gallon:** Exactly two players take zero tricks → **+10 points each**
+- **All Tricks:** One player wins all 13 tricks → **+18 points** (shoot the moon)
+
+#### Winning
+After 5 Shotas, the player with the highest cumulative score wins.
+
+### Legal Moves (Card Play Rules)
+
+1. **Following suit:** If a suit has been led, you must play a card of that suit if you have one.
+2. **Void in led suit:** If you have no cards of the led suit, you may play any card.
+3. **Hearts breaking:** Hearts cannot be led until at least one heart has been played (discarded when void).
+4. **No trump:** There is no trump suit. The highest card of the led suit always wins.
+5. **Winner leads next:** The winner of each trick leads the next one.
 
 ---
 
@@ -148,6 +229,35 @@ The card game agents prove that our architectures can:
 - Cooperate with teammates (Wist) or compete individually (Hearts)
 
 These are exactly the capabilities needed for intelligent telecom systems.
+
+---
+
+## What Each Agent Is Told
+
+This is the key insight of the project. The three environments give their agents vastly different amounts of prior knowledge:
+
+| What the agent is TOLD | Wist | Hearts | Telecom (goal) |
+|---|:---:|:---:|:---:|
+| Environment exists (there's a world to interact with) | ✓ | ✓ | ✓ |
+| Legal moves (what actions are allowed right now) | ✓ | ✓ | ✓ |
+| Outcome signal (a score/reward after actions) | ✓ | ✓ | ✓ |
+| Rules of the game (how tricks work, what wins) | ✓ | ✗ | ✗ |
+| What the goal is (win tricks / avoid hearts) | ✓ | ✗ | ✗ |
+| Scoring formula (how points are calculated) | ✓ | ✗ | ✗ |
+| Which cards/items are special (trump, Queen♠) | ✓ | ✗ | ✗ |
+| Strategy heuristics (lead trump, avoid high cards) | ✓ | ✗ | ✗ |
+| Opponent behavior (what others might do) | ✓ | ✗ | ✗ |
+| Game phases (bidding vs. playing) | ✓ | ✗ | ✗ |
+| Team structure (who's your partner) | ✓ | ✗ | ✗ |
+| Per-action feedback (this trick was good/bad) | ✓ | ✗ | ✗ |
+| Domain vocabulary (trump, seek, shota) | ✓ | ✗ | ✗ |
+
+**Summary:**
+- **Wist agent** is told **13/13** things — it optimizes within fully known rules
+- **Hearts agent** is told **3/13** things — it must discover the other 10 on its own
+- **Telecom agent** will be told **3/13** things — same as Hearts
+
+The three things that carry everywhere: there's an environment, here are your legal moves, here's how you did. Everything else — the agent figures out on its own.
 
 ---
 
