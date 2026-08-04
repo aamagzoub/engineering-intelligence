@@ -443,9 +443,9 @@ class HeartsWatcher:
         self.state = "game_over"
         self.last_action_time = pygame.time.get_ticks()
 
-        # Kick off background training between games (500 silent games).
+        # Kick off background training between games (2000 silent games).
         if not getattr(self, '_bg_training_active', False):
-            self._run_background_training(500)
+            self._run_background_training(2000)
 
     def _reset_brain(self):
         """Reset the discovery agent's Q-tables — start learning from scratch."""
@@ -1254,9 +1254,9 @@ class HeartsWatcher:
                     self._trigger_milestone("pass_queen",
                         "QUEEN DUMP: Passed the Queen of Spades away.")
 
-            # Epsilon decay — explore less over time.
-            if agent.episodes_trained % 100 == 0 and agent.epsilon > 0.05:
-                agent.epsilon *= 0.995
+            # Epsilon decay — explore less over time (faster decay for stronger play).
+            if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
+                agent.epsilon *= 0.98
 
             done += 1
             self._bg_training_done = done

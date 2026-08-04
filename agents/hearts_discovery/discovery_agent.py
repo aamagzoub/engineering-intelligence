@@ -46,9 +46,9 @@ class DiscoveryAgent(Agent):
 
     def __init__(
         self,
-        epsilon: float = 0.5,
-        alpha: float = 0.1,
-        gamma: float = 0.95,
+        epsilon: float = 0.4,
+        alpha: float = 0.2,
+        gamma: float = 0.97,
         training: bool = True,
     ) -> None:
         # Q-tables.
@@ -202,11 +202,14 @@ class DiscoveryAgent(Agent):
         if not self.training:
             return
 
+        # Adaptive learning rate — learn fast early, stabilize later.
+        effective_alpha = max(0.05, self.alpha * (1.0 / (1.0 + self.episodes_trained / 1000)))
+
         # Update play Q-table — later actions get more credit.
         reward = score
         for state, action in reversed(self._play_episode):
             current_q = self.play_q[state][action]
-            self.play_q[state][action] += self.alpha * (reward - current_q)
+            self.play_q[state][action] += effective_alpha * (reward - current_q)
             reward *= self.gamma  # Discount earlier actions.
             self.total_updates += 1
 
@@ -214,7 +217,7 @@ class DiscoveryAgent(Agent):
         pass_reward = score * (self.gamma ** len(self._play_episode))
         for state, action in reversed(self._pass_episode):
             current_q = self.pass_q[state][action]
-            self.pass_q[state][action] += self.alpha * (pass_reward - current_q)
+            self.pass_q[state][action] += effective_alpha * (pass_reward - current_q)
             self.total_updates += 1
 
         # Clear episode memory.

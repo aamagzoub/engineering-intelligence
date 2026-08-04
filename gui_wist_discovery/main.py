@@ -271,14 +271,14 @@ class WistDiscoveryWatcher:
             threading.Thread(target=self._bg_train, daemon=True).start()
 
     def _bg_train(self):
-        """500 silent self-play shotas in background."""
+        """2000 silent self-play shotas in background."""
         agent = self.discovery
         opp = WistDiscoveryAgent(training=False)
         opp.play_q = agent.play_q
         opp.bid_q = agent.bid_q
         opp.epsilon = agent.epsilon
 
-        for _ in range(500):
+        for _ in range(2000):
             players = create_standard_players()
             agents = [agent, opp, agent, opp]
             r = Round(players); r.deal()
@@ -316,8 +316,9 @@ class WistDiscoveryWatcher:
                 playing_team_tricks=tt[res.playing_team_id],
                 defending_team_tricks=tt[1 - res.playing_team_id])
             agent.reward(float(scores[0]))
-            if agent.episodes_trained % 100 == 0 and agent.epsilon > 0.05:
-                agent.epsilon *= 0.995
+            # Faster epsilon decay for stronger exploitation.
+            if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
+                agent.epsilon *= 0.98
         self._bg_active = False
 
     def _check_milestones(self, team_tricks, bid, playing_team, bid_met, scores):

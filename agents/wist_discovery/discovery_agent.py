@@ -123,8 +123,8 @@ class WistDiscoveryAgent(Agent):
     No domain knowledge. No hard-coded strategy.
     """
 
-    def __init__(self, epsilon: float = 0.5, alpha: float = 0.1,
-                 gamma: float = 0.95, training: bool = True) -> None:
+    def __init__(self, epsilon: float = 0.4, alpha: float = 0.2,
+                 gamma: float = 0.97, training: bool = True) -> None:
         self.play_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.bid_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
@@ -176,7 +176,6 @@ class WistDiscoveryAgent(Agent):
                 bid_val = random.randint(min_bid, min(13, min_bid + 2))
                 action = BidAction(player_id=obs.player_id, value=bid_val)
         else:
-            action = self._best_bid(obs, min_bid)
             action = self._best_bid(obs, min_bid)
 
         if self.training:
@@ -247,11 +246,14 @@ class WistDiscoveryAgent(Agent):
         if not self.training:
             return
 
+        # Adaptive learning rate — learn fast early, stabilize later.
+        effective_alpha = max(0.05, self.alpha * (1.0 / (1.0 + self.episodes_trained / 1000)))
+
         # Update play Q-table (later actions get more credit).
         reward = score
         for state, action in reversed(self._play_episode):
             current_q = self.play_q[state][action]
-            self.play_q[state][action] += self.alpha * (reward - current_q)
+            self.play_q[state][action] += effective_alpha * (reward - current_q)
             reward *= self.gamma
             self.total_updates += 1
 
@@ -259,7 +261,7 @@ class WistDiscoveryAgent(Agent):
         bid_reward = score * (self.gamma ** len(self._play_episode))
         for state, action in reversed(self._bid_episode):
             current_q = self.bid_q[state][action]
-            self.bid_q[state][action] += self.alpha * (bid_reward - current_q)
+            self.bid_q[state][action] += effective_alpha * (bid_reward - current_q)
             self.total_updates += 1
 
         self._play_episode.clear()
