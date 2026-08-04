@@ -1145,15 +1145,11 @@ class HeartsWatcher:
         """Add live stats to the description based on milestone type."""
         suffix_parts = []
 
-        # Add context based on milestone category.
-        if stats["games_played"] > 0:
-            suffix_parts.append(f"After {stats['episodes']} shotas learned")
+        if stats["episodes"] > 0:
+            suffix_parts.append(f"Shota #{stats['episodes']}")
 
         if stats["win_rate"] > 0:
             suffix_parts.append(f"win rate: {stats['win_rate']:.0f}%")
-
-        if stats["q_states"] > 100:
-            suffix_parts.append(f"{stats['q_states']:,} states explored")
 
         suffix = f" [{', '.join(suffix_parts)}]" if suffix_parts else ""
         return f"{base_desc}{suffix}"

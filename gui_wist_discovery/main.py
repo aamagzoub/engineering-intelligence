@@ -590,16 +590,13 @@ class WistDiscoveryWatcher:
         suffix_parts = []
 
         if stats["episodes"] > 0:
-            suffix_parts.append(f"After {stats['episodes']} shotas learned")
+            suffix_parts.append(f"Shota #{stats['episodes']}")
 
         if stats["win_rate"] > 0:
             suffix_parts.append(f"win rate: {stats['win_rate']:.0f}%")
 
         if stats["bid_accuracy"] > 0 and stats["shotas_played"] >= 3:
             suffix_parts.append(f"bid accuracy: {stats['bid_accuracy']:.0f}%")
-
-        if stats["q_states"] > 100:
-            suffix_parts.append(f"{stats['q_states']:,} states explored")
 
         suffix = f" [{', '.join(suffix_parts)}]" if suffix_parts else ""
         return f"{base_desc}{suffix}"
