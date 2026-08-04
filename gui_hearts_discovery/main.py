@@ -1894,6 +1894,10 @@ class HeartsWatcher:
                 num = start_num + i
                 is_latest = (disc_scroll == 0 and i == len(visible) - 1)
 
+                # Don't render title if there's no room for at least one desc line too.
+                if y + 18 + 15 > disc_rect.bottom - 15:
+                    break
+
                 title_color = (100, 255, 100) if is_latest else (255, 255, 255)
                 title_line = f"{num}. {title_text}"
                 title_surf = self.fonts["large"].render(title_line, True, title_color)

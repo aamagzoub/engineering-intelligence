@@ -929,6 +929,11 @@ class WistDiscoveryWatcher:
             for i, (title_text, desc_text) in enumerate(visible):
                 num = start_num + i
                 is_latest = (disc_scroll == 0 and i == len(visible) - 1)
+
+                # Don't render title if there's no room for at least one desc line too.
+                if y + 18 + 15 > disc_rect.bottom - 15:
+                    break
+
                 title_color = (100, 255, 100) if is_latest else (255, 255, 255)
                 self.screen.blit(self.fonts["large"].render(
                     f"{num}. {title_text}", True, title_color), (px + 10, y))
