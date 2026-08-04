@@ -1830,20 +1830,52 @@ class HeartsWatcher:
 
         title = self.fonts["large"].render("Scoreboard", True, TEXT_WHITE)
         self.screen.blit(title, (panel_x + 10, y))
-        y += 25
+        y += 22
 
+        # Table header: Player | S1 | S2 | S3 | S4 | S5 | Total
+        col_name_w = 70
+        col_shota_w = 30
+        col_total_w = 38
+        header_x = panel_x + 10
+
+        # Draw header row.
+        self.screen.blit(self.fonts["small"].render("Player", True, TEXT_DIM), (header_x, y))
+        for s in range(5):
+            sx = header_x + col_name_w + s * col_shota_w
+            self.screen.blit(self.fonts["small"].render(f"S{s+1}", True, TEXT_DIM), (sx, y))
+        total_x = header_x + col_name_w + 5 * col_shota_w
+        self.screen.blit(self.fonts["small"].render("Total", True, TEXT_DIM), (total_x, y))
+        y += 16
+
+        # Draw a thin separator line.
+        pygame.draw.line(self.screen, (80, 80, 100),
+                         (panel_x + 10, y), (panel_x + panel_w - 10, y))
+        y += 4
+
+        # Player rows sorted by total score.
         sorted_pids = sorted(range(4), key=lambda p: self.total_scores[p], reverse=True)
-        for rank, pid in enumerate(sorted_pids):
+        for pid in sorted_pids:
             color = PLAYER_COLORS[pid]
-            name = f"{PLAYER_NAMES[pid]}"
-            score = f"{self.total_scores[pid]:+d}"
-            name_surf = self.fonts["medium"].render(name, True, color)
-            score_surf = self.fonts["medium"].render(score, True, TEXT_GOLD)
-            self.screen.blit(name_surf, (panel_x + 15, y))
-            self.screen.blit(score_surf, (panel_x + 180, y))
-            y += 20
+            name = PLAYER_NAMES[pid][:7]  # Truncate long names.
+            self.screen.blit(self.fonts["small"].render(name, True, color), (header_x, y))
 
-        y += 8
+            # Per-shota scores.
+            for s in range(5):
+                sx = header_x + col_name_w + s * col_shota_w
+                if s < len(self.shota_scores):
+                    val = self.shota_scores[s].get(pid, 0)
+                    sc_color = (100, 255, 100) if val > 0 else (255, 100, 100) if val < 0 else TEXT_LIGHT
+                    self.screen.blit(self.fonts["small"].render(f"{val:+d}", True, sc_color), (sx, y))
+                else:
+                    self.screen.blit(self.fonts["small"].render("—", True, TEXT_DIM), (sx + 4, y))
+
+            # Total.
+            total_val = self.total_scores[pid]
+            tc = (100, 255, 100) if total_val > 0 else (255, 100, 100) if total_val < 0 else TEXT_LIGHT
+            self.screen.blit(self.fonts["small"].render(f"{total_val:+d}", True, tc), (total_x, y))
+            y += 18
+
+        y += 6
         # Learning progress bar inside scoreboard box.
         self._render_progress_bar(panel_x, y, 260)
 

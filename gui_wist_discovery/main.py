@@ -82,6 +82,7 @@ class WistDiscoveryWatcher:
         self.shota_num = 0
         self.game_num = 0
         self.team_scores = [0, 0]
+        self.game_shota_scores = []  # Per-shota scores for current game.
         self.trick_num = 0
         self.current_trick_cards = []
         self.last_winner = -1
@@ -122,6 +123,7 @@ class WistDiscoveryWatcher:
         self.game_num += 1
         self.shota_num = 0
         self.team_scores = [0, 0]
+        self.game_shota_scores = []  # Per-shota scores for current game.
         self._log(f"{'='*30} Game #{self.game_num} {'='*30}")
         self._start_new_shota()
 
@@ -235,6 +237,7 @@ class WistDiscoveryWatcher:
 
         self.team_scores[0] += scores.get(0, 0)
         self.team_scores[1] += scores.get(1, 0)
+        self.game_shota_scores.append({0: scores.get(0, 0), 1: scores.get(1, 0)})
         self.discovery.reward(float(scores.get(0, 0)))
         self.shotas_played += 1
 
@@ -874,15 +877,53 @@ class WistDiscoveryWatcher:
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
 
         y = score_rect.top + 10
-        self.screen.blit(self.fonts["large"].render("Stats", True, TEXT_WHITE), (px + 10, y))
+        self.screen.blit(self.fonts["large"].render("Scoreboard", True, TEXT_WHITE), (px + 10, y))
         y += 22
+
+        # Table header: Team | S1 | S2 | S3 | S4 | S5 | Total
+        col_name_w = 55
+        col_shota_w = 30
+        col_total_w = 38
+        header_x = px + 10
+
+        self.screen.blit(self.fonts["small"].render("Team", True, TEXT_DIM), (header_x, y))
+        for s in range(5):
+            sx = header_x + col_name_w + s * col_shota_w
+            self.screen.blit(self.fonts["small"].render(f"S{s+1}", True, TEXT_DIM), (sx, y))
+        total_x = header_x + col_name_w + 5 * col_shota_w
+        self.screen.blit(self.fonts["small"].render("Total", True, TEXT_DIM), (total_x, y))
+        y += 16
+
+        # Separator line.
+        pygame.draw.line(self.screen, (80, 80, 100),
+                         (px + 10, y), (px + panel_w - 10, y))
+        y += 4
+
+        # Team rows.
+        team_names = ["Team 1", "Team 2"]
+        team_colors = [(100, 200, 255), (255, 160, 100)]
+        for tid in range(2):
+            self.screen.blit(self.fonts["small"].render(team_names[tid], True, team_colors[tid]), (header_x, y))
+
+            for s in range(5):
+                sx = header_x + col_name_w + s * col_shota_w
+                if s < len(self.game_shota_scores):
+                    val = self.game_shota_scores[s].get(tid, 0)
+                    sc_color = (100, 255, 100) if val > 0 else (255, 100, 100) if val < 0 else TEXT_LIGHT
+                    self.screen.blit(self.fonts["small"].render(f"{val:+d}", True, sc_color), (sx, y))
+                else:
+                    self.screen.blit(self.fonts["small"].render("—", True, TEXT_DIM), (sx + 4, y))
+
+            total_val = self.team_scores[tid]
+            tc = (100, 255, 100) if total_val > 0 else (255, 100, 100) if total_val < 0 else TEXT_LIGHT
+            self.screen.blit(self.fonts["small"].render(f"{total_val:+d}", True, tc), (total_x, y))
+            y += 18
+
+        y += 8
+        # Stats below the table.
         stats = [
-            f"Shotas learned: {self.discovery.episodes_trained:,}",
-            f"Seeks: {self.seeks_achieved}",
-            f"Bids met: {self.bids_met}/{self.bids_met + self.bids_failed}",
-            f"Score: T1={self.team_scores[0]:+d}  T2={self.team_scores[1]:+d}",
-            f"Q-table: {len(self.discovery.play_q) + len(self.discovery.bid_q)} states",
-            f"Epsilon: {self.discovery.epsilon:.3f}",
+            f"Shotas learned: {self.discovery.episodes_trained:,}  |  Seeks: {self.seeks_achieved}",
+            f"Bids met: {self.bids_met}/{self.bids_met + self.bids_failed}  |  ε: {self.discovery.epsilon:.3f}",
         ]
         for s in stats:
             self.screen.blit(self.fonts["small"].render(s, True, TEXT_LIGHT), (px + 10, y))
