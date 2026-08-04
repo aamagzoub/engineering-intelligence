@@ -82,7 +82,7 @@ class WistDiscoveryWatcher:
         self.shota_num = 0
         self.game_num = 0
         self.team_scores = [0, 0]
-        self.game_shota_scores = []  # Per-shota scores for current game.
+        self.game_shota_scores = [None, None, None, None, None]  # 5 slots, None = not played yet.
         self.trick_num = 0
         self.current_trick_cards = []
         self.last_winner = -1
@@ -123,7 +123,7 @@ class WistDiscoveryWatcher:
         self.game_num += 1
         self.shota_num = 0
         self.team_scores = [0, 0]
-        self.game_shota_scores = []  # Per-shota scores for current game.
+        self.game_shota_scores = [None, None, None, None, None]  # 5 slots, None = not played yet.
         self._log(f"{'='*30} Game #{self.game_num} {'='*30}")
         self._start_new_shota()
 
@@ -145,7 +145,7 @@ class WistDiscoveryWatcher:
         if self._round.has_card_based_dak():
             self.discovery.reset_episode()
             self._log("  Dak (re-deal)")
-            self.game_shota_scores.append({0: 0, 1: 0})
+            self.game_shota_scores[self.shota_num - 1] = {0: 0, 1: 0}
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
@@ -160,7 +160,7 @@ class WistDiscoveryWatcher:
             # Invalid bid happened — skip this shota.
             self.discovery.reset_episode()
             self._log("  Bidding error — skipping")
-            self.game_shota_scores.append({0: 0, 1: 0})
+            self.game_shota_scores[self.shota_num - 1] = {0: 0, 1: 0}
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
@@ -168,7 +168,7 @@ class WistDiscoveryWatcher:
         if self._tasmiya_result.is_dak:
             self.discovery.reset_episode()
             self._log("  Pass Dak")
-            self.game_shota_scores.append({0: 0, 1: 0})
+            self.game_shota_scores[self.shota_num - 1] = {0: 0, 1: 0}
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
@@ -240,7 +240,7 @@ class WistDiscoveryWatcher:
 
         self.team_scores[0] += scores.get(0, 0)
         self.team_scores[1] += scores.get(1, 0)
-        self.game_shota_scores.append({0: scores.get(0, 0), 1: scores.get(1, 0)})
+        self.game_shota_scores[self.shota_num - 1] = {0: scores.get(0, 0), 1: scores.get(1, 0)}
         self.discovery.reward(float(scores.get(0, 0)))
         self.shotas_played += 1
 
@@ -910,7 +910,7 @@ class WistDiscoveryWatcher:
 
             for s in range(5):
                 sx = header_x + col_name_w + s * col_shota_w
-                if s < len(self.game_shota_scores):
+                if self.game_shota_scores[s] is not None:
                     val = self.game_shota_scores[s].get(tid, 0)
                     sc_color = (100, 255, 100) if val > 0 else (255, 100, 100) if val < 0 else TEXT_LIGHT
                     self.screen.blit(self.fonts["small"].render(f"{val:+d}", True, sc_color), (sx, y))
