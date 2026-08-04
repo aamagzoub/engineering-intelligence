@@ -58,7 +58,7 @@ class WistDiscoveryWatcher:
         }
 
         # Mode.
-        self.mode = "follow"
+        self.mode = "watch"
         self.speed = 3.0
         self.paused = False
         self.state = "idle"
@@ -684,7 +684,7 @@ class WistDiscoveryWatcher:
                 if self._continue_btn_rect and self._continue_btn_rect.collidepoint(event.pos):
                     self._on_continue()
                 if self._mode_btn_rect and self._mode_btn_rect.collidepoint(event.pos):
-                    self.mode = "follow" if self.mode == "watch" else "watch"
+                    self.paused = not self.paused
                 if self._reset_btn_rect and self._reset_btn_rect.collidepoint(event.pos):
                     self._reset_brain()
             elif event.type == pygame.MOUSEWHEEL:
@@ -717,23 +717,15 @@ class WistDiscoveryWatcher:
             return
         now = pygame.time.get_ticks()
 
-        if self.mode == "watch":
-            delay = int(TRICK_DELAY_MS / max(self.speed, 2.0))
-            if now - self.last_action_time < delay:
-                return
-            if self.state == "playing":
-                self._play_one_trick()
-            elif self.state == "scoring":
-                self._start_new_shota()
-            elif self.state == "game_over":
-                self._start_new_game()
-        else:
-            # Follow mode — auto-advance tricks, wait for Continue on scoring.
-            delay = int(TRICK_DELAY_MS * 1.5 / self.speed)
-            if now - self.last_action_time < delay:
-                return
-            if self.state == "playing":
-                self._play_one_trick()
+        delay = int(TRICK_DELAY_MS / max(self.speed, 2.0))
+        if now - self.last_action_time < delay:
+            return
+        if self.state == "playing":
+            self._play_one_trick()
+        elif self.state == "scoring":
+            self._start_new_shota()
+        elif self.state == "game_over":
+            self._start_new_game()
 
     # === Rendering (identical layout to Hearts) ===
 
@@ -768,10 +760,8 @@ class WistDiscoveryWatcher:
         # Trick in center.
         self._render_trick(table)
 
-        # Continue button (follow mode only).
+        # Continue button — not used, always auto-play.
         self._continue_btn_rect = None
-        if self.mode == "follow" and self.state in ("scoring", "game_over"):
-            self._render_continue_btn(table)
 
         # Mode button (top-right of table).
         self._render_mode_btn(table)
@@ -840,21 +830,23 @@ class WistDiscoveryWatcher:
         self.screen.blit(t, t.get_rect(center=btn.center))
 
     def _render_mode_btn(self, table):
-        """Mode toggle — top-right, same as Hearts."""
+        """Stop/Resume toggle — top-right."""
         btn = pygame.Rect(table.right - 115, table.top + 10, 105, 28)
         self._mode_btn_rect = btn
         hover = btn.collidepoint(pygame.mouse.get_pos())
-        label = "Watch Auto" if self.mode == "follow" else "See & Check"
-        bg = (30, 100, 180) if not hover else (50, 130, 210)
-        if self.mode == "watch":
-            bg = (140, 80, 20) if not hover else (180, 110, 40)
+        if self.paused:
+            label = "Resume"
+            bg = (30, 140, 30) if not hover else (50, 180, 50)
+        else:
+            label = "Stop"
+            bg = (140, 40, 40) if not hover else (180, 60, 60)
         pygame.draw.rect(self.screen, bg, btn, border_radius=6)
         if hover:
             pygame.draw.rect(self.screen, (200, 200, 200), btn, width=1, border_radius=6)
         t = self.fonts["small"].render(label, True, (255, 255, 255))
         self.screen.blit(t, t.get_rect(center=btn.center))
-        mode_t = self.fonts["small"].render(
-            "Following" if self.mode == "follow" else "Watching", True, TEXT_GOLD)
+        status = "Stopped" if self.paused else "Running"
+        mode_t = self.fonts["small"].render(status, True, TEXT_GOLD)
         self.screen.blit(mode_t, mode_t.get_rect(centerx=btn.centerx, y=btn.bottom + 3))
 
     def _render_reset_btn(self, table):
