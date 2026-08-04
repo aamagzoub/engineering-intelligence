@@ -456,8 +456,9 @@ class HeartsWatcher:
         self._win_history.clear()
         self._initial_win_rate = None
         self._milestones_achieved.clear()
-        self._milestone_announcement = None
+        self._milestones_list.clear()
         self._milestone_queue.clear()
+        self._save_model()
         self._log(f"  BRAIN RESET -- Q-tables cleared. Starting from zero.")
 
     def _check_milestones(self, collected, tricks_won, scores):
