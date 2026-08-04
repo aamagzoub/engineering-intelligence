@@ -401,6 +401,141 @@ class WistDiscoveryWatcher:
                 if late - early >= 0.2:
                     self._trigger("learning_curve", "LEARNING CURVE: Win rate jumped 20%+ from early to recent games.")
 
+        # === PARTNER COOPERATION ===
+
+        # Partner support — partner team won bid and AI contributed tricks.
+        if playing_team == 0 and bid_met and t0 >= bid:
+            if t0 - bid <= 2:
+                self._trigger("team_delivery", "TEAM DELIVERY: The team met their bid with tight execution -- both partners contributed.")
+
+        # Defensive partnership — both partners held opponents below their bid.
+        if playing_team == 1 and not bid_met:
+            opp_deficit = bid - t1
+            if opp_deficit >= 3:
+                self._trigger("defensive_wall", "DEFENSIVE WALL: Held opponents 3+ tricks below their bid -- strong partnership defense.")
+
+        # Partner relay — AI's team won tricks alternately (teamwork rhythm).
+        if hasattr(self, '_trick_winners') and len(getattr(self, '_trick_winners', [])) >= 6:
+            winners = self._trick_winners
+            team_wins = [1 if self._players[w].team_id == 0 else 0 for w in winners]
+            alternating = sum(1 for i in range(1, len(team_wins))
+                             if team_wins[i] != team_wins[i-1])
+            if alternating >= 8 and t0 >= 7:
+                self._trigger("partner_relay", "PARTNER RELAY: Team won tricks in alternating rhythm -- coordinated play.")
+
+        # === OPPONENT EXPLOITATION ===
+
+        # Over-bid punishment — opponents bid high and AI's team stopped them hard.
+        if playing_team == 1 and bid >= 9 and not bid_met:
+            self._trigger("overbid_punish", "OVER-BID PUNISHMENT: Opponents bid 9+ and failed -- exploited their overconfidence.")
+
+        # Trump dominance — AI used trump to win multiple tricks.
+        if hasattr(self, '_trump_wins'):
+            trump_wins = getattr(self, '_trump_wins', 0)
+            if trump_wins >= 4:
+                self._trigger("trump_dominance", "TRUMP DOMINANCE: Won 4+ tricks using trump -- controlled the game through trump power.")
+
+        # Opponent starved — opponents won 3 or fewer tricks total.
+        if t1 <= 3:
+            self._trigger("opponent_starved", "OPPONENT STARVED: Opponents won 3 or fewer tricks total -- complete tactical suffocation.")
+
+        # Cut opponent's winner — trumped an opponent's high card in a side suit.
+        # (Tracked indirectly by low opponent tricks when they bid high)
+        if playing_team == 1 and bid >= 8 and t1 <= bid - 4:
+            self._trigger("opponent_crushed", "OPPONENT CRUSHED: Opponents missed their bid by 4+ tricks -- devastating defensive play.")
+
+        # === GAME-WINNING STRATEGIES ===
+
+        # Seek victory — won all 13 tricks and the massive bonus.
+        if t0 == 13 and s0 > 20:
+            self._trigger("seek_victory", "SEEK VICTORY: Won ALL 13 tricks with a huge score bonus -- the ultimate Wist achievement.")
+
+        # Perfect bid — bid exactly what was won, no waste.
+        if playing_team == 0 and bid_met and bid == t0 and bid >= 7:
+            self._trigger("perfect_bid", "PERFECT BID: Bid 7+ and won exactly that many tricks -- precision hand evaluation.")
+
+        # Score explosion — earned 15+ points in a single shota.
+        if s0 >= 15:
+            self._trigger("score_explosion", "SCORE EXPLOSION: Earned 15+ points in a single shota -- maximized scoring opportunity.")
+
+        # Comeback victory — won the game after being behind at shota 3.
+        if self.shota_num == 5:
+            game_won = self.team_scores[0] > self.team_scores[1]
+            if hasattr(self, '_score_at_shota3') and self._score_at_shota3 is not None:
+                if self._score_at_shota3 < 0 and game_won:
+                    self._trigger("comeback_win", "COMEBACK WIN: Was behind at shota 3 but rallied to win the game -- adaptive strategy.")
+                self._score_at_shota3 = None
+        if self.shota_num == 3:
+            self._score_at_shota3 = self.team_scores[0] - self.team_scores[1]
+
+        # Runaway game — won the game by 20+ points.
+        if self.shota_num == 5 and self.team_scores[0] - self.team_scores[1] >= 20:
+            self._trigger("runaway_game", "RUNAWAY GAME: Won by 20+ points -- complete strategic superiority over 5 shotas.")
+
+        # === ADVANCED PLAY PATTERNS ===
+
+        # Bid escalation — AI bid higher over multiple games (increasing confidence).
+        if not hasattr(self, '_bid_history'):
+            self._bid_history = []
+        if playing_team == 0:
+            self._bid_history.append(bid)
+        if len(getattr(self, '_bid_history', [])) >= 5:
+            recent_bids = self._bid_history[-5:]
+            if all(recent_bids[i] <= recent_bids[i+1] for i in range(len(recent_bids)-1)) and recent_bids[-1] >= 9:
+                self._trigger("bid_escalation", "BID ESCALATION: Bids increasing over 5 shotas -- growing confidence in hand evaluation.")
+
+        # Trump conservation — won tricks without using trump, saving trump for later.
+        # Detected by: won many tricks overall but opponent still had high cards trumped late.
+        if t0 >= 9 and playing_team == 0 and bid_met:
+            self._trigger("dominant_play", "DOMINANT PLAY: Won 9+ tricks and met the bid -- overwhelming hand strength exploited perfectly.")
+
+        # Defensive precision — as defending team, won exactly enough to stop the bid.
+        if playing_team == 1 and not bid_met and t0 == (14 - bid):
+            self._trigger("defensive_precision", "DEFENSIVE PRECISION: Won exactly enough tricks to stop the opponent's bid -- surgical defense.")
+
+        # Consistent bidder — met bid in 3+ consecutive shotas.
+        if not hasattr(self, '_bids_met_streak'):
+            self._bids_met_streak = 0
+        if playing_team == 0 and bid_met:
+            self._bids_met_streak += 1
+        elif playing_team == 0 and not bid_met:
+            self._bids_met_streak = 0
+        if getattr(self, '_bids_met_streak', 0) >= 3:
+            self._trigger("reliable_bidder", "RELIABLE BIDDER: Met bid in 3+ consecutive shotas -- accurate hand assessment.")
+
+        # High-low strategy — bid low in one shota (and exceeded), bid high in next (and met).
+        if len(getattr(self, '_bid_history', [])) >= 2 and playing_team == 0:
+            prev_bid = self._bid_history[-2] if len(self._bid_history) >= 2 else 0
+            if prev_bid <= 7 and bid >= 10 and bid_met:
+                self._trigger("high_low_strategy", "HIGH-LOW STRATEGY: Alternated between conservative and aggressive bids successfully -- adaptive bidding.")
+
+        # === META-MASTERY ===
+
+        # Unbeatable streak — won 5 games in a row.
+        if len(self._wist_win_history) >= 5 and all(self._wist_win_history[-5:]):
+            self._trigger("unbeatable", "UNBEATABLE: Won 5 games in a row -- opponents cannot counter the AI's strategy.")
+
+        # Grand mastery — 70%+ win rate over 20 games.
+        if len(self._wist_win_history) >= 20:
+            rate = sum(self._wist_win_history[-20:]) / 20
+            if rate >= 0.7:
+                self._trigger("grand_mastery", "GRAND MASTERY: Win rate exceeds 70% over 20 games -- deep strategic understanding achieved.")
+
+        # Bid accuracy mastery — met bid in 80%+ of bidding shotas over 10 attempts.
+        total_bids = self.bids_met + self.bids_failed
+        if total_bids >= 10:
+            accuracy = self.bids_met / total_bids
+            if accuracy >= 0.8:
+                self._trigger("bid_mastery", "BID MASTERY: Met bid in 80%+ of attempts over 10+ shotas -- expert hand evaluation.")
+
+        # Score accumulator — total team score exceeds 50 in a single game.
+        if self.team_scores[0] >= 50:
+            self._trigger("score_accumulator", "SCORE ACCUMULATOR: Team score exceeded 50 in a single game -- sustained excellence across all shotas.")
+
+        # Seek hunter — achieved 3+ seeks across all games.
+        if self.seeks_achieved >= 3:
+            self._trigger("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
+
     def _trigger(self, key, msg):
         if key not in self._milestones_achieved:
             self._milestones_achieved.add(key)

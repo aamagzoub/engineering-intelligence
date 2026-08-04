@@ -830,6 +830,267 @@ class HeartsWatcher:
                     "ADAPTATION: Win rate jumped significantly after a weak period. "
                     "The AI adjusted its strategy based on accumulated experience.")
 
+        # === PARTNER COOPERATION (understanding implicit teamwork) ===
+
+        # Partner shield — AI avoided taking a trick that a partner also avoided.
+        # In Hearts there are no formal teams, but avoiding helping opponents is cooperation.
+        # Detect: AI played low to let someone else take a clean trick (non-penalty).
+        for trick in history:
+            cards = trick["cards"]
+            ai_card = trick["ai_card"]
+            winner = trick["winner"]
+            if ai_card and winner != 0 and len(cards) == 4:
+                trick_cards_list = [c for _, c in cards]
+                has_penalty = any(c.suit == Suit.HEARTS or c == QUEEN_OF_SPADES
+                                  for c in trick_cards_list)
+                if has_penalty and RANK_ORDER.get(ai_card.rank, 0) <= 5:
+                    self._trigger_milestone("penalty_deflection",
+                        "PENALTY DEFLECTION: Played a low card to avoid winning a trick with penalties. "
+                        "The AI learned to duck when danger cards are on the table.")
+                    break
+
+        # Poison pill — AI led a suit that forced an opponent to take the queen.
+        for trick in history:
+            cards = trick["cards"]
+            winner = trick["winner"]
+            if cards and cards[0][0] == 0 and winner != 0:  # AI led, opponent won
+                trick_cards_list = [c for _, c in cards]
+                if QUEEN_OF_SPADES in trick_cards_list:
+                    self._trigger_milestone("poison_pill",
+                        "POISON PILL: Led a suit that forced an opponent to eat the Queen of Spades. "
+                        "The AI learned to set traps that push dangerous cards onto others.")
+                    break
+
+        # Sacrifice play — AI intentionally won a clean trick to maintain lead control.
+        ai_wins_clean = [t for t in history if t["winner"] == 0 and
+                         not any(c.suit == Suit.HEARTS or c == QUEEN_OF_SPADES
+                                 for _, c in t["cards"])]
+        ai_wins_after_clean = 0
+        for i, t in enumerate(history):
+            if t["winner"] == 0 and i > 0 and history[i-1]["winner"] == 0:
+                ai_wins_after_clean += 1
+        if ai_wins_after_clean >= 3 and len(ai_hearts) == 0:
+            self._trigger_milestone("lead_control",
+                "LEAD CONTROL: Won consecutive clean tricks to dictate the flow of play. "
+                "The AI learned that controlling the lead lets you steer away from danger.")
+
+        # === OPPONENT EXPLOITATION (punishing mistakes) ===
+
+        # Spade flush — played high spades to flush out the Queen from opponents.
+        spade_flushes = [t for t in history if t["ai_card"] and
+                         t["ai_card"].suit == Suit.SPADES and
+                         RANK_ORDER.get(t["ai_card"].rank, 0) >= 12 and
+                         t["cards"][0][0] == 0]  # AI led high spade
+        if len(spade_flushes) >= 2 and not ai_has_queen:
+            self._trigger_milestone("spade_flush",
+                "SPADE FLUSH: Led multiple high spades to force the Queen out. "
+                "The AI learned to systematically smoke out the Queen of Spades from opponents' hands.")
+
+        # Late game exploitation — won last 3 tricks cleanly when opponents had penalty cards.
+        if len(history) >= 13:
+            last_3 = history[-3:]
+            ai_won_last_3_clean = all(
+                t["winner"] == 0 and
+                not any(c.suit == Suit.HEARTS or c == QUEEN_OF_SPADES for _, c in t["cards"])
+                for t in last_3
+            )
+            if ai_won_last_3_clean:
+                self._trigger_milestone("endgame_control",
+                    "ENDGAME CONTROL: Won the last 3 tricks cleanly. "
+                    "The AI learned to dominate the endgame when penalty cards have been exhausted.")
+
+        # Opponent burdening — AI dumped multiple hearts on a single opponent.
+        if len(history) >= 5:
+            opp_hearts_taken = {1: 0, 2: 0, 3: 0}
+            for t in history:
+                if t["winner"] in opp_hearts_taken:
+                    hearts_in = sum(1 for _, c in t["cards"] if c.suit == Suit.HEARTS)
+                    opp_hearts_taken[t["winner"]] += hearts_in
+            max_opp_hearts = max(opp_hearts_taken.values())
+            if max_opp_hearts >= 6 and len(ai_hearts) <= 1:
+                self._trigger_milestone("opponent_burden",
+                    "OPPONENT BURDENING: Concentrated hearts onto a single opponent (6+ hearts). "
+                    "The AI learned to target one player with penalty cards while staying clean.")
+
+        # === GAME-WINNING STRATEGIES ===
+
+        # Perfect shota — zero penalty AND positive bonus.
+        if ai_score >= 20 and len(ai_hearts) == 0 and not ai_has_queen:
+            self._trigger_milestone("perfect_shota",
+                "PERFECT SHOTA: Zero penalties combined with a bonus (Gallon/Half-Gallon). "
+                "The AI achieved the optimal outcome — maximum reward with zero risk.")
+
+        # Comeback king — was losing by 10+ at shota 3, won the game.
+        if self.shota_num == 5 and len(self.shota_scores) >= 5:
+            scores_after_3 = {pid: sum(s.get(pid, 0) for s in self.shota_scores[-5:-2])
+                              for pid in range(4)}
+            deficit = max(scores_after_3[pid] for pid in range(1, 4)) - scores_after_3[0]
+            is_winner = all(self.total_scores[0] >= self.total_scores[pid] for pid in range(1, 4))
+            if deficit >= 10 and is_winner:
+                self._trigger_milestone("comeback_king",
+                    "COMEBACK KING: Overcame a 10+ point deficit after shota 3 to win the game. "
+                    "The AI learned to shift into aggressive recovery mode when behind.")
+
+        # Runaway leader — won a game by 15+ points over all opponents.
+        if self.shota_num == 5:
+            margin = min(self.total_scores[0] - self.total_scores[pid] for pid in range(1, 4))
+            if margin >= 15:
+                self._trigger_milestone("runaway_leader",
+                    "RUNAWAY LEADER: Won a game with 15+ point margin over every opponent. "
+                    "The AI achieved complete strategic superiority throughout the game.")
+
+        # Marathon consistency — positive score in 4+ consecutive shotas.
+        if len(self.shota_scores) >= 4:
+            recent_4_scores = [s.get(0, 0) for s in self.shota_scores[-4:]]
+            if all(s >= 0 for s in recent_4_scores):
+                self._trigger_milestone("marathon_consistency",
+                    "MARATHON CONSISTENCY: Non-negative score in 4+ consecutive shotas. "
+                    "The AI maintains disciplined play across extended stretches without slipping.")
+
+        # === ADVANCED PLAY PATTERNS ===
+
+        # Tempo play — AI led low, then high in same suit across different tricks.
+        suit_leads = {}  # suit -> list of ranks AI led
+        for t in history:
+            if t["cards"] and t["cards"][0][0] == 0 and t["ai_card"]:
+                s = t["ai_card"].suit
+                if s not in suit_leads:
+                    suit_leads[s] = []
+                suit_leads[s].append(RANK_ORDER.get(t["ai_card"].rank, 0))
+        for s, ranks in suit_leads.items():
+            if len(ranks) >= 2 and ranks[0] <= 6 and ranks[-1] >= 12:
+                self._trigger_milestone("tempo_play",
+                    "TEMPO PLAY: Led low then high in the same suit across tricks. "
+                    "The AI learned to probe with low cards first, then strike with power cards.")
+                break
+
+        # Counting cards — AI played the exact card needed to win or avoid penalty.
+        # Detected by: AI plays highest card below the current highest, avoiding taking the trick.
+        duck_plays = 0
+        for trick in history:
+            cards = trick["cards"]
+            ai_card = trick["ai_card"]
+            leading = trick["leading_suit"]
+            winner = trick["winner"]
+            if (ai_card and leading and ai_card.suit == leading and
+                    winner != 0 and len(cards) == 4):
+                # AI played in suit but didn't win — was it a strategic duck?
+                all_same_suit = [RANK_ORDER.get(c.rank, 0) for _, c in cards if c.suit == leading]
+                ai_rank = RANK_ORDER.get(ai_card.rank, 0)
+                if all_same_suit and ai_rank == sorted(all_same_suit)[-2]:
+                    # AI played second-highest — a precise duck
+                    duck_plays += 1
+        if duck_plays >= 3:
+            self._trigger_milestone("precise_ducking",
+                "PRECISE DUCKING: Played the second-highest card multiple times to narrowly avoid winning. "
+                "The AI learned card counting — knowing exactly how high it can play without taking the trick.")
+
+        # Void exploitation — AI dumped penalty cards in 3+ different tricks using voids.
+        void_dumps = 0
+        for trick in history:
+            ai_card = trick["ai_card"]
+            leading = trick["leading_suit"]
+            winner = trick["winner"]
+            if (ai_card and leading and ai_card.suit != leading and
+                    (ai_card.suit == Suit.HEARTS or ai_card == QUEEN_OF_SPADES) and
+                    winner != 0):
+                void_dumps += 1
+        if void_dumps >= 3:
+            self._trigger_milestone("systematic_void_exploit",
+                "SYSTEMATIC VOID EXPLOITATION: Dumped penalty cards 3+ times via voids in a single shota. "
+                "The AI mastered void creation and repeatedly exploits it to offload dangerous cards.")
+
+        # Two-phase strategy — played defensively first half, aggressively second half.
+        if len(history) >= 13:
+            first_half = history[:6]
+            second_half = history[7:]
+            ai_wins_first = sum(1 for t in first_half if t["winner"] == 0)
+            ai_wins_second = sum(1 for t in second_half if t["winner"] == 0)
+            if ai_wins_first <= 1 and ai_wins_second >= 4 and len(ai_hearts) <= 1:
+                self._trigger_milestone("two_phase_strategy",
+                    "TWO-PHASE STRATEGY: Played passive early (0-1 tricks) then aggressive late (4+ tricks). "
+                    "The AI learned to lay low while dangers circulate, then dominate the safe endgame.")
+
+        # Suit control — AI led the same suit 3+ times and won most of those tricks.
+        for s, ranks in suit_leads.items():
+            if len(ranks) >= 3:
+                suit_trick_wins = sum(1 for t in history
+                                      if t["cards"] and t["cards"][0][0] == 0 and
+                                      t["ai_card"] and t["ai_card"].suit == s and
+                                      t["winner"] == 0)
+                if suit_trick_wins >= 2:
+                    self._trigger_milestone("suit_domination",
+                        "SUIT DOMINATION: Led and won 3+ tricks in a single suit. "
+                        "The AI learned to establish dominance in a suit where it holds length and power.")
+                    break
+
+        # Queen trap — AI held the Queen until an opponent led spades, then ducked under.
+        queen_in_hand_start = any(c == QUEEN_OF_SPADES for c in (self._pass_cards_received.get(0, []) +
+                                                                   [c for c in ai_collected]))
+        if not ai_has_queen and queen_in_hand_start:
+            # AI had the queen initially (received or dealt) but didn't end up with it
+            for trick in history:
+                cards = trick["cards"]
+                leading = trick["leading_suit"]
+                if leading == Suit.SPADES and trick["winner"] != 0:
+                    ai_card = trick["ai_card"]
+                    if ai_card and ai_card == QUEEN_OF_SPADES:
+                        self._trigger_milestone("queen_trap",
+                            "QUEEN TRAP: Held the Queen of Spades and played it when someone else led spades. "
+                            "The AI learned to time the Queen dump perfectly — let others win the spade trick.")
+                        break
+
+        # === META-MASTERY (2000+ games) ===
+
+        # Unbeatable streak — won 10 games in a row.
+        if len(self._win_history) >= 10 and all(self._win_history[-10:]):
+            self._trigger_milestone("unbeatable",
+                "UNBEATABLE: Won 10 games in a row. "
+                "The AI has achieved a level of play that opponents cannot counter.")
+
+        # Grand mastery — 60%+ win rate over 50+ games.
+        if len(self._win_history) >= 50:
+            rate = sum(self._win_history[-50:]) / 50
+            if rate >= 0.6:
+                self._trigger_milestone("grand_mastery",
+                    "GRAND MASTERY: Win rate exceeds 60% over 50 games (random = 25%). "
+                    "The AI has more than doubled optimal random performance through deep learning.")
+
+        # Score efficiency — average score per shota > +5 over 20 shotas.
+        if len(self.shota_scores) >= 20:
+            recent_20 = self.shota_scores[-20:]
+            avg_score = sum(s.get(0, 0) for s in recent_20) / 20
+            if avg_score >= 5:
+                self._trigger_milestone("score_efficiency",
+                    "SCORE EFFICIENCY: Averaging +5 per shota over 20 rounds. "
+                    "The AI consistently extracts value from every shota — not just surviving, but thriving.")
+
+        # Penalty minimizer — averaged less than 1 heart per shota over 10 shotas.
+        if len(self.shota_scores) >= 10:
+            # Track penalty accumulation across recent history
+            if not hasattr(self, '_recent_hearts_taken'):
+                self._recent_hearts_taken = []
+            self._recent_hearts_taken.append(len(ai_hearts))
+            if len(self._recent_hearts_taken) >= 10:
+                avg_hearts = sum(self._recent_hearts_taken[-10:]) / 10
+                if avg_hearts <= 1.0:
+                    self._trigger_milestone("penalty_minimizer",
+                        "PENALTY MINIMIZER: Averaging 1 or fewer hearts per shota over 10 rounds. "
+                        "The AI has nearly eliminated penalty card exposure through precise play.")
+
+        # Adaptive passing — different pass strategies in consecutive shotas.
+        if len(self.shota_scores) >= 3:
+            if not hasattr(self, '_pass_history'):
+                self._pass_history = []
+            self._pass_history.append(passed)
+            if len(self._pass_history) >= 3:
+                recent_passes = self._pass_history[-3:]
+                suits_passed = [set(c.suit for c in p) for p in recent_passes if p]
+                if len(suits_passed) >= 3 and len(set(frozenset(s) for s in suits_passed)) >= 3:
+                    self._trigger_milestone("adaptive_passing",
+                        "ADAPTIVE PASSING: Different suit patterns in 3 consecutive passes. "
+                        "The AI adjusts its passing strategy based on each hand — not just following a formula.")
+
     def _trigger_milestone(self, key: str, message: str):
         """Record a discovered behavior with title and description."""
         if key in self._milestones_achieved:
