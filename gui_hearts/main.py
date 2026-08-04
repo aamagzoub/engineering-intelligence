@@ -87,6 +87,10 @@ class HeartsWatcher:
         # Card surface cache.
         self._card_cache: dict[str, pygame.Surface] = {}
         self._card_back = create_card_back()
+        self._continue_btn_rect = None
+        self._log_scroll_offset = 0
+        self._pass_cards_selected = {}
+        self._pass_cards_received = {}
 
         # Setup agents (after event_log is initialized).
         self._setup_agents()
@@ -166,10 +170,13 @@ class HeartsWatcher:
         self.state = "passing"
         self.current_trick_cards = []
         self.trick_num = 0
+        self._pass_cards_selected = {}  # pid → list of cards to pass
+        self._pass_cards_received = {}  # pid → list of cards received
+        self._pass_phase_step = "showing_selected"  # "showing_selected" → "showing_received"
         self.last_action_time = pygame.time.get_ticks()
 
     def _do_passing(self):
-        """Execute the passing phase."""
+        """Execute the passing phase — step 1: select cards to pass."""
         cards_to_pass = {}
         for p in self.players:
             obs = PassingObservation(player_id=p.player_id, hand=list(p.hand))
@@ -179,19 +186,43 @@ class HeartsWatcher:
             receiver = PLAYER_NAMES[(p.player_id + 1) % 4]
             self._log(f"  {PLAYER_NAMES[p.player_id]} → {receiver}: {passed}")
 
+        self._pass_cards_selected = cards_to_pass
+        self._pass_phase_step = "showing_selected"
+        self.state = "pass_show_selected"
+        self.last_action_time = pygame.time.get_ticks()
+
+    def _do_pass_execute(self):
+        """Execute the actual card exchange and show received cards."""
+        cards_to_pass = self._pass_cards_selected
+
         # Execute pass.
         for p in self.players:
             p.remove_cards(list(cards_to_pass[p.player_id]))
+
+        # Track what each player receives.
         for p in self.players:
             receiver_id = (p.player_id + 1) % 4
-            self.players[receiver_id].receive_cards(list(cards_to_pass[p.player_id]))
+            received = list(cards_to_pass[p.player_id])
+            self.players[receiver_id].receive_cards(received)
+            self._pass_cards_received[receiver_id] = received
+
+        # Log received cards.
+        for pid in range(4):
+            received = self._pass_cards_received.get(pid, [])
+            sender_id = (pid - 1) % 4
+            received_str = ", ".join(f"{c.rank.symbol}{c.suit.symbol}" for c in received)
+            self._log(f"  {PLAYER_NAMES[pid]} ← {PLAYER_NAMES[sender_id]}: {received_str}")
 
         # Update hands for display.
         self.hands = {p.player_id: sorted(
             p.hand, key=lambda c: (SUIT_ORDER[c.suit], RANK_ORDER[c.rank])
         ) for p in self.players}
 
-        # Move to playing.
+        self.state = "pass_show_received"
+        self.last_action_time = pygame.time.get_ticks()
+
+    def _do_start_playing(self):
+        """Transition from passing phase to playing phase."""
         self.state = "playing"
         self.trick_num = 1
         first_leader = (self.dealer_id + 1) % 4
@@ -315,6 +346,32 @@ class HeartsWatcher:
                 elif event.key == pygame.K_r:
                     # Reload model.
                     self._setup_agents()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._handle_click(event.pos)
+            elif event.type == pygame.MOUSEWHEEL:
+                # Scroll the event log.
+                self._log_scroll_offset = getattr(self, '_log_scroll_offset', 0)
+                self._log_scroll_offset -= event.y * 2
+                self._log_scroll_offset = max(0, min(
+                    self._log_scroll_offset, max(0, len(self.event_log) - 10)))
+
+    def _handle_click(self, pos):
+        """Handle mouse clicks — Continue button."""
+        # Check if Continue button is clicked.
+        if hasattr(self, '_continue_btn_rect') and self._continue_btn_rect:
+            if self._continue_btn_rect.collidepoint(pos):
+                self._on_continue()
+
+    def _on_continue(self):
+        """Handle Continue button press — advance through pass phases and scoring."""
+        if self.state == "pass_show_selected":
+            self._do_pass_execute()
+        elif self.state == "pass_show_received":
+            self._do_start_playing()
+        elif self.state == "scoring":
+            self._start_new_shota()
+        elif self.state == "game_over":
+            self._start_new_game()
 
     def _update(self):
         """Auto-advance the game state based on timing."""
@@ -334,13 +391,8 @@ class HeartsWatcher:
                 self._do_one_trick()
             else:
                 self._do_scoring()
-        elif self.state == "scoring":
-            # After scoring delay, start next shota.
-            if now - self.last_action_time > int(SHOTA_DELAY_MS / self.speed):
-                self._start_new_shota()
-        elif self.state == "game_over":
-            if now - self.last_action_time > int(SHOTA_DELAY_MS * 2 / self.speed):
-                self._start_new_game()
+        # "pass_show_selected", "pass_show_received", "scoring", "game_over"
+        # all require clicking Continue — no auto-advance.
 
     def _render(self):
         """Render the full interface."""
@@ -374,6 +426,15 @@ class HeartsWatcher:
 
         # Render current trick in center.
         self._render_trick(table_rect)
+
+        # Render pass phase overlay if active.
+        if self.state in ("pass_show_selected", "pass_show_received"):
+            self._render_pass_overlay(table_rect)
+
+        # Render Continue button when needed.
+        self._continue_btn_rect = None
+        if self.state in ("pass_show_selected", "pass_show_received", "scoring", "game_over"):
+            self._render_continue_button(table_rect)
 
         # Right panel — scores and log.
         self._render_side_panel()
@@ -602,6 +663,81 @@ class HeartsWatcher:
             label_x = px + len(penalty_cards) * overlap_x + mini_w + 4
             self.screen.blit(label_surf, (label_x, py + mini_h // 2 - 6))
 
+    def _render_pass_overlay(self, table_rect):
+        """Render the passing phase overlay showing selected/received cards."""
+        cx, cy = table_rect.centerx, table_rect.centery
+
+        # Semi-transparent overlay.
+        overlay = pygame.Surface((table_rect.width, table_rect.height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        self.screen.blit(overlay, (table_rect.x, table_rect.y))
+
+        if self.state == "pass_show_selected":
+            title_text = "Cards Selected to Pass"
+            title_color = TEXT_GOLD
+            cards_data = self._pass_cards_selected
+            # Show who passes to whom.
+            subtitle = "Each player passes to the next clockwise"
+        else:
+            title_text = "Cards Received"
+            title_color = TEXT_GREEN
+            cards_data = self._pass_cards_received
+            subtitle = "Cards received from the player on your right"
+
+        # Title.
+        title_surf = self.fonts["large"].render(title_text, True, title_color)
+        self.screen.blit(title_surf, title_surf.get_rect(centerx=cx, y=table_rect.y + 20))
+        sub_surf = self.fonts["small"].render(subtitle, True, TEXT_LIGHT)
+        self.screen.blit(sub_surf, sub_surf.get_rect(centerx=cx, y=table_rect.y + 42))
+
+        # Show each player's cards in a grid.
+        row_h = 110
+        start_y = table_rect.y + 65
+        for pid in range(4):
+            cards = cards_data.get(pid, [])
+            if not cards:
+                continue
+
+            row_y = start_y + pid * row_h
+            color = PLAYER_COLORS[pid]
+
+            # Player name.
+            if self.state == "pass_show_selected":
+                receiver = PLAYER_NAMES[(pid + 1) % 4]
+                label = f"{PLAYER_NAMES[pid]} → {receiver}"
+            else:
+                sender = PLAYER_NAMES[(pid - 1) % 4]
+                label = f"{PLAYER_NAMES[pid]} ← {sender}"
+
+            name_surf = self.fonts["medium"].render(label, True, color)
+            self.screen.blit(name_surf, (table_rect.x + 30, row_y))
+
+            # Cards.
+            card_x = table_rect.x + 200
+            for i, card in enumerate(cards):
+                surf = self._get_card_surface(card)
+                mini = pygame.transform.smoothscale(surf, (CARD_MINI_W, CARD_MINI_H))
+                self.screen.blit(mini, (card_x + i * (CARD_MINI_W + 6), row_y - 5))
+
+    def _render_continue_button(self, table_rect):
+        """Render a Continue button at the bottom of the table."""
+        btn_w, btn_h = 140, 40
+        btn_x = table_rect.centerx - btn_w // 2
+        btn_y = table_rect.bottom - btn_h - 15
+        btn_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+        self._continue_btn_rect = btn_rect
+
+        mx, my = pygame.mouse.get_pos()
+        hover = btn_rect.collidepoint(mx, my)
+        bg = (80, 180, 80) if hover else BUTTON_GREEN
+        pygame.draw.rect(self.screen, bg, btn_rect, border_radius=8)
+        if hover:
+            pygame.draw.rect(self.screen, (120, 220, 120), btn_rect, width=2, border_radius=8)
+
+        btn_font = self.fonts["medium"]
+        btn_text = btn_font.render("Continue", True, TEXT_WHITE)
+        self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
+
     def _render_side_panel(self):
         """Render the right-side panel with scores and event log."""
         panel_x = SCREEN_WIDTH - 290
@@ -651,20 +787,41 @@ class HeartsWatcher:
         pygame.draw.line(self.screen, TEXT_DIM, (panel_x + 10, y), (panel_x + 270, y))
         y += 10
 
-        # Event log.
+        # Event log (scrollable).
         log_title = self.fonts["large"].render("Event Log", True, TEXT_WHITE)
         self.screen.blit(log_title, (panel_x + 10, y))
         y += 22
 
-        # Show last N events that fit.
+        # Show log with scroll offset.
         max_lines = (panel_rect.bottom - y - 10) // 15
-        visible_log = self.event_log[-max_lines:]
+        scroll_offset = getattr(self, '_log_scroll_offset', 0)
+        total_lines = len(self.event_log)
+
+        # Clamp scroll offset.
+        max_scroll = max(0, total_lines - max_lines)
+        scroll_offset = max(0, min(scroll_offset, max_scroll))
+        self._log_scroll_offset = scroll_offset
+
+        # Default: show the latest (scrolled to bottom).
+        if scroll_offset == 0:
+            visible_log = self.event_log[-max_lines:]
+        else:
+            end_idx = total_lines - scroll_offset
+            start_idx = max(0, end_idx - max_lines)
+            visible_log = self.event_log[start_idx:end_idx]
+
         for line in visible_log:
             # Truncate long lines.
             display_line = line[:42]
             log_surf = self.fonts["small"].render(display_line, True, TEXT_DIM)
             self.screen.blit(log_surf, (panel_x + 10, y))
             y += 15
+
+        # Scroll indicator.
+        if total_lines > max_lines:
+            scroll_hint = f"↕ {total_lines} lines (scroll with mousewheel)"
+            hint_surf = self.fonts["small"].render(scroll_hint, True, (70, 90, 120))
+            self.screen.blit(hint_surf, (panel_x + 10, panel_rect.bottom - 14))
 
 
 def main():
@@ -677,7 +834,7 @@ def main():
         # Try default location.
         default = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "agents", "discovery", "hearts_model.json"
+            "agents", "hearts_discovery", "hearts_model.json"
         )
         if os.path.exists(default):
             model_path = default
