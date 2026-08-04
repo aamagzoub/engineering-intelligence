@@ -82,7 +82,7 @@ class WistDiscoveryWatcher:
         self.shota_num = 0
         self.game_num = 0
         self.team_scores = [0, 0]
-        self.game_shota_scores = []  # Only actually played shotas get recorded.
+        self.game_shota_scores = {1: None, 2: None, 3: None, 4: None, 5: None}
         self.trick_num = 0
         self.current_trick_cards = []
         self.last_winner = -1
@@ -123,7 +123,8 @@ class WistDiscoveryWatcher:
         self.game_num += 1
         self.shota_num = 0
         self.team_scores = [0, 0]
-        self.game_shota_scores = []  # Only actually played shotas get recorded.
+        # Fixed 5-shota scoreboard: keyed 1-5, None means not yet played/skipped.
+        self.game_shota_scores = {1: None, 2: None, 3: None, 4: None, 5: None}
         self._log(f"{'='*30} Game #{self.game_num} {'='*30}")
         self._start_new_shota()
 
@@ -235,7 +236,7 @@ class WistDiscoveryWatcher:
 
         self.team_scores[0] += scores.get(0, 0)
         self.team_scores[1] += scores.get(1, 0)
-        self.game_shota_scores.append({0: scores.get(0, 0), 1: scores.get(1, 0)})
+        self.game_shota_scores[self.shota_num] = {0: scores.get(0, 0), 1: scores.get(1, 0)}
         self.discovery.reward(float(scores.get(0, 0)))
         self.shotas_played += 1
 
@@ -905,8 +906,9 @@ class WistDiscoveryWatcher:
 
             for s in range(5):
                 sx = header_x + col_name_w + s * col_shota_w
-                if s < len(self.game_shota_scores):
-                    val = self.game_shota_scores[s].get(tid, 0)
+                entry = self.game_shota_scores.get(s + 1)
+                if entry is not None:
+                    val = entry.get(tid, 0)
                     sc_color = (100, 255, 100) if val > 0 else (255, 100, 100) if val < 0 else TEXT_LIGHT
                     self.screen.blit(self.fonts["small"].render(f"{val:+d}", True, sc_color), (sx, y))
                 else:
