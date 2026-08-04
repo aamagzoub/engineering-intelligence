@@ -4,7 +4,7 @@ Tests for the rule-based Wist agent.
 
 from collections import Counter
 
-from agents.rule_based.rule_based_agent import RuleBasedAgent
+from agents.wist_rule_based.rule_based_agent import RuleBasedAgent
 from environments.wist.actions import BidAction, PassAction, PlayCardAction
 from environments.wist.environment import WistEnvironment
 from environments.wist.observation import BiddingObservation, WistObservation

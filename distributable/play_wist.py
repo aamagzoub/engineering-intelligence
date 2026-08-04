@@ -16,8 +16,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 import tkinter as tk
-from gui.human_tab import HumanTab
-from gui.colors import COLORS
+from gui_wist_lab.human_tab import HumanTab
+from gui_wist_lab.colors import COLORS
 
 
 def main():

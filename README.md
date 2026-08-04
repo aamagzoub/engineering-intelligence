@@ -1,236 +1,156 @@
-# Engineering Intelligence  
+# Engineering Intelligence
 
-## Project Vision
+## Vision
 
-This repository is the first implementation of a much larger research project called **Engineering Intelligence**.
+This project explores how to build **general decision-making architectures** — AI systems that learn strategy, adapt to opponents, and make decisions under uncertainty. Rather than isolated solutions for individual problems, the goal is transferable intelligence that works across domains.
 
-The long-term goal of Engineering Intelligence is to explore how to build **general decision-making architectures** that can be applied across completely different domains, rather than creating isolated AI solutions for individual problems.
+The long-term direction is applying these architectures to telecommunications network optimization: resource allocation, fault prediction, and adaptive routing. We start with card games because they compress the same fundamental challenges — hidden information, multi-agent competition, long-term planning, and real-time tactical choices — into environments where we can iterate rapidly and measure progress clearly.
 
-## Why Sudanese Wist?
+## Why Card Games?
 
-Sudanese Wist provides an excellent research environment because it combines many characteristics found in real-world decision-making systems:
+Card games are not the destination. They are the proving ground.
 
-- Hidden information
-- Team cooperation
-- Competitive strategy
-- Long-term planning
-- Short-term tactical decisions
-- Imperfect information
-- Learning from experience
-- Explainable decision making
+A telecom network deciding how to route traffic under load shares the same decision structure as a card player deciding which card to play: limited information, multiple competing agents, immediate and delayed consequences, and the need to balance risk against reward.
 
-Rather than beginning with an abstract mathematical environment, this project starts with a game that is both challenging and familiar, allowing intelligence to emerge in a controlled setting before being transferred to more complex domains such as telecommunications.
+By solving Sudanese Wist and Sudanese Hearts — games with rich strategic depth — we develop and validate the learning algorithms, state representations, and reward structures that will later drive real engineering decisions.
 
 ---
 
-## Sudanese Wist Game Description
+## Sudanese Wist
 
-Wist is a traditional Sudanese trick-taking card game for 4 players. This document describes the complete rules of the game exactly as it is played in Sudan. The rules below are precise and specific — do not add, assume, or substitute anything not described here.
+### What It Is
 
----
+A traditional Sudanese team trick-taking card game for 4 players (2 teams of 2). Partners sit opposite each other. A game consists of 5 Shotas (rounds), first team to 25 points wins.
 
-## Game Rules
+### Why Wist?
 
-### The Teams
-4 players sit around a table. The two players sitting opposite each other form one team.
+Wist exercises the hardest class of decision problems:
 
-### Card Ranks
-Cards rank from lowest to highest: 2, 3, 4, 5, 6, 7, 8, 9, 10, Jack, Queen, King, Ace.
+- **Team cooperation with hidden information** — you must infer your partner's hand from their plays, not communication
+- **Bidding under uncertainty** — commit to a target before seeing how play unfolds
+- **Trump management** — when to spend, when to save, when to flush
+- **Seek pressure** — the ever-present threat of an instant-win if one team takes all 13 tricks
 
-### Direction of Play
-Everything — dealing, Al-Tasmiya, and playing — moves clockwise.
+### AI Approach
 
-### Sahib Al-Qabool — The One with the Right of Acceptance
-One player each Shota holds Al-Qabool. He has the final say on Al-Tasmiya. First Shota only: all four players each draw a random card from anywhere in the deck; since all 52 cards are unique there can never be a tie, and the team whose players drew the higher card between their two drawn cards wins Al-Qabool. Every Shota after: Al-Qabool passes to the next player to the left (clockwise), regardless of who won or lost.
+The Wist agent uses **Double Q-Learning with TD(λ) eligibility traces**:
+- Learns from every trick (not just end-of-round)
+- Tracks all 52 cards played for informed decisions
+- Models opponent void/trump patterns
+- Prioritized experience replay for rare but important events
+- Trained through curriculum learning: 15,000+ games progressing from random to strategic opponents
 
-### Seating Roles
-All roles are anchored to Sahib Al-Qabool each Shota:
-- The player opposite him cuts the deck
-- The player to his right deals the cards
-- The player to his left starts Al-Tasmiya
+### Game Rules
 
-### Dealing
-The deck is shuffled freely. The player opposite Sahib Al-Qabool cuts it. The player to his right then deals all 52 cards clockwise — one card to each player at a time — until each player holds 13 cards.
+**Setup:** 52 cards dealt equally (13 each). One player holds Al-Qabool (right of acceptance) and rotates clockwise each Shota.
 
-### Dak (Void)
+**Bidding (Al-Tasmiya):**
+- Players bid a number representing tricks they commit to win
+- Bid must equal at least (cards in chosen trump suit + 3)
+- Opening bid cannot exceed 11; subsequent bids up to 13
+- Qabool can match the highest bid without going higher
+- A bid of 13 ends bidding immediately
 
-There are two completely different situations that trigger Dak:
+**Trump (Al-Ato):**
+- Never declared aloud
+- Revealed by the winning bidder's first card — that suit becomes trump for the Shota
 
-**Situation 1 — Card-based Dak:**
-A player must declare Dak before it is their turn in Al-Tasmiya. It is triggered if they hold either:
-- No picture cards at all (Ace, King, Queen, Jack are all picture cards) — must show entire hand as proof
-- 8 or more cards of one suit — must show those 8+ cards as proof. This always triggers Dak with no exceptions
+**Play:**
+- Must follow suit if able
+- If void in led suit, may play any card (including trump — called "whipping")
+- Highest trump wins; if no trump played, highest of led suit wins
+- Winner of each trick leads the next
 
-When card-based Dak is declared, Al-Qabool stays with the same player and cards are re-dealt from scratch.
+**Dak (Re-deal):**
+- Card-based: no picture cards (A,K,Q,J) or 8+ cards in one suit → mandatory re-deal
+- Pass-based: all players pass → Qabool decides (limited to 2 per game)
 
-**Situation 2 — Pass-based Dak:**
-
-First Shota (first deal only):
-- If the first two players pass and the third player declares Dak → automatic Dak, Qabool has no say
-- If all three pass → Qabool decides
-
-All other Shotas:
-- All three players must pass, then Qabool decides whether to declare Dak or play
-
-Pass-based Dak can only happen twice per game. On the third occurrence, Qabool must play.
-
-In all pass-based Dak cases, Al-Qabool moves to the next player to the left.
-
-**Important:** If Dak happens in the very first Shota, it does not count toward the 5 Shotas. From the second Shota onward, any Dak counts as one Shota out of five.
-
-### Al-Tasmiya — The Bid
-
-Al-Tasmiya starts from the player to Qabool's left and moves clockwise. Each player bids a number only — no suit is named.
-
-**Bidding rules:**
-- Each bid must be higher than the previous bid
-- The bid value must be at least (cards in chosen trump suit) + 3
-- The opening bid cannot exceed 11. Subsequent bids can go up to 13
-- Trump suit must have 7 or fewer cards
-- If any player bids 13, bidding stops immediately — goes straight to Qabool
-- Qabool can match the highest bid (does not have to go higher)
-- Both bid restrictions are lifted for Qabool
-
-**Standard bid reference:**
-
-| Cards in trump suit | Standard bid | Qabool advantage (matching only) |
-|---|---|---|
-| 4 | 7 (Marboota) | 7 only |
-| 5 | 8 | 7 or 8 |
-| 6 | 9 | 8 or 9 |
-| 7 | 10 | 9 or 10 |
-| 8+ | Must declare Dak | Must declare Dak |
-
-### Qabool's Decision
-
-After the other three have bid or passed, Qabool chooses:
-1. **Accept** — that bidder's team plays, Qabool's team defends
-2. **Match or outbid** — Qabool's team plays, other team defends
-3. **Declare Dak** — only under pass-based Dak conditions
-
-### Al-Ato — The Trump Suit
-
-The trump suit is never declared out loud. It is revealed only when the winning bidder plays their very first card — that suit becomes trump for the entire Shota. The first card played must be from the trump suit.
-
-### Scoring
-
-- If the playing team reaches or exceeds their bid: they score actual tricks won. Defending team scores nothing.
-- If the playing team falls short: they lose points equal to their bid. Defending team scores their actual tricks won.
-- Scores can go negative.
-
-**Winning a Shota:**
-- The playing team wins if they won tricks **equal to or more than** their bid (met or exceeded their commitment)
-- The defending team wins if the playing team won **fewer tricks than** their bid (the playing team failed their commitment)
-
-| Playing team bid | Tricks won | Playing team score | Defending team score | Who won the Shota |
-|---|---|---|---|---|
-| 8 | 10 | +10 | +0 | Playing team |
-| 8 | 8 | +8 | +0 | Playing team |
-| 8 | 6 | -8 | +7 | Defending team |
-| 8 | 3 | -8 | +10 | Defending team |
-
-### Winning the Game
-A game consists of 5 Shotas. The first team to reach 25 points wins.
-
-### Seek
-If a team wins all 13 tricks in a Shota, the game ends immediately and that team wins — regardless of score or Shotas played. Seek overrides everything.
+**Scoring:**
+- Playing team meets bid → scores tricks won. Defending team: 0.
+- Playing team fails bid → loses bid value. Defending team: scores their tricks.
+- **Seek:** Win all 13 tricks → instant game win, overrides everything.
 
 ---
 
-## Legal Moves (Card Play Rules)
+## Sudanese Hearts
 
-These rules are separate from the game rules above. They determine which cards a player is legally allowed to play during trick play:
+### What It Is
 
-1. **First card of a Shota (Shooter leads):** Must play a card from the trump suit (Al-Ato). This is how trump is revealed.
+A Sudanese variant of Hearts for 4 players (individual, no teams). A game consists of 5 Shotas. Highest total score wins.
 
-2. **Following suit:** If a suit has been led, you must play a card of that suit if you have one.
+### Why Hearts?
 
-3. **Void in led suit:** If you have no cards of the led suit, you may play any card — including a trump card (this is called "whipping").
+Hearts is a fundamentally different decision problem from Wist:
 
-4. **Trump wins:** The highest trump card played always wins the trick, even if only one trump card was played.
+- **Penalty avoidance** instead of trick-winning — you want to NOT collect hearts and the Queen of Spades
+- **Individual strategy** — no partner to rely on or coordinate with
+- **Passing phase** — strategic card exchange before play begins
+- **Shooting the Moon** — risky all-or-nothing strategies that flip the scoring
 
-5. **No trump played:** If no trump card was played, the highest card of the led suit wins.
+This contrast validates that our learning architecture generalizes across game types, not just one rule set.
 
-6. **Winner leads next:** The winner of each trick leads the next one.
+### AI Approach
 
-7. **No review:** Once a trick is placed face down it cannot be reviewed by anyone.
+The Hearts agent uses a **Discovery Agent** with Q-Learning:
+- State abstraction over hand composition, trick position, hearts broken status, and queen tracking
+- Learns passing strategy (which 3 cards to give away)
+- Learns trick avoidance (dodge penalties) and shooting detection
 
-**Note:** Legal moves are enforced by the game engine. The UI will only allow you to play valid cards and will highlight illegal attempts.
+### Game Rules
 
----
+**Setup:** 52 cards dealt equally. Before play, each player passes 3 cards to the next player.
 
-## Game UI Features
+**Play:**
+- Standard trick-taking: must follow suit, highest of led suit wins
+- No trump suit — all suits are equal
+- Hearts cannot be led until "broken" (a heart has been discarded on a previous trick)
 
-### Seek Risk Indicator
-During play, two chips are displayed (one per team) showing a live **seek risk percentage**. This helps the player gauge how likely a seek is:
+**Scoring (per Shota):**
+- Each heart collected: -1 point
+- Queen of Spades collected: -7 points
+- **Full Gallon:** One player takes zero tricks → +20 bonus
+- **Half Gallon:** Two players take zero tricks → +10 bonus each
+- **All Tricks:** One player wins all 13 → +18 bonus (shoot the moon equivalent)
 
-- **0%** — Seek is dead (the team already lost a trick)
-- **1–15%** — Low risk (green chip, safe to play normally)
-- **16–40%** — Medium risk (amber chip, be cautious)
-- **41%+** — High risk (red chip, danger of seek)
-
-The percentage is calculated from your visible hand: trump cards, high cards (Aces, Kings), suit voids, and tricks remaining. It updates after every trick.
-
-### Other Features
-- Trump hidden until first card played (card flip animation)
-- Interactive Qabool draw ceremony
-- Card-based and pass-based Dak with visual proof display
-- AI recommendation system (rule-based or trained model)
-- Whip detection and double-whip animation
-- Player rating and XP progression
-- Game statistics tracking
-- Confetti celebration on game end
+**Winning:** After 5 Shotas, highest cumulative score wins.
 
 ---
 
-## Wist Game Lifecycle
-
-```
-START GAME
-    → Determine first Sahib Al-Qabool (card draw)
-    → START SHOTA
-        → Shuffle + Deal 52 cards
-        → Card-based Dak? → Re-deal (same Qabool)
-        → Al-Tasmiya (Bidding)
-        → Pass-based Dak? → Rotate Qabool → New Shota
-        → Qabool Decision (Accept/Play)
-        → Trump Revealed (first card)
-        → Play 13 Tricks
-        → Count Tricks
-        → Seek (all 13)? → END GAME (winner)
-        → Score Shota
-        → Game Finished (5 Shotas or 25+ pts)? → END GAME
-        → Rotate Qabool → Next Shota
-```
-
----
-
-## Project Structure
-
-```
-agents/              - AI agents (rule-based, learning)
-environments/wist/   - Game engine (rules, bidding, scoring, tricks)
-gui/                 - Tkinter GUI (Stats & Lab, Play for AI tabs)
-gui_pygame/          - PyGame GUI (full interactive game)
-intelligence/        - Core abstractions (cards, agents, environments)
-distributable/       - Build scripts and packaged .exe distribution
-```
-
-## Running the Game
+## Running
 
 ```bash
-# PyGame version (recommended)
-python gui_pygame/main.py
+# Sudanese Wist
+python run_wist.py play          # PyGame interactive game
+python run_wist.py lab           # Tkinter AI laboratory + training
+python run_wist.py train         # CLI curriculum training (15k games)
 
-# Tkinter version (AI laboratory)
-python gui/app.py
+# Sudanese Hearts
+python run_hearts.py watch       # PyGame visual AI watcher
+python run_hearts.py train       # CLI training
+python run_hearts.py play        # Play against trained AI
 ```
 
-## Building the Executable
+---
 
-```bash
-# From the distributable/ folder
-build.bat
-```
+## Research Direction
 
-The built `.exe` will be placed in the `dist/` folder.
+The progression:
+
+1. **Card games** (current) — validate learning architectures in controlled environments
+2. **Telecom simulation** — apply the same decision frameworks to network optimization
+3. **Live systems** — deploy adaptive agents for real-time engineering decisions
+
+The card game agents prove that our architectures can:
+- Learn from experience without hardcoded rules
+- Adapt to different opponent styles
+- Balance short-term tactics with long-term strategy
+- Operate under imperfect information
+- Cooperate with teammates (Wist) or compete individually (Hearts)
+
+These are exactly the capabilities needed for intelligent telecom systems.
+
+---
+
+## License
+
+See [LICENSE](LICENSE) file.

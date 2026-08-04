@@ -9,9 +9,9 @@ Can be used standalone (CLI) or called from the GUI Stats tab.
 
 from pathlib import Path
 
-from agents.learning.learning_agent import LearningAgent
+from agents.wist_learning.learning_agent import LearningAgent
 from agents.random.random_agent import RandomAgent
-from agents.rule_based.rule_based_agent import RuleBasedAgent
+from agents.wist_rule_based.rule_based_agent import RuleBasedAgent
 from environments.wist.environment import WistEnvironment
 from environments.wist.playing_engine import PlayingEngine
 from environments.wist.round import Round
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     agent, results = train_agent(
         episodes=2000,
         opponent="random",
-        save_path="agents/learning/trained_model.json",
+        save_path="agents/learning/wist_model.json",
         report_every=100,
         on_progress=progress,
     )
@@ -200,4 +200,4 @@ if __name__ == "__main__":
     print(f"Final: {results.wins}/{total} wins ({results.wins/total*100:.1f}%)")
     print(f"Q-table size: {agent.q_table_size} state-action pairs")
     print(f"Final epsilon: {agent.epsilon:.4f}")
-    print(f"Model saved to: agents/learning/trained_model.json")
+    print(f"Model saved to: agents/learning/wist_model.json")

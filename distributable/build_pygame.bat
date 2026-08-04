@@ -17,13 +17,13 @@ pyinstaller --onefile --windowed --name "SudaneseWist_PyGame" ^
     --add-data "agents;agents" ^
     --add-data "environments;environments" ^
     --add-data "intelligence;intelligence" ^
-    --add-data "gui_pygame;gui_pygame" ^
+    --add-data "gui_wist;gui_wist" ^
     --hidden-import "pygame" ^
     --hidden-import "agents.rule_based.rule_based_agent" ^
     --hidden-import "agents.learning.learning_agent" ^
     --hidden-import "environments.wist" ^
     --hidden-import "intelligence.core" ^
-    gui_pygame\main.py
+    gui_wist\main.py
 
 echo.
 echo ============================================

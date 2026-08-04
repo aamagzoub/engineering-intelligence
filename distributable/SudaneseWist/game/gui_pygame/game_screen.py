@@ -41,7 +41,7 @@ from tkinter import Tk, filedialog
 from gui_pygame.constants import *
 from gui_pygame.card_renderer import create_card_surface, create_card_back, create_shadow
 
-from agents.rule_based.rule_based_agent import RuleBasedAgent
+from agents.wist_rule_based.rule_based_agent import RuleBasedAgent
 from environments.wist.environment import WistEnvironment
 from environments.wist.actions import PlayCardAction
 from environments.wist.round import Round

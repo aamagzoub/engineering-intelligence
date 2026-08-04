@@ -11,7 +11,7 @@ if exist "SudaneseWist\game" rmdir /s /q "SudaneseWist\game"
 mkdir "SudaneseWist\game"
 
 :: Copy game code
-xcopy /s /e /q "..\gui_pygame" "SudaneseWist\game\gui_pygame\" >nul
+xcopy /s /e /q "..\gui_wist" "SudaneseWist\game\gui_wist\" >nul
 xcopy /s /e /q "..\agents" "SudaneseWist\game\agents\" >nul
 xcopy /s /e /q "..\environments" "SudaneseWist\game\environments\" >nul
 xcopy /s /e /q "..\intelligence" "SudaneseWist\game\intelligence\" >nul
