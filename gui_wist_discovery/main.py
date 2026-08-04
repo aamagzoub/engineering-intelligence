@@ -145,6 +145,7 @@ class WistDiscoveryWatcher:
         if self._round.has_card_based_dak():
             self.discovery.reset_episode()
             self._log("  Dak (re-deal)")
+            self.game_shota_scores.append({0: 0, 1: 0})
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
@@ -159,6 +160,7 @@ class WistDiscoveryWatcher:
             # Invalid bid happened — skip this shota.
             self.discovery.reset_episode()
             self._log("  Bidding error — skipping")
+            self.game_shota_scores.append({0: 0, 1: 0})
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
@@ -166,6 +168,7 @@ class WistDiscoveryWatcher:
         if self._tasmiya_result.is_dak:
             self.discovery.reset_episode()
             self._log("  Pass Dak")
+            self.game_shota_scores.append({0: 0, 1: 0})
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
