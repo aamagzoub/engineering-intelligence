@@ -14,6 +14,50 @@ A telecom network deciding how to route traffic under load shares the same decis
 
 By solving Sudanese Wist and Sudanese Hearts — games with rich strategic depth — we develop and validate the learning algorithms, state representations, and reward structures that will later drive real engineering decisions.
 
+## Research Direction
+
+The progression:
+
+1. **Card games** (current) — validate learning architectures in controlled environments
+2. **Telecom simulation** — apply the same decision frameworks to network optimization
+3. **Live systems** — deploy adaptive agents for real-time engineering decisions
+
+The card game agents prove that our architectures can:
+- Learn from experience without hardcoded rules
+- Adapt to different opponent styles
+- Balance short-term tactics with long-term strategy
+- Operate under imperfect information
+- Cooperate with teammates (Wist) or compete individually (Hearts)
+
+These are exactly the capabilities needed for intelligent telecom systems.
+
+## What Each Agent Is Told
+
+This is the key insight of the project. The three environments give their agents vastly different amounts of prior knowledge:
+
+| What the agent is TOLD | Wist | Hearts | Telecom (goal) |
+|---|:---:|:---:|:---:|
+| Environment exists (there's a world to interact with) | ✓ | ✓ | ✓ |
+| Legal moves (what actions are allowed right now) | ✓ | ✓ | ✓ |
+| Outcome signal (a score/reward after actions) | ✓ | ✓ | ✓ |
+| Rules of the game (how tricks work, what wins) | ✓ | ✗ | ✗ |
+| What the goal is (win tricks / avoid hearts) | ✓ | ✗ | ✗ |
+| Scoring formula (how points are calculated) | ✓ | ✗ | ✗ |
+| Which cards/items are special (trump, Queen♠) | ✓ | ✗ | ✗ |
+| Strategy heuristics (lead trump, avoid high cards) | ✓ | ✗ | ✗ |
+| Opponent behavior (what others might do) | ✓ | ✗ | ✗ |
+| Game phases (bidding vs. playing) | ✓ | ✗ | ✗ |
+| Team structure (who's your partner) | ✓ | ✗ | ✗ |
+| Per-action feedback (this trick was good/bad) | ✓ | ✗ | ✗ |
+| Domain vocabulary (trump, seek, shota) | ✓ | ✗ | ✗ |
+
+**Summary:**
+- **Wist agent** is told **13/13** things — it optimizes within fully known rules
+- **Hearts agent** is told **3/13** things — it must discover the other 10 on its own
+- **Telecom agent** will be told **3/13** things — same as Hearts
+
+The three things that carry everywhere: there's an environment, here are your legal moves, here's how you did. Everything else — the agent figures out on its own.
+
 ---
 
 ## Sudanese Wist
@@ -210,54 +254,6 @@ python run_hearts.py watch       # PyGame visual AI watcher
 python run_hearts.py train       # CLI training
 python run_hearts.py play        # Play against trained AI
 ```
-
----
-
-## Research Direction
-
-The progression:
-
-1. **Card games** (current) — validate learning architectures in controlled environments
-2. **Telecom simulation** — apply the same decision frameworks to network optimization
-3. **Live systems** — deploy adaptive agents for real-time engineering decisions
-
-The card game agents prove that our architectures can:
-- Learn from experience without hardcoded rules
-- Adapt to different opponent styles
-- Balance short-term tactics with long-term strategy
-- Operate under imperfect information
-- Cooperate with teammates (Wist) or compete individually (Hearts)
-
-These are exactly the capabilities needed for intelligent telecom systems.
-
----
-
-## What Each Agent Is Told
-
-This is the key insight of the project. The three environments give their agents vastly different amounts of prior knowledge:
-
-| What the agent is TOLD | Wist | Hearts | Telecom (goal) |
-|---|:---:|:---:|:---:|
-| Environment exists (there's a world to interact with) | ✓ | ✓ | ✓ |
-| Legal moves (what actions are allowed right now) | ✓ | ✓ | ✓ |
-| Outcome signal (a score/reward after actions) | ✓ | ✓ | ✓ |
-| Rules of the game (how tricks work, what wins) | ✓ | ✗ | ✗ |
-| What the goal is (win tricks / avoid hearts) | ✓ | ✗ | ✗ |
-| Scoring formula (how points are calculated) | ✓ | ✗ | ✗ |
-| Which cards/items are special (trump, Queen♠) | ✓ | ✗ | ✗ |
-| Strategy heuristics (lead trump, avoid high cards) | ✓ | ✗ | ✗ |
-| Opponent behavior (what others might do) | ✓ | ✗ | ✗ |
-| Game phases (bidding vs. playing) | ✓ | ✗ | ✗ |
-| Team structure (who's your partner) | ✓ | ✗ | ✗ |
-| Per-action feedback (this trick was good/bad) | ✓ | ✗ | ✗ |
-| Domain vocabulary (trump, seek, shota) | ✓ | ✗ | ✗ |
-
-**Summary:**
-- **Wist agent** is told **13/13** things — it optimizes within fully known rules
-- **Hearts agent** is told **3/13** things — it must discover the other 10 on its own
-- **Telecom agent** will be told **3/13** things — same as Hearts
-
-The three things that carry everywhere: there's an environment, here are your legal moves, here's how you did. Everything else — the agent figures out on its own.
 
 ---
 
