@@ -1340,7 +1340,7 @@ class HeartsWatcher:
             elif event.type == pygame.MOUSEWHEEL:
                 # Scroll the discoveries panel.
                 self._disc_scroll_offset = getattr(self, '_disc_scroll_offset', 0)
-                self._disc_scroll_offset -= event.y * 1
+                self._disc_scroll_offset += event.y * 1
                 self._disc_scroll_offset = max(0, self._disc_scroll_offset)
 
     def _handle_click(self, pos):
