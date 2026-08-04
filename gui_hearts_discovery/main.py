@@ -1093,19 +1093,70 @@ class HeartsWatcher:
                         "The AI adjusts its passing strategy based on each hand — not just following a formula.")
 
     def _trigger_milestone(self, key: str, message: str):
-        """Record a discovered behavior with title and description."""
+        """Record a discovered behavior with title and dynamic description.
+        
+        Descriptions are enriched with live game stats so they reflect
+        actual performance rather than static text.
+        """
         if key in self._milestones_achieved:
             return
         self._milestones_achieved.add(key)
-        # Split: title is before colon, description is after.
+
+        # Build dynamic context from current game state.
+        stats = self._build_stats_context()
+
+        # Split: title is before colon, base description is after.
         if ":" in message:
             title = message.split(":")[0].strip()
-            desc = message.split(":", 1)[1].strip()
+            base_desc = message.split(":", 1)[1].strip()
         else:
             title = key.upper()
-            desc = message
+            base_desc = message
+
+        # Generate dynamic suffix with actual numbers.
+        desc = self._enrich_description(key, base_desc, stats)
+
         self._milestones_list.append((title, desc))
         self._log(f"  ** DISCOVERED: {title} **")
+
+    def _build_stats_context(self) -> dict:
+        """Gather current performance stats for dynamic descriptions."""
+        win_rate = (self.games_won_by_ai / max(self.games_played, 1)) * 100
+        recent_win_rate = 0
+        if len(self._win_history) >= 5:
+            recent_win_rate = sum(self._win_history[-5:]) / 5 * 100
+
+        q_states = len(self.discovery.play_q) + len(self.discovery.pass_q)
+        episodes = self.discovery.episodes_trained
+        epsilon = self.discovery.epsilon
+
+        return {
+            "games_played": self.games_played,
+            "games_won": self.games_won_by_ai,
+            "win_rate": win_rate,
+            "recent_win_rate": recent_win_rate,
+            "episodes": episodes,
+            "q_states": q_states,
+            "epsilon": epsilon,
+            "shota_num": self.shota_num,
+        }
+
+    def _enrich_description(self, key: str, base_desc: str, stats: dict) -> str:
+        """Add live stats to the description based on milestone type."""
+        suffix_parts = []
+
+        # Add context based on milestone category.
+        if stats["games_played"] > 0:
+            suffix_parts.append(f"After {stats['episodes']} shotas learned")
+
+        if stats["win_rate"] > 0:
+            suffix_parts.append(f"win rate: {stats['win_rate']:.0f}%")
+
+        if stats["q_states"] > 100:
+            suffix_parts.append(f"{stats['q_states']:,} states explored")
+
+        suffix = f" [{', '.join(suffix_parts)}]" if suffix_parts else ""
+        return f"{base_desc}{suffix}"
 
     def _show_next_milestone(self):
         """No longer used — milestones don't interrupt."""

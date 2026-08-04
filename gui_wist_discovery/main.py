@@ -537,16 +537,72 @@ class WistDiscoveryWatcher:
             self._trigger("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
 
     def _trigger(self, key, msg):
+        """Record a discovered behavior with title and dynamic description.
+        
+        Descriptions are enriched with live game stats so they reflect
+        actual performance rather than static text.
+        """
         if key not in self._milestones_achieved:
             self._milestones_achieved.add(key)
+
+            # Build dynamic context from current game state.
+            stats = self._build_stats_context()
+
             if ":" in msg:
                 title = msg.split(":")[0].strip()
-                desc = msg.split(":", 1)[1].strip()
+                base_desc = msg.split(":", 1)[1].strip()
             else:
                 title = key.upper()
-                desc = msg
+                base_desc = msg
+
+            # Enrich with actual numbers.
+            desc = self._enrich_description(key, base_desc, stats)
+
             self._milestones_list.append((title, desc))
             self._log(f"  ** DISCOVERED: {title} **")
+
+    def _build_stats_context(self) -> dict:
+        """Gather current performance stats for dynamic descriptions."""
+        total_bids = self.bids_met + self.bids_failed
+        bid_accuracy = (self.bids_met / max(total_bids, 1)) * 100
+        win_rate = 0
+        if hasattr(self, '_wist_win_history') and len(self._wist_win_history) > 0:
+            win_rate = sum(self._wist_win_history) / len(self._wist_win_history) * 100
+
+        q_states = len(self.discovery.play_q) + len(self.discovery.bid_q)
+        episodes = self.discovery.episodes_trained
+        epsilon = self.discovery.epsilon
+
+        return {
+            "games_played": self.game_num,
+            "shotas_played": self.shotas_played,
+            "win_rate": win_rate,
+            "bid_accuracy": bid_accuracy,
+            "seeks": self.seeks_achieved,
+            "episodes": episodes,
+            "q_states": q_states,
+            "epsilon": epsilon,
+            "team_score": self.team_scores[0],
+        }
+
+    def _enrich_description(self, key: str, base_desc: str, stats: dict) -> str:
+        """Add live stats to the description based on milestone type."""
+        suffix_parts = []
+
+        if stats["episodes"] > 0:
+            suffix_parts.append(f"After {stats['episodes']} shotas learned")
+
+        if stats["win_rate"] > 0:
+            suffix_parts.append(f"win rate: {stats['win_rate']:.0f}%")
+
+        if stats["bid_accuracy"] > 0 and stats["shotas_played"] >= 3:
+            suffix_parts.append(f"bid accuracy: {stats['bid_accuracy']:.0f}%")
+
+        if stats["q_states"] > 100:
+            suffix_parts.append(f"{stats['q_states']:,} states explored")
+
+        suffix = f" [{', '.join(suffix_parts)}]" if suffix_parts else ""
+        return f"{base_desc}{suffix}"
 
     def _show_next_milestone(self):
         """No longer used."""
