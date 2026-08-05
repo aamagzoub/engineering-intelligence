@@ -143,16 +143,16 @@ One player each Shota holds Al-Qabool. He has the final say on Al-Tasmiya. First
 
 #### Dak (Re-deal)
 
-**Card-based Dak** — declared before bidding if a player holds:
+**Card-based Dak** — may be declared before bidding if a player holds:
 - No picture cards at all (A, K, Q, J) — must show entire hand as proof
 - 8 or more cards of one suit — must show those cards as proof
 
-When card-based Dak is declared, Al-Qabool stays with the same player and cards are re-dealt.
+Declaring card-based Dak is **optional**. The player may choose to play instead using a different suit (1–7 cards) as trump. If declared, Al-Qabool stays with the same player and cards are re-dealt.
 
 **Pass-based Dak** — triggered when all players pass during bidding:
-- First Shota: if first two pass and third declares Dak → automatic. If all three pass → Qabool decides.
-- All other Shotas: all three must pass, then Qabool decides.
-- Pass-based Dak can only happen twice per game. On the third, Qabool must play.
+- First Shota of the game: if all three regular players pass → automatic Dak. Qabool has NO say.
+- All other Shotas: all three must pass, then Qabool decides (bid or Dak).
+- Pass-based Dak can only happen twice per game. On the third, Qabool must play (cannot pass).
 - Al-Qabool moves to the next player clockwise.
 
 #### Al-Tasmiya (The Bid)
@@ -163,7 +163,7 @@ Starts from the player to Qabool's left, moves clockwise. Each player bids a num
 - Bid value must be at least (cards in chosen trump suit + 3)
 - The player may choose any suit as trump (1–7 cards) — this choice is strategic, not declared
 - Opening bid cannot exceed 11. Subsequent bids up to 13.
-- Trump suit must have 7 or fewer cards; 8+ in any suit requires Dak declaration
+- Trump suit must have 7 or fewer cards; 8+ in any suit allows optional Dak declaration (or play with a different suit)
 - If any player bids 13, bidding stops immediately
 - Qabool can match the highest bid (does not have to go higher)
 - Both bid restrictions (min bid = trump+3, opening cap of 11) are lifted for Qabool
@@ -175,7 +175,7 @@ Starts from the player to Qabool's left, moves clockwise. Each player bids a num
 | 5 | 8 | 7 or 8 |
 | 6 | 9 | 8 or 9 |
 | 7 | 10 | 9 or 10 |
-| 8+ | Must declare Dak | — |
+| 8+ | Cannot be trump (may declare Dak or use another suit) | — |
 
 #### Al-Ato (The Trump Suit)
 
