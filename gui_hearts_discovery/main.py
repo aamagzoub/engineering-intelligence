@@ -1900,7 +1900,11 @@ class HeartsWatcher:
         else:
             disc_scroll = getattr(self, '_disc_scroll_offset', 0)
             total = len(self._milestones_list)
-            max_scroll = max(0, total - 1)
+
+            # Estimate how many items fill the panel (conservative: ~45px each).
+            available_h = disc_rect.bottom - y - 15
+            items_fit = max(1, available_h // 45)
+            max_scroll = max(0, total - items_fit)
             disc_scroll = max(0, min(disc_scroll, max_scroll))
             self._disc_scroll_offset = disc_scroll
 
