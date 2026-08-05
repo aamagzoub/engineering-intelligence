@@ -281,7 +281,7 @@ class WistDiscoveryWatcher:
             threading.Thread(target=self._bg_train, daemon=True).start()
 
     def _bg_train(self):
-        """2000 silent self-play shotas in background."""
+        """2000 silent self-play shotas in background, played as full 5-shota games."""
         agent = self.discovery
         opp = WistDiscoveryAgent(training=False)
         opp.play_q = agent.play_q
@@ -290,55 +290,83 @@ class WistDiscoveryWatcher:
         opp.bid_q2 = agent.bid_q2
         opp.epsilon = agent.epsilon
 
-        for _ in range(2000):
-            players = create_standard_players()
-            agents = [agent, opp, agent, opp]
-            r = Round(players); r.deal()
-            if r.has_card_based_dak():
-                agent.reset_episode(); continue
-            tasmiya = TasmiyaEngine()
-            try:
-                res = tasmiya.run(players=players, agents=agents, sahib_al_qabool_id=0)
-            except (ValueError, Exception):
-                agent.reset_episode(); continue
-            if res.is_dak:
-                agent.reset_episode(); continue
-            r.state.trump_suit = res.trump_suit
-            r.state.winning_bidder_id = res.winning_bidder_id
-            r.next_leading_player_id = res.winning_bidder_id
-            env = WistEnvironment(r.state)
-            tt = {0: 0, 1: 0}
-            for _ in range(13):
-                lid = r.next_leading_player_id
-                r.state.current_trick = Trick(leading_player_id=lid)
-                for pid in [(lid + j) % 4 for j in range(4)]:
-                    obs = env.observe(pid)
-                    action = agents[pid].act(obs)
-                    env.apply_action(action)
-                trick = r.state.current_trick
-                w = trick_winner(trick, r.state.trump_suit)
-                r.state.completed_tricks.append(trick)
-                r.state.current_trick = None
-                r.next_leading_player_id = w
-                tt[players[w].team_id] += 1
-                # Per-trick reward for background training.
-                agent.trick_reward(won=(players[w].team_id == 0))
-            scores = score_shota(
-                playing_team_id=res.playing_team_id,
-                defending_team_id=1 - res.playing_team_id,
-                bid=res.winning_bid_value,
-                playing_team_tricks=tt[res.playing_team_id],
-                defending_team_tricks=tt[1 - res.playing_team_id])
-            agent.reward(float(scores[0]))
+        shotas_done = 0
+        while shotas_done < 2000:
+            # Play a full 5-shota game.
+            bg_team_scores = [0, 0]
+            bg_shota_count = 0
 
-            # Check milestones from background games.
-            bid_met = tt[res.playing_team_id] >= res.winning_bid_value
-            self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
-            self._auto_discover(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+            for shota_idx in range(5):
+                # Try to set up a valid shota (retry on dak/errors).
+                valid = False
+                for _attempt in range(10):
+                    players = create_standard_players()
+                    agents_list = [agent, opp, agent, opp]
+                    r = Round(players); r.deal()
+                    if r.has_card_based_dak():
+                        agent.reset_episode(); continue
+                    tasmiya = TasmiyaEngine()
+                    try:
+                        res = tasmiya.run(players=players, agents=agents_list, sahib_al_qabool_id=0)
+                    except (ValueError, Exception):
+                        agent.reset_episode(); continue
+                    if res.is_dak:
+                        agent.reset_episode(); continue
+                    valid = True
+                    break
 
-            # Faster epsilon decay for stronger exploitation.
-            if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
-                agent.epsilon *= 0.98
+                if not valid:
+                    continue
+
+                r.state.trump_suit = res.trump_suit
+                r.state.winning_bidder_id = res.winning_bidder_id
+                r.next_leading_player_id = res.winning_bidder_id
+                env = WistEnvironment(r.state)
+                tt = {0: 0, 1: 0}
+                for _ in range(13):
+                    lid = r.next_leading_player_id
+                    r.state.current_trick = Trick(leading_player_id=lid)
+                    for pid in [(lid + j) % 4 for j in range(4)]:
+                        obs = env.observe(pid)
+                        action = agents_list[pid].act(obs)
+                        env.apply_action(action)
+                    trick = r.state.current_trick
+                    w = trick_winner(trick, r.state.trump_suit)
+                    r.state.completed_tricks.append(trick)
+                    r.state.current_trick = None
+                    r.next_leading_player_id = w
+                    tt[players[w].team_id] += 1
+                    agent.trick_reward(won=(players[w].team_id == 0))
+
+                scores = score_shota(
+                    playing_team_id=res.playing_team_id,
+                    defending_team_id=1 - res.playing_team_id,
+                    bid=res.winning_bid_value,
+                    playing_team_tricks=tt[res.playing_team_id],
+                    defending_team_tricks=tt[1 - res.playing_team_id])
+                agent.reward(float(scores[0]))
+
+                bg_team_scores[0] += scores.get(0, 0)
+                bg_team_scores[1] += scores.get(1, 0)
+                bg_shota_count += 1
+                shotas_done += 1
+
+                # Check milestones per shota.
+                bid_met = tt[res.playing_team_id] >= res.winning_bid_value
+                self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+                self._auto_discover(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+
+                # Epsilon decay.
+                if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
+                    agent.epsilon *= 0.98
+
+            # End of 5-shota game — record in win history.
+            if bg_shota_count > 0:
+                game_won = bg_team_scores[0] > bg_team_scores[1]
+                if not hasattr(self, '_wist_win_history'):
+                    self._wist_win_history = []
+                self._wist_win_history.append(game_won)
+
         self._bg_active = False
 
     def _check_milestones(self, team_tricks, bid, playing_team, bid_met, scores):
