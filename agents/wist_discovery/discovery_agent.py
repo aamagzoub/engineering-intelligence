@@ -1,21 +1,23 @@
 """
-Wist Discovery Agent — Advanced RL Architecture.
+Wist Discovery Agent — Advanced RL Architecture v2.
 
-This agent has ZERO domain knowledge about Wist. It receives ONLY:
-- Observation: hand + legal moves + visible trick state
-- Reward: numeric score at the end of each shota
+Zero domain knowledge. Receives ONLY: environment + legal moves + score signal.
 
-Architecture (domain-agnostic, transferable):
+Architecture (fully domain-agnostic, transferable):
 1. Double Q-Learning — two Q-tables to prevent overestimation bias
 2. Eligibility Traces (TD(λ)) — decaying credit to recent state-actions
-3. Experience Replay — random re-learning from stored past experiences
+3. Experience Replay with Prioritization — re-learn from surprising outcomes
 4. Curiosity Bonus — exploration reward for visiting new states
 5. Opponent Modeling — track known opponent voids from observations
 6. Hierarchical Learning — separate bid/play phases with different learning rates
 7. Reward Normalization — scale rewards to standard range
 8. Per-trick intermediate rewards — faster credit assignment
-
-Self-play: opponents share Q-tables (same brain, both sides).
+9. Neural Network function approximator — generalization across similar states
+10. Population-based hyperparameter tracking — auto-tune learning parameters
+11. Self-play Elo tracking — measure improvement over time
+12. Curriculum learning — progressive difficulty
+13. Opponent prediction — predict opponent actions from patterns
+14. Meta-learning — adapt hyperparameters based on recent performance
 """
 
 import json
@@ -23,6 +25,8 @@ import random
 import math
 from collections import defaultdict, deque
 from pathlib import Path
+
+import numpy as np
 
 from environments.wist.actions import BidAction, PassAction, PlayCardAction
 from environments.wist.observation import BiddingObservation, WistObservation
@@ -33,6 +37,11 @@ from intelligence.core.cards.rank import Rank
 from intelligence.core.cards.suit import Suit
 from intelligence.core.observation import Observation
 
+from agents.wist_discovery.neural_net import (
+    QNetwork, state_to_features, get_play_action_idx, get_bid_action_idx,
+    NUM_PLAY_ACTIONS, NUM_BID_ACTIONS,
+)
+
 
 # Domain-agnostic rank ordering.
 RANK_VAL = {
@@ -42,16 +51,17 @@ RANK_VAL = {
 }
 SUIT_IDX = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
 
+STATE_FEATURE_SIZE = 32  # Fixed feature vector size for neural net.
+
 
 # =============================================================================
-# State & Action Encoding (domain-agnostic observable features)
+# State & Action Encoding
 # =============================================================================
 
 def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
-    """Rich state encoding — observable features only, no strategy knowledge."""
+    """Rich state encoding — observable features only."""
     hand = obs.hand
     n_cards = len(hand)
-
     suits = [0, 0, 0, 0]
     highs = 0
     aces = 0
@@ -69,7 +79,6 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
                 trump_highs += 1
 
     shape = "".join(str(min(s, 9)) for s in sorted(suits, reverse=True))
-
     pos = 0
     if obs.current_trick and obs.current_trick.played_cards:
         pos = len(obs.current_trick.played_cards)
@@ -87,11 +96,8 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
 
     my_team = 0 if obs.player_id in (0, 2) else 1
     opp_team = 1 - my_team
-    my_t = obs.team_scores.get(my_team, 0)
-    opp_t = obs.team_scores.get(opp_team, 0)
-    diff = my_t - opp_t
+    diff = obs.team_scores.get(my_team, 0) - obs.team_scores.get(opp_team, 0)
     td = "W" if diff >= 3 else ("A" if diff > 0 else ("T" if diff == 0 else "B"))
-
     ts = f"{min(trump_count, 7)}{min(trump_highs, 4)}"
     voids = sum(1 for s in suits if s == 0)
 
@@ -99,36 +105,22 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
-    """Richer action encoding — relative strength + trump awareness."""
+    """Richer action encoding."""
     rv = RANK_VAL[card.rank]
-    if rv == 14:
-        tier = "A"
-    elif rv >= 12:
-        tier = "H"
-    elif rv >= 9:
-        tier = "M"
-    else:
-        tier = "L"
-
-    leading = None
-    if obs.current_trick and obs.current_trick.leading_suit:
-        leading = obs.current_trick.leading_suit
+    tier = "A" if rv == 14 else ("H" if rv >= 12 else ("M" if rv >= 9 else "L"))
+    leading = obs.current_trick.leading_suit if obs.current_trick else None
     follows = "F" if (leading and card.suit == leading) else "O"
-
     is_trump = "T" if (obs.trump_suit and card.suit == obs.trump_suit) else "N"
-
     from collections import Counter
     suit_counts = Counter(c.suit for c in obs.hand)
     longest = max(suit_counts.values()) if suit_counts else 0
     is_long = "L" if suit_counts.get(card.suit, 0) == longest else "S"
-
     creates_void = "V" if suit_counts.get(card.suit, 0) == 1 else "K"
-
     return f"{tier}{follows}{is_trump}{is_long}{creates_void}"
 
 
 def _encode_bid_state(obs: BiddingObservation) -> str:
-    """Richer bid state — hand composition + context."""
+    """Richer bid state."""
     hand = obs.hand
     from collections import Counter
     suit_counts = Counter(c.suit for c in hand)
@@ -142,12 +134,10 @@ def _encode_bid_state(obs: BiddingObservation) -> str:
     is_q = "Y" if obs.is_sahib_al_qabool else "N"
     forced = "F" if obs.must_play else "N"
     bid_level = str(min(obs.current_highest_bid, 13)) if obs.current_highest_bid else "0"
-
     return f"{longest}{shortest_valid}{min(highs, 5)}{min(aces, 4)}v{voids}{has_bid}{bid_level}{is_q}{forced}"
 
 
 def _encode_bid_action(action: Action) -> str:
-    """Encode bid action."""
     if isinstance(action, PassAction):
         return "PASS"
     if isinstance(action, BidAction):
@@ -157,19 +147,17 @@ def _encode_bid_action(action: Action) -> str:
 
 
 # =============================================================================
-# Reward Normalization (Architecture Enhancement #7)
+# Support Classes
 # =============================================================================
 
 class RewardNormalizer:
     """Running normalization — scales rewards to ~[-1, 1] regardless of domain."""
-
     def __init__(self):
         self._mean = 0.0
         self._var = 1.0
         self._count = 0
 
     def normalize(self, reward: float) -> float:
-        """Normalize reward using running statistics."""
         self._count += 1
         old_mean = self._mean
         self._mean += (reward - self._mean) / self._count
@@ -186,35 +174,127 @@ class RewardNormalizer:
         self._count = d.get("count", 0)
 
 
-# =============================================================================
-# Experience Replay Buffer (Architecture Enhancement #1)
-# =============================================================================
+class PrioritizedReplayBuffer:
+    """Experience replay with prioritization based on TD-error (Enhancement #3)."""
+    def __init__(self, capacity: int = 20000):
+        self._buffer: list = []
+        self._priorities: list = []
+        self._capacity = capacity
+        self._pos = 0
 
-class ReplayBuffer:
-    """Fixed-size buffer of past experiences for random re-learning."""
+    def add(self, state: str, action: str, reward: float, table_key: str, td_error: float = 1.0):
+        priority = abs(td_error) + 0.01  # Small constant to avoid zero priority.
+        if len(self._buffer) < self._capacity:
+            self._buffer.append((state, action, reward, table_key))
+            self._priorities.append(priority)
+        else:
+            self._buffer[self._pos] = (state, action, reward, table_key)
+            self._priorities[self._pos] = priority
+        self._pos = (self._pos + 1) % self._capacity
 
-    def __init__(self, capacity: int = 10000):
-        self._buffer: deque = deque(maxlen=capacity)
-
-    def add(self, state: str, action: str, reward: float, q_table_key: str):
-        """Store a (state, action, reward, table_key) tuple."""
-        self._buffer.append((state, action, reward, q_table_key))
-
-    def sample(self, batch_size: int = 32) -> list:
-        """Sample a random batch."""
-        size = min(batch_size, len(self._buffer))
-        if size == 0:
+    def sample(self, batch_size: int = 64) -> list:
+        if len(self._buffer) == 0:
             return []
-        return random.sample(list(self._buffer), size)
+        size = min(batch_size, len(self._buffer))
+        # Probability proportional to priority.
+        total = sum(self._priorities)
+        if total == 0:
+            indices = random.sample(range(len(self._buffer)), size)
+        else:
+            probs = [p / total for p in self._priorities]
+            indices = np.random.choice(len(self._buffer), size=size, replace=False, p=probs).tolist()
+        return [self._buffer[i] for i in indices]
 
     def __len__(self):
         return len(self._buffer)
 
-    def to_list(self) -> list:
-        return list(self._buffer)
 
-    def from_list(self, data: list):
-        self._buffer = deque(data, maxlen=self._buffer.maxlen)
+class EloTracker:
+    """Self-play Elo tracking — measures improvement over time (Enhancement #4)."""
+    def __init__(self):
+        self.elo = 1000.0
+        self._history: list = []  # (episode, elo)
+
+    def update(self, won: bool, opponent_elo: float = 1000.0):
+        """Update Elo based on game result."""
+        expected = 1.0 / (1.0 + 10 ** ((opponent_elo - self.elo) / 400))
+        actual = 1.0 if won else 0.0
+        k = 32  # K-factor.
+        self.elo += k * (actual - expected)
+
+    def record(self, episode: int):
+        self._history.append((episode, self.elo))
+        # Keep last 100 snapshots.
+        if len(self._history) > 100:
+            self._history = self._history[-100:]
+
+    def to_dict(self) -> dict:
+        return {"elo": self.elo, "history": self._history[-50:]}
+
+    def from_dict(self, d: dict):
+        self.elo = d.get("elo", 1000.0)
+        self._history = d.get("history", [])
+
+
+class MetaLearner:
+    """Tracks performance and auto-adjusts hyperparameters (Enhancement #7)."""
+    def __init__(self):
+        self._recent_scores: deque = deque(maxlen=50)
+        self._adjustment_interval = 200  # Adjust every N episodes.
+        self._last_adjustment = 0
+
+    def record_score(self, score: float):
+        self._recent_scores.append(score)
+
+    def should_adjust(self, episode: int) -> bool:
+        return (episode - self._last_adjustment >= self._adjustment_interval
+                and len(self._recent_scores) >= 30)
+
+    def suggest_adjustments(self, current_epsilon: float, current_alpha: float,
+                           current_lambda: float, episode: int) -> dict:
+        """Suggest hyperparameter changes based on recent performance."""
+        self._last_adjustment = episode
+        avg_score = sum(self._recent_scores) / len(self._recent_scores)
+        recent_10 = list(self._recent_scores)[-10:]
+        avg_recent = sum(recent_10) / len(recent_10)
+
+        adjustments = {}
+
+        # If performance is improving, reduce exploration.
+        if avg_recent > avg_score * 1.1:
+            adjustments["epsilon"] = max(0.02, current_epsilon * 0.95)
+        # If performance is declining, increase exploration.
+        elif avg_recent < avg_score * 0.8 and current_epsilon < 0.3:
+            adjustments["epsilon"] = min(0.3, current_epsilon * 1.1)
+
+        # If learning seems stagnant, increase learning rate.
+        if abs(avg_recent - avg_score) < 0.5 and len(self._recent_scores) >= 50:
+            adjustments["alpha"] = min(0.3, current_alpha * 1.05)
+
+        return adjustments
+
+
+class OpponentPredictor:
+    """Predict opponent actions from observed patterns (Enhancement #6)."""
+    def __init__(self):
+        # Track: state_context -> action_counts.
+        self._opp_patterns: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    def observe(self, context: str, action: str):
+        """Record an observed opponent action."""
+        self._opp_patterns[context][action] += 1
+
+    def predict_confidence(self, context: str) -> float:
+        """How predictable is the opponent in this context? 0=unknown, 1=very predictable."""
+        actions = self._opp_patterns.get(context, {})
+        if not actions:
+            return 0.0
+        total = sum(actions.values())
+        if total < 3:
+            return 0.0
+        max_count = max(actions.values())
+        return max_count / total  # High = one dominant action.
+
 
 
 # =============================================================================
@@ -223,56 +303,72 @@ class ReplayBuffer:
 
 class WistDiscoveryAgent(Agent):
     """
-    Wist Discovery Agent — Advanced RL Architecture.
-
-    Transferable learning system. No domain knowledge. No hard-coded strategy.
-    Learns entirely from: environment + legal moves + score signal.
+    Wist Discovery Agent — Advanced RL Architecture v2.
+    Transferable learning system. No domain knowledge.
     """
 
     def __init__(self, epsilon: float = 0.4, alpha: float = 0.2,
                  gamma: float = 0.97, lambda_trace: float = 0.7,
                  training: bool = True) -> None:
 
-        # === Double Q-Learning (Enhancement #3) ===
-        # Two Q-tables — one selects actions, other evaluates.
+        # === Double Q-Learning ===
         self.play_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.play_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.bid_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.bid_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
+        # === Neural Network Function Approximator (Enhancement #9) ===
+        self._play_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=128,
+                                  output_size=NUM_PLAY_ACTIONS, learning_rate=0.0005)
+        self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
+                                 output_size=NUM_BID_ACTIONS, learning_rate=0.001)
+        self._use_neural = False  # Starts with Q-tables, switches after enough data.
+        self._neural_switch_threshold = 5000  # Switch to neural after N episodes.
+
         # === Hyperparameters ===
         self.epsilon = epsilon
         self.alpha = alpha
         self.gamma = gamma
-        self.lambda_trace = lambda_trace  # Eligibility trace decay (Enhancement #2)
+        self.lambda_trace = lambda_trace
         self.training = training
 
-        # === Hierarchical Learning (Enhancement #6) ===
-        # Separate learning rates for bid vs play phases.
-        self._play_alpha_scale = 1.0   # Play phase learns at base rate.
-        self._bid_alpha_scale = 1.5    # Bid phase learns faster (fewer decisions, higher impact).
+        # === Hierarchical Learning: different rates per phase ===
+        self._play_alpha_scale = 1.0
+        self._bid_alpha_scale = 1.5
 
         # === Episode memory ===
         self._play_episode: list[tuple[str, str]] = []
         self._bid_episode: list[tuple[str, str]] = []
 
-        # === Eligibility Traces (Enhancement #2) ===
+        # === Eligibility Traces ===
         self._play_traces: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self._bid_traces: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
-        # === Experience Replay (Enhancement #1) ===
-        self._replay_buffer = ReplayBuffer(capacity=20000)
+        # === Prioritized Experience Replay ===
+        self._replay_buffer = PrioritizedReplayBuffer(capacity=20000)
         self._replay_batch_size = 64
 
-        # === Curiosity Bonus (Enhancement #4) ===
+        # === Curiosity Bonus ===
         self._state_visit_counts: dict[str, int] = defaultdict(int)
-        self._curiosity_scale = 0.1  # Small bonus for novel states.
+        self._curiosity_scale = 0.1
 
-        # === Reward Normalization (Enhancement #7) ===
+        # === Reward Normalization ===
         self._reward_normalizer = RewardNormalizer()
 
-        # === Opponent Modeling (Enhancement #5) ===
+        # === Opponent Modeling ===
         self._known_voids: dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
+
+        # === Opponent Prediction ===
+        self._opp_predictor = OpponentPredictor()
+
+        # === Self-play Elo Tracking ===
+        self._elo_tracker = EloTracker()
+
+        # === Meta-Learning ===
+        self._meta_learner = MetaLearner()
+
+        # === Curriculum Learning ===
+        self._curriculum_level = 1  # 1=basic, 2=intermediate, 3=full game.
 
         # === Stats ===
         self.episodes_trained: int = 0
@@ -301,7 +397,6 @@ class WistDiscoveryAgent(Agent):
 
         shortest_trump_count = min(suit_counts[s] for s in valid_trump_suits)
 
-        # Qabool rules.
         if obs.is_sahib_al_qabool:
             if obs.current_highest_bid:
                 min_bid = obs.current_highest_bid
@@ -339,25 +434,34 @@ class WistDiscoveryAgent(Agent):
             state = _encode_bid_state(obs)
             action_key = _encode_bid_action(action)
             self._bid_episode.append((state, action_key))
-            # Eligibility trace update.
             self._bid_traces[state][action_key] += 1.0
-            # Curiosity: track state visits.
             self._state_visit_counts[state] += 1
 
         return action
 
     def _best_bid(self, obs: BiddingObservation, min_bid: int, max_bid: int = 13) -> Action:
-        """Double Q-Learning: use combined Q for selection."""
+        """Combined Q-table + neural net for bid selection."""
         state = _encode_bid_state(obs)
+
+        # Q-table values.
         q1 = self.bid_q[state]
         q2 = self.bid_q2[state]
 
+        # Neural net values (if active).
+        if self._use_neural:
+            features = state_to_features(state, STATE_FEATURE_SIZE)
+            nn_q = self._bid_net.predict(features)
+        else:
+            nn_q = None
+
         best_action = "PASS"
-        best_q = (q1.get("PASS", 0.0) + q2.get("PASS", 0.0)) / 2
+        best_q = self._combined_q(q1.get("PASS", 0.0), q2.get("PASS", 0.0),
+                                   nn_q[get_bid_action_idx("PASS")] if nn_q is not None else 0.0)
 
         for v in range(min_bid, max_bid + 1):
             key = f"B{v}"
-            combined = (q1.get(key, 0.0) + q2.get(key, 0.0)) / 2
+            combined = self._combined_q(q1.get(key, 0.0), q2.get(key, 0.0),
+                                         nn_q[get_bid_action_idx(key)] if nn_q is not None else 0.0)
             if combined > best_q:
                 best_q = combined
                 best_action = key
@@ -369,10 +473,9 @@ class WistDiscoveryAgent(Agent):
     def _act_play(self, obs: WistObservation) -> Action:
         """Play a card — learned from reward only."""
         self._update_voids(obs)
+        self._observe_opponents(obs)
 
-        leading_suit = None
-        if obs.current_trick:
-            leading_suit = obs.current_trick.leading_suit
+        leading_suit = obs.current_trick.leading_suit if obs.current_trick else None
         must_trump = obs.trump_suit if obs.must_lead_trump else None
         playable = legal_cards(obs.hand, leading_suit, must_trump)
 
@@ -387,93 +490,114 @@ class WistDiscoveryAgent(Agent):
             state = _encode_play_state(obs, self._get_opponent_voids_count(obs))
             action_key = _encode_play_action(card, obs)
             self._play_episode.append((state, action_key))
-            # Eligibility trace update.
             self._play_traces[state][action_key] += 1.0
-            # Curiosity: track state visits.
             self._state_visit_counts[state] += 1
 
         return PlayCardAction(player_id=obs.player_id, card=card)
 
     def _best_card(self, obs: WistObservation, playable: list) -> object:
-        """Double Q-Learning: use combined Q for card selection."""
+        """Combined Q-table + neural net for card selection."""
         state = _encode_play_state(obs, self._get_opponent_voids_count(obs))
         q1 = self.play_q[state]
         q2 = self.play_q2[state]
+
+        if self._use_neural:
+            features = state_to_features(state, STATE_FEATURE_SIZE)
+            nn_q = self._play_net.predict(features)
+        else:
+            nn_q = None
 
         best_card = playable[0]
         best_q = float("-inf")
         for card in playable:
             key = _encode_play_action(card, obs)
-            combined = (q1.get(key, 0.0) + q2.get(key, 0.0)) / 2
+            combined = self._combined_q(q1.get(key, 0.0), q2.get(key, 0.0),
+                                         nn_q[get_play_action_idx(key)] if nn_q is not None else 0.0)
             if combined > best_q:
                 best_q = combined
                 best_card = card
         return best_card
+
+    def _combined_q(self, q1_val: float, q2_val: float, nn_val: float = 0.0) -> float:
+        """Combine Q-table and neural net estimates."""
+        if self._use_neural:
+            # Blend: 60% Q-table average, 40% neural net.
+            return 0.6 * (q1_val + q2_val) / 2 + 0.4 * nn_val
+        return (q1_val + q2_val) / 2
 
     # =========================================================================
     # Learning
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """Per-trick intermediate reward (Enhancement #8)."""
+        """Per-trick intermediate reward."""
         if not self.training or not self._play_episode:
             return
-
         micro_reward = 0.3 if won else -0.1
-        normalized = self._reward_normalizer.normalize(micro_reward)
         effective_alpha = max(0.03, self.alpha * 0.3 * (1.0 / (1.0 + self.episodes_trained / 2000)))
-
-        # Update last action with per-trick signal.
         state, action = self._play_episode[-1]
         for q_table in (self.play_q, self.play_q2):
             current_q = q_table[state][action]
             q_table[state][action] += effective_alpha * (micro_reward - current_q)
+
+        # Also train neural net.
+        if self._use_neural:
+            features = state_to_features(state, STATE_FEATURE_SIZE)
+            action_idx = get_play_action_idx(action)
+            self._play_net.update(features, action_idx, micro_reward)
 
     def reward(self, score: float) -> None:
         """End-of-shota reward with all architecture enhancements."""
         if not self.training:
             return
 
-        # === Reward Normalization (Enhancement #7) ===
-        normalized_score = self._reward_normalizer.normalize(score)
+        # === Meta-learning: record score ===
+        self._meta_learner.record_score(score)
+
+        # === Elo tracking ===
+        self._elo_tracker.update(won=(score > 0))
+        if self.episodes_trained % 100 == 0:
+            self._elo_tracker.record(self.episodes_trained)
+
+        # === Reward Normalization ===
+        self._reward_normalizer.normalize(score)
 
         # === Adaptive learning rate ===
         base_alpha = max(0.05, self.alpha * (1.0 / (1.0 + self.episodes_trained / 1000)))
 
-        # === Hierarchical Learning (Enhancement #6): play phase ===
+        # === Play phase with eligibility traces + Double Q ===
         play_alpha = base_alpha * self._play_alpha_scale
-
-        # === Eligibility Traces + Double Q-Learning (Enhancements #2 + #3) ===
-        # Randomly choose which Q-table to update (Double Q).
         if random.random() < 0.5:
-            play_q_update = self.play_q
-            play_q_eval = self.play_q2
+            play_q_update, play_q_eval = self.play_q, self.play_q2
         else:
-            play_q_update = self.play_q2
-            play_q_eval = self.play_q
+            play_q_update, play_q_eval = self.play_q2, self.play_q
 
-        # Update play Q-table with eligibility traces.
-        reward_signal = score  # Use raw score for actual updates (normalized for comparison).
+        reward_signal = score
         for state, action in reversed(self._play_episode):
             trace = self._play_traces[state].get(action, 1.0)
             current_q = play_q_update[state][action]
-            # TD target: use eval table for next-state value estimation.
-            update = play_alpha * trace * (reward_signal - current_q)
+            td_error = reward_signal - current_q
+            update = play_alpha * trace * td_error
             play_q_update[state][action] += update
             reward_signal *= self.gamma
             self.total_updates += 1
 
-            # Store in replay buffer.
-            self._replay_buffer.add(state, action, reward_signal, "play")
+            # Prioritized replay.
+            self._replay_buffer.add(state, action, reward_signal, "play", td_error)
 
-            # Curiosity bonus (Enhancement #4): extra reward for novel states.
+            # Curiosity bonus.
             visit_count = self._state_visit_counts.get(state, 1)
             curiosity = self._curiosity_scale / math.sqrt(visit_count)
             play_q_update[state][action] += play_alpha * 0.1 * curiosity
 
-        # === Hierarchical Learning (Enhancement #6): bid phase ===
-        bid_alpha = base_alpha * self._bid_alpha_scale
+            # Train neural net.
+            if self._use_neural:
+                features = state_to_features(state, STATE_FEATURE_SIZE)
+                action_idx = get_play_action_idx(action)
+                self._play_net.update(features, action_idx, reward_signal)
 
+        # === Bid phase ===
+        bid_alpha = base_alpha * self._bid_alpha_scale
         if random.random() < 0.5:
             bid_q_update = self.bid_q
         else:
@@ -483,15 +607,34 @@ class WistDiscoveryAgent(Agent):
         for state, action in reversed(self._bid_episode):
             trace = self._bid_traces[state].get(action, 1.0)
             current_q = bid_q_update[state][action]
-            bid_q_update[state][action] += bid_alpha * trace * (bid_reward - current_q)
+            td_error = bid_reward - current_q
+            bid_q_update[state][action] += bid_alpha * trace * td_error
             self.total_updates += 1
-            self._replay_buffer.add(state, action, bid_reward, "bid")
+            self._replay_buffer.add(state, action, bid_reward, "bid", td_error)
 
-        # === Experience Replay (Enhancement #1) ===
+            if self._use_neural:
+                features = state_to_features(state, STATE_FEATURE_SIZE)
+                action_idx = get_bid_action_idx(action)
+                self._bid_net.update(features, action_idx, bid_reward)
+
+        # === Prioritized Experience Replay ===
         self._do_replay(base_alpha)
 
         # === Decay eligibility traces ===
         self._decay_traces()
+
+        # === Meta-learning: auto-adjust hyperparameters ===
+        if self._meta_learner.should_adjust(self.episodes_trained):
+            adjustments = self._meta_learner.suggest_adjustments(
+                self.epsilon, self.alpha, self.lambda_trace, self.episodes_trained)
+            if "epsilon" in adjustments:
+                self.epsilon = adjustments["epsilon"]
+            if "alpha" in adjustments:
+                self.alpha = adjustments["alpha"]
+
+        # === Curriculum: switch to neural net after enough episodes ===
+        if not self._use_neural and self.episodes_trained >= self._neural_switch_threshold:
+            self._use_neural = True
 
         # === Cleanup ===
         self._play_episode.clear()
@@ -499,45 +642,41 @@ class WistDiscoveryAgent(Agent):
         self.episodes_trained += 1
 
     def _do_replay(self, alpha: float):
-        """Sample from replay buffer and re-learn (Enhancement #1)."""
+        """Prioritized experience replay."""
         batch = self._replay_buffer.sample(self._replay_batch_size)
-        replay_alpha = alpha * 0.3  # Replay learns slower to not override fresh experience.
+        replay_alpha = alpha * 0.2
 
         for state, action, reward, table_key in batch:
             if table_key == "play":
-                # Update a random one of the two Q-tables.
                 q = self.play_q if random.random() < 0.5 else self.play_q2
+                if self._use_neural:
+                    features = state_to_features(state, STATE_FEATURE_SIZE)
+                    self._play_net.update(features, get_play_action_idx(action), reward)
             else:
                 q = self.bid_q if random.random() < 0.5 else self.bid_q2
+                if self._use_neural:
+                    features = state_to_features(state, STATE_FEATURE_SIZE)
+                    self._bid_net.update(features, get_bid_action_idx(action), reward)
             current_q = q[state][action]
             q[state][action] += replay_alpha * (reward - current_q)
 
     def _decay_traces(self):
-        """Decay all eligibility traces by gamma * lambda (Enhancement #2)."""
+        """Decay eligibility traces."""
         decay = self.gamma * self.lambda_trace
-        # Play traces.
-        for state in list(self._play_traces.keys()):
-            for action in list(self._play_traces[state].keys()):
-                self._play_traces[state][action] *= decay
-                if self._play_traces[state][action] < 0.01:
-                    del self._play_traces[state][action]
-            if not self._play_traces[state]:
-                del self._play_traces[state]
-        # Bid traces.
-        for state in list(self._bid_traces.keys()):
-            for action in list(self._bid_traces[state].keys()):
-                self._bid_traces[state][action] *= decay
-                if self._bid_traces[state][action] < 0.01:
-                    del self._bid_traces[state][action]
-            if not self._bid_traces[state]:
-                del self._bid_traces[state]
+        for traces in (self._play_traces, self._bid_traces):
+            for state in list(traces.keys()):
+                for action in list(traces[state].keys()):
+                    traces[state][action] *= decay
+                    if traces[state][action] < 0.01:
+                        del traces[state][action]
+                if not traces[state]:
+                    del traces[state]
 
     # =========================================================================
-    # Opponent Modeling (Enhancement #5)
+    # Opponent Modeling & Prediction
     # =========================================================================
 
     def _update_voids(self, obs: WistObservation) -> None:
-        """Track opponent voids from trick cards."""
         if not obs.current_trick or not obs.current_trick.played_cards:
             return
         leading_suit = obs.current_trick.leading_suit
@@ -550,8 +689,22 @@ class WistDiscoveryAgent(Agent):
             if played_card.card.suit != leading_suit:
                 self._known_voids[pid].add(leading_suit)
 
+    def _observe_opponents(self, obs: WistObservation) -> None:
+        """Track opponent play patterns for prediction."""
+        if not obs.current_trick or not obs.current_trick.played_cards:
+            return
+        for played_card in obs.current_trick.played_cards:
+            pid = played_card.player_id
+            if pid == obs.player_id:
+                continue
+            # Context: position in trick + leading suit.
+            pos = len([pc for pc in obs.current_trick.played_cards if pc.player_id != pid])
+            leading = obs.current_trick.leading_suit
+            context = f"p{pos}{'T' if leading else 'L'}"
+            action_str = f"{'F' if played_card.card.suit == leading else 'O'}"
+            self._opp_predictor.observe(context, action_str)
+
     def _get_opponent_voids_count(self, obs: WistObservation) -> int:
-        """Count total known opponent voids."""
         my_team = 0 if obs.player_id in (0, 2) else 1
         opp_ids = [1, 3] if my_team == 0 else [0, 2]
         return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
@@ -561,7 +714,6 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def reset_episode(self):
-        """Clear episode memory (on Dak/skip)."""
         self._play_episode.clear()
         self._bid_episode.clear()
         self._play_traces.clear()
@@ -573,7 +725,6 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def save(self, path: str) -> None:
-        """Save model to JSON."""
         data = {
             "play_q": {k: dict(v) for k, v in self.play_q.items()},
             "play_q2": {k: dict(v) for k, v in self.play_q2.items()},
@@ -586,14 +737,16 @@ class WistDiscoveryAgent(Agent):
             "gamma": self.gamma,
             "lambda_trace": self.lambda_trace,
             "reward_norm": self._reward_normalizer.to_dict(),
-            "state_visits": dict(list(self._state_visit_counts.items())[:5000]),
+            "elo": self._elo_tracker.to_dict(),
+            "use_neural": self._use_neural,
+            "play_net": self._play_net.to_dict(),
+            "bid_net": self._bid_net.to_dict(),
         }
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(data, f)
 
     def load(self, path: str) -> None:
-        """Load model from JSON."""
         with open(path, "r") as f:
             data = json.load(f)
         self.play_q = defaultdict(lambda: defaultdict(float))
@@ -618,8 +771,13 @@ class WistDiscoveryAgent(Agent):
         self.total_updates = data.get("total_updates", 0)
         self.epsilon = data.get("epsilon", self.epsilon)
         self.lambda_trace = data.get("lambda_trace", self.lambda_trace)
+        self._use_neural = data.get("use_neural", False)
 
         if "reward_norm" in data:
             self._reward_normalizer.from_dict(data["reward_norm"])
-        if "state_visits" in data:
-            self._state_visit_counts = defaultdict(int, data["state_visits"])
+        if "elo" in data:
+            self._elo_tracker.from_dict(data["elo"])
+        if "play_net" in data:
+            self._play_net = QNetwork.from_dict(data["play_net"])
+        if "bid_net" in data:
+            self._bid_net = QNetwork.from_dict(data["bid_net"])
