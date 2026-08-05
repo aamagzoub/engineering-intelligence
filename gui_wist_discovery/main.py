@@ -104,6 +104,8 @@ class WistDiscoveryWatcher:
         self._milestones_list = []  # Ordered discovered behaviors.
         self._app_start_time = __import__('time').monotonic()
         self._last_discovery_time = None
+        self._total_paused_time = 0.0  # Accumulated paused seconds.
+        self._pause_start = None  # When current pause began.
 
         # Load previously discovered milestones.
         self._load_milestones()
@@ -708,7 +710,6 @@ class WistDiscoveryWatcher:
 
     def _trigger(self, key, msg):
         """Record a discovered behavior with structured multi-line format."""
-        import time
         if key not in self._milestones_achieved:
             self._milestones_achieved.add(key)
 
@@ -726,20 +727,18 @@ class WistDiscoveryWatcher:
                 base_desc = msg
 
             # Compute times.
-            now = time.monotonic()
-            app_start = getattr(self, '_app_start_time', now)
-            last_disc_time = getattr(self, '_last_discovery_time', None)
+            now_compute = self._get_compute_time()
+            last_disc_time = getattr(self, '_last_discovery_compute', None)
 
-            total_sec = now - app_start
-            total_str = self._format_time(total_sec)
+            total_str = self._format_time(now_compute)
 
             if last_disc_time is not None:
-                delta_sec = now - last_disc_time
+                delta_sec = now_compute - last_disc_time
                 delta_str = self._format_time(delta_sec)
             else:
                 delta_str = "—"
 
-            self._last_discovery_time = now
+            self._last_discovery_compute = now_compute
 
             # Multi-line structured description.
             desc = (
@@ -1005,12 +1004,12 @@ class WistDiscoveryWatcher:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 elif event.key == pygame.K_SPACE:
-                    self.paused = not self.paused
+                    self._toggle_pause()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self._continue_btn_rect and self._continue_btn_rect.collidepoint(event.pos):
                     self._on_continue()
                 if self._mode_btn_rect and self._mode_btn_rect.collidepoint(event.pos):
-                    self.paused = not self.paused
+                    self._toggle_pause()
                 if self._reset_btn_rect and self._reset_btn_rect.collidepoint(event.pos):
                     self._reset_brain()
             elif event.type == pygame.MOUSEWHEEL:
@@ -1023,6 +1022,30 @@ class WistDiscoveryWatcher:
             self._start_new_shota()
         elif self.state == "game_over":
             self._start_new_game()
+
+    def _toggle_pause(self):
+        """Toggle pause and track paused time accurately."""
+        import time
+        if self.paused:
+            # Resuming — record how long we were paused.
+            if self._pause_start is not None:
+                self._total_paused_time += time.monotonic() - self._pause_start
+                self._pause_start = None
+        else:
+            # Pausing — record when pause started.
+            self._pause_start = time.monotonic()
+        self.paused = not self.paused
+
+    def _get_compute_time(self) -> float:
+        """Get actual compute seconds (excludes paused time)."""
+        import time
+        now = time.monotonic()
+        total_elapsed = now - self._app_start_time
+        paused = self._total_paused_time
+        # If currently paused, add current pause duration.
+        if self._pause_start is not None:
+            paused += now - self._pause_start
+        return total_elapsed - paused
 
     def _reset_brain(self):
         """Reset discovery agent — start from scratch."""
@@ -1195,7 +1218,7 @@ class WistDiscoveryWatcher:
         panel_w = 280
 
         # === Box 1: Scoreboard ===
-        score_h = 185
+        score_h = 215
         score_rect = pygame.Rect(px, 60, panel_w, score_h)
         pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
@@ -1246,12 +1269,14 @@ class WistDiscoveryWatcher:
         y += 8
         # Stats below the table.
         stats = [
-            f"Shotas learned: {self.discovery.episodes_trained:,}  |  Seeks: {self.seeks_achieved}",
-            f"Bids met: {self.bids_met}/{self.bids_met + self.bids_failed}  |  ε: {self.discovery.epsilon:.3f}",
+            f"Shotas learned: {self.discovery.episodes_trained:,}",
+            f"Seeks: {self.seeks_achieved}",
+            f"Bids met: {self.bids_met}/{self.bids_met + self.bids_failed}",
+            f"Epsilon: {self.discovery.epsilon:.3f}  |  Stage: {self._opponent_stage}",
         ]
         for s in stats:
-            self.screen.blit(self.fonts["small"].render(s, True, TEXT_LIGHT), (px + 10, y))
-            y += 16
+            self.screen.blit(self.fonts["medium"].render(s, True, TEXT_LIGHT), (px + 10, y))
+            y += 18
 
         # === Box 2: Discoveries ===
         disc_top = 60 + score_h + 8
