@@ -789,6 +789,9 @@ class WistDiscoveryAgent(Agent):
         if "elo" in data:
             self._elo_tracker.from_dict(data["elo"])
         if "play_net" in data:
-            self._play_net = CardEvaluator.from_dict(data["play_net"])
+            try:
+                self._play_net = CardEvaluator.from_dict(data["play_net"])
+            except (KeyError, ValueError):
+                pass  # Old format — start fresh CardEvaluator.
         if "bid_net" in data:
             self._bid_net = QNetwork.from_dict(data["bid_net"])
