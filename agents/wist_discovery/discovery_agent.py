@@ -315,6 +315,29 @@ class WistDiscoveryAgent(Agent):
                 best_card = card
         return best_card
 
+    def trick_reward(self, won: bool) -> None:
+        """
+        Per-trick intermediate reward — small signal after each trick.
+        
+        This doesn't tell the agent strategy — it just reduces the credit
+        assignment problem. The agent still discovers *when* winning is good
+        or bad from the end-of-shota score.
+        
+        Signal: +0.3 for winning a trick, -0.1 for losing.
+        Small enough to not override the final shota score, but enough
+        to guide learning about individual card plays.
+        """
+        if not self.training or not self._play_episode:
+            return
+
+        # Only update the LAST action in the episode (the one that just happened).
+        micro_reward = 0.3 if won else -0.1
+        effective_alpha = max(0.03, self.alpha * 0.5 * (1.0 / (1.0 + self.episodes_trained / 2000)))
+
+        state, action = self._play_episode[-1]
+        current_q = self.play_q[state][action]
+        self.play_q[state][action] += effective_alpha * (micro_reward - current_q)
+
     def reward(self, score: float) -> None:
         """End-of-shota reward — the ONLY learning signal."""
         if not self.training:

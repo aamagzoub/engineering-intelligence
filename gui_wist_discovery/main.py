@@ -214,6 +214,10 @@ class WistDiscoveryWatcher:
         r.next_leading_player_id = winner
         self._team_tricks[self._players[winner].team_id] += 1
 
+        # Per-trick intermediate reward for faster learning.
+        winner_team = self._players[winner].team_id
+        self.discovery.trick_reward(won=(winner_team == 0))
+
         self.current_trick_cards = trick_cards
         self.last_winner = winner
 
@@ -311,6 +315,8 @@ class WistDiscoveryWatcher:
                 r.state.current_trick = None
                 r.next_leading_player_id = w
                 tt[players[w].team_id] += 1
+                # Per-trick reward for background training.
+                agent.trick_reward(won=(players[w].team_id == 0))
             scores = score_shota(
                 playing_team_id=res.playing_team_id,
                 defending_team_id=1 - res.playing_team_id,
