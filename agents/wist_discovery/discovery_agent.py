@@ -199,7 +199,8 @@ class PrioritizedReplayBuffer:
         if total == 0:
             indices = random.sample(range(len(self._buffer)), size)
         else:
-            probs = [p / total for p in self._priorities]
+            probs = np.array([p / total for p in self._priorities])
+            probs /= probs.sum()  # Ensure exact sum to 1.0 (float precision fix).
             indices = np.random.choice(len(self._buffer), size=size, replace=False, p=probs).tolist()
         return [self._buffer[i] for i in indices]
 
