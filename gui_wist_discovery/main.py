@@ -707,7 +707,7 @@ class WistDiscoveryWatcher:
             self._trigger("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
 
     def _trigger(self, key, msg):
-        """Record a discovered behavior with structured format."""
+        """Record a discovered behavior with structured multi-line format."""
         import time
         if key not in self._milestones_achieved:
             self._milestones_achieved.add(key)
@@ -730,11 +730,9 @@ class WistDiscoveryWatcher:
             app_start = getattr(self, '_app_start_time', now)
             last_disc_time = getattr(self, '_last_discovery_time', None)
 
-            # Time since app start (total compute).
             total_sec = now - app_start
             total_str = self._format_time(total_sec)
 
-            # Time since last discovery (delta).
             if last_disc_time is not None:
                 delta_sec = now - last_disc_time
                 delta_str = self._format_time(delta_sec)
@@ -743,8 +741,12 @@ class WistDiscoveryWatcher:
 
             self._last_discovery_time = now
 
-            # Structured description: compute times | stats | description.
-            desc = f"T:{total_str} Δ:{delta_str} | S#{stats['episodes']} WR:{stats['win_rate']:.0f}% BA:{stats['bid_accuracy']:.0f}% | {base_desc}"
+            # Multi-line structured description.
+            desc = (
+                f"{base_desc}\n"
+                f"Total compute: {total_str} | Since last: {delta_str}\n"
+                f"Shota: #{stats['episodes']} | Win rate: {stats['win_rate']:.0f}% | Bid accuracy: {stats['bid_accuracy']:.0f}%"
+            )
 
             self._milestones_list.append((title, desc))
             self._log(f"  ** DISCOVERED: {title} **")
