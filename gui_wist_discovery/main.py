@@ -943,21 +943,23 @@ class WistDiscoveryWatcher:
             self.screen.set_clip(None)
         else:
             disc_scroll = getattr(self, '_disc_scroll_offset', 0)
-            line_h = 30
-            max_visible = (disc_rect.bottom - y - 15) // line_h
+            # Each milestone takes ~50px (title + 2 lines of desc).
+            line_h = 50
+            max_visible = max(1, (disc_rect.bottom - y - 15) // line_h)
             total = len(self._milestones_list)
             max_scroll = max(0, total - max_visible)
             disc_scroll = max(0, min(disc_scroll, max_scroll))
             self._disc_scroll_offset = disc_scroll
 
+            # Show a window of milestones based on scroll position.
+            # scroll=0 means show the latest (bottom of list).
             if disc_scroll == 0:
-                visible = self._milestones_list[-max_visible:]
-                start_num = max(1, total - max_visible + 1)
+                start_idx = max(0, total - max_visible)
             else:
-                end_idx = total - disc_scroll
-                start_idx = max(0, end_idx - max_visible)
-                visible = self._milestones_list[start_idx:end_idx]
-                start_num = start_idx + 1
+                start_idx = max(0, total - max_visible - disc_scroll)
+            end_idx = min(total, start_idx + max_visible)
+            visible = self._milestones_list[start_idx:end_idx]
+            start_num = start_idx + 1
 
             panel_text_w = panel_w - 30
             for i, (title_text, desc_text) in enumerate(visible):
