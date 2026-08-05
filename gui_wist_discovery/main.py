@@ -102,6 +102,8 @@ class WistDiscoveryWatcher:
         # Milestones.
         self._milestones_achieved = set()
         self._milestones_list = []  # Ordered discovered behaviors.
+        self._app_start_time = __import__('time').monotonic()
+        self._last_discovery_time = None
 
         # Load previously discovered milestones.
         self._load_milestones()
@@ -705,14 +707,15 @@ class WistDiscoveryWatcher:
             self._trigger("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
 
     def _trigger(self, key, msg):
-        """Record a discovered behavior with title and dynamic description."""
+        """Record a discovered behavior with structured format."""
+        import time
         if key not in self._milestones_achieved:
             self._milestones_achieved.add(key)
 
             # Track for curriculum stagnation detection.
             self._last_discovery_episode_for_stage = self.discovery.episodes_trained
 
-            # Build dynamic context from current game state.
+            # Build dynamic context.
             stats = self._build_stats_context()
 
             if ":" in msg:
@@ -722,14 +725,42 @@ class WistDiscoveryWatcher:
                 title = key.upper()
                 base_desc = msg
 
-            # Enrich with actual numbers.
-            desc = self._enrich_description(key, base_desc, stats)
+            # Compute times.
+            now = time.monotonic()
+            app_start = getattr(self, '_app_start_time', now)
+            last_disc_time = getattr(self, '_last_discovery_time', None)
+
+            # Time since app start (total compute).
+            total_sec = now - app_start
+            total_str = self._format_time(total_sec)
+
+            # Time since last discovery (delta).
+            if last_disc_time is not None:
+                delta_sec = now - last_disc_time
+                delta_str = self._format_time(delta_sec)
+            else:
+                delta_str = "—"
+
+            self._last_discovery_time = now
+
+            # Structured description: compute times | stats | description.
+            desc = f"T:{total_str} Δ:{delta_str} | S#{stats['episodes']} WR:{stats['win_rate']:.0f}% BA:{stats['bid_accuracy']:.0f}% | {base_desc}"
 
             self._milestones_list.append((title, desc))
             self._log(f"  ** DISCOVERED: {title} **")
 
+    @staticmethod
+    def _format_time(seconds: float) -> str:
+        """Format seconds into human-readable short form."""
+        if seconds < 60:
+            return f"{seconds:.0f}s"
+        elif seconds < 3600:
+            return f"{seconds/60:.1f}m"
+        else:
+            return f"{seconds/3600:.1f}h"
+
     def _build_stats_context(self) -> dict:
-        """Gather current performance stats for dynamic descriptions."""
+        """Gather current performance stats."""
         total_bids = self.bids_met + self.bids_failed
         bid_accuracy = (self.bids_met / max(total_bids, 1)) * 100
         win_rate = 0
@@ -751,36 +782,6 @@ class WistDiscoveryWatcher:
             "epsilon": epsilon,
             "team_score": self.team_scores[0],
         }
-
-    def _enrich_description(self, key: str, base_desc: str, stats: dict) -> str:
-        """Add live stats and run-time elapsed since last discovery."""
-        import time
-        suffix_parts = []
-
-        if stats["episodes"] > 0:
-            suffix_parts.append(f"Shota #{stats['episodes']}")
-
-        # Run-time elapsed since last discovery (only while app is running).
-        now = time.monotonic()
-        last_time = getattr(self, '_last_discovery_time', None)
-        if last_time is not None:
-            elapsed_sec = now - last_time
-            if elapsed_sec < 60:
-                suffix_parts.append(f"+{elapsed_sec:.0f}s")
-            elif elapsed_sec < 3600:
-                suffix_parts.append(f"+{elapsed_sec/60:.1f}m")
-            else:
-                suffix_parts.append(f"+{elapsed_sec/3600:.1f}h")
-        self._last_discovery_time = now
-
-        if stats["win_rate"] > 0:
-            suffix_parts.append(f"win rate: {stats['win_rate']:.0f}%")
-
-        if stats["bid_accuracy"] > 0 and stats["shotas_played"] >= 3:
-            suffix_parts.append(f"bid accuracy: {stats['bid_accuracy']:.0f}%")
-
-        suffix = f" [{', '.join(suffix_parts)}]" if suffix_parts else ""
-        return f"{base_desc}{suffix}"
 
     # =========================================================================
     # Auto-Discovery: Statistical Anomaly Detection
