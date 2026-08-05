@@ -689,7 +689,7 @@ class WistDiscoveryWatcher:
                     self._reset_brain()
             elif event.type == pygame.MOUSEWHEEL:
                 self._disc_scroll_offset = getattr(self, '_disc_scroll_offset', 0)
-                self._disc_scroll_offset += event.y * 1
+                self._disc_scroll_offset -= event.y * 1
                 self._disc_scroll_offset = max(0, self._disc_scroll_offset)
 
     def _on_continue(self):
