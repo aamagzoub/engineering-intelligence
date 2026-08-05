@@ -218,8 +218,9 @@ class GameScreen:
 
         # Feature 22: Loaded AI model path.
         self._ai_model_path: str | None = None
-        self._ai_advisor: object | None = None  # Loaded LearningAgent for recommendations.
-        self._ai_gameplay_agent: object | None = None  # Loaded LearningAgent for actual gameplay.
+        self._ai_advisor: object | None = None  # Loaded agent for recommendations.
+        self._ai_advisor_type: str | None = None  # "learning" or "discovery"
+        self._ai_gameplay_agent: object | None = None  # Loaded agent for actual gameplay.
         self._ai_recommendation: str = ""  # Current recommendation text.
         self._ai_rec_card: tuple | None = None  # (rank, suit) of recommended card.
 
@@ -330,16 +331,33 @@ class GameScreen:
         self._save_player_stats()
 
     def _load_ai_advisor(self):
-        """Load the AI model file as a LearningAgent for recommendations."""
+        """Load the AI model file for recommendations. Supports LearningAgent and Discovery agent formats."""
         if not self._ai_model_path:
             self._ai_advisor = None
+            self._ai_advisor_type = None
             return
         try:
-            from agents.wist_learning.learning_agent import LearningAgent
-            self._ai_advisor = LearningAgent.load(self._ai_model_path, training=False)
-            self._ai_recommendation = f"Model loaded ({self._ai_advisor.q_table_size} entries)"
+            import json
+            with open(self._ai_model_path, "r") as f:
+                data = json.load(f)
+
+            if "play_q" in data:
+                # Discovery agent format.
+                from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
+                agent = WistDiscoveryAgent(training=False)
+                agent.load(self._ai_model_path)
+                self._ai_advisor = agent
+                self._ai_advisor_type = "discovery"
+                self._ai_recommendation = f"Discovery model ({agent.episodes_trained} episodes)"
+            else:
+                # LearningAgent format.
+                from agents.wist_learning.learning_agent import LearningAgent
+                self._ai_advisor = LearningAgent.load(self._ai_model_path, training=False)
+                self._ai_advisor_type = "learning"
+                self._ai_recommendation = f"Model loaded ({self._ai_advisor.q_table_size} entries)"
         except Exception as e:
             self._ai_advisor = None
+            self._ai_advisor_type = None
             self._ai_recommendation = f"Load failed: {str(e)[:30]}"
 
     def _get_ai_recommendation(self):
@@ -354,7 +372,10 @@ class GameScreen:
                     obs = self.environment.observe(HUMAN_ID)
 
                     # Decide which agent to use.
-                    if self._ai_advisor:
+                    if self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "discovery":
+                        # Discovery agent — call act() directly.
+                        action = self._ai_advisor.act(obs)
+                    elif self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "learning":
                         from agents.wist_learning.learning_agent import encode_play_state
                         state = encode_play_state(obs, set())
                         has_data = any(v != 0 for v in self._ai_advisor.q_table.get(state, {}).values())
@@ -452,7 +473,9 @@ class GameScreen:
                     )
 
                     # Decide which agent to use.
-                    if self._ai_advisor:
+                    if self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "discovery":
+                        action = self._ai_advisor.act(obs)
+                    elif self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "learning":
                         from agents.wist_learning.learning_agent import encode_bid_state
                         bid_state = encode_bid_state(obs)
                         has_bid_data = any(v != 0 for v in self._ai_advisor.bid_q.get(bid_state, {}).values())
@@ -695,13 +718,19 @@ class GameScreen:
     def _get_gameplay_agent(self):
         """
         Get the best available AI agent for gameplay.
-        Priority: trained LearningAgent (inference) > RuleBasedAgent.
+        Priority: user-loaded model > trained LearningAgent > Discovery agent > RuleBasedAgent.
         """
         if self._ai_gameplay_agent is not None:
             return self._ai_gameplay_agent
 
-        # Try to load a trained model.
+        # If user loaded a model via dialog, use it for gameplay too.
+        if self._ai_advisor is not None:
+            self._ai_gameplay_agent = self._ai_advisor
+            return self._ai_advisor
+
         from pathlib import Path
+
+        # Try to load a trained LearningAgent model.
         model_path = Path("agents/wist_learning/wist_model.json")
         if model_path.exists():
             try:
@@ -712,6 +741,21 @@ class GameScreen:
                     self._ai_gameplay_agent = agent
                     self._log_game_event(
                         f"AI: Learning Agent ({agent.episodes_trained} episodes trained)")
+                    return agent
+            except Exception:
+                pass
+
+        # Try to load a Discovery agent model.
+        discovery_path = Path("agents/wist_discovery/wist_discovery_model.json")
+        if discovery_path.exists():
+            try:
+                from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
+                agent = WistDiscoveryAgent(training=False)
+                agent.load(str(discovery_path))
+                if agent.episodes_trained >= 1000:
+                    self._ai_gameplay_agent = agent
+                    self._log_game_event(
+                        f"AI: Discovery Agent ({agent.episodes_trained} episodes trained)")
                     return agent
             except Exception:
                 pass
