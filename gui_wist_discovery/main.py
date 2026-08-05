@@ -951,20 +951,16 @@ class WistDiscoveryWatcher:
             disc_scroll = max(0, min(disc_scroll, max_scroll))
             self._disc_scroll_offset = disc_scroll
 
-            # Show a window of milestones based on scroll position.
-            # scroll=0 means show the latest (bottom of list).
-            if disc_scroll == 0:
-                start_idx = max(0, total - max_visible)
-            else:
-                start_idx = max(0, total - max_visible - disc_scroll)
+            # Reversed: newest first. scroll=0 shows the latest at top.
+            reversed_list = list(reversed(self._milestones_list))
+            start_idx = disc_scroll
             end_idx = min(total, start_idx + max_visible)
-            visible = self._milestones_list[start_idx:end_idx]
-            start_num = start_idx + 1
+            visible = reversed_list[start_idx:end_idx]
 
             panel_text_w = panel_w - 30
             for i, (title_text, desc_text) in enumerate(visible):
-                num = start_num + i
-                is_latest = (disc_scroll == 0 and i == len(visible) - 1)
+                num = total - start_idx - i
+                is_latest = (start_idx == 0 and i == 0)
 
                 # Don't render title if there's no room for at least one desc line too.
                 if y + 18 + 15 > disc_rect.bottom - 15:
