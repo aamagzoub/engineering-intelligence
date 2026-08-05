@@ -753,8 +753,11 @@ class WistDiscoveryWatcher:
         }
 
     def _enrich_description(self, key: str, base_desc: str, stats: dict) -> str:
-        """Add live stats to the description based on milestone type."""
+        """Add live stats and timestamp to the description."""
+        from datetime import datetime
         suffix_parts = []
+
+        suffix_parts.append(datetime.now().strftime("%H:%M %d/%m"))
 
         if stats["episodes"] > 0:
             suffix_parts.append(f"Shota #{stats['episodes']}")
