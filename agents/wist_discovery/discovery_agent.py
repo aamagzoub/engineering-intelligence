@@ -165,7 +165,10 @@ class WistDiscoveryAgent(Agent):
         elif not obs.is_sahib_al_qabool and obs.current_highest_bid:
             min_bid = max(min_bid, obs.current_highest_bid + 1)
 
-        if min_bid > 13:
+        # Opening bid cannot exceed 11.
+        max_bid = 11 if obs.is_opening_bid else 13
+
+        if min_bid > max_bid:
             # Can't make a valid bid — pass.
             action = PassAction(player_id=obs.player_id)
         elif self.training and random.random() < self.epsilon:
@@ -173,10 +176,10 @@ class WistDiscoveryAgent(Agent):
             if random.random() < 0.5:
                 action = PassAction(player_id=obs.player_id)
             else:
-                bid_val = random.randint(min_bid, min(13, min_bid + 2))
+                bid_val = random.randint(min_bid, min(max_bid, min_bid + 2))
                 action = BidAction(player_id=obs.player_id, value=bid_val)
         else:
-            action = self._best_bid(obs, min_bid)
+            action = self._best_bid(obs, min_bid, max_bid)
 
         if self.training:
             state = _encode_bid_state(obs)
@@ -184,7 +187,7 @@ class WistDiscoveryAgent(Agent):
 
         return action
 
-    def _best_bid(self, obs: BiddingObservation, min_bid: int) -> Action:
+    def _best_bid(self, obs: BiddingObservation, min_bid: int, max_bid: int = 13) -> Action:
         """Pick best bid from Q-table."""
         state = _encode_bid_state(obs)
         q = self.bid_q[state]
@@ -192,7 +195,7 @@ class WistDiscoveryAgent(Agent):
         best_action = "PASS"
         best_q = q.get("PASS", 0.0)
 
-        for v in range(min_bid, 14):
+        for v in range(min_bid, max_bid + 1):
             key = f"B{v}"
             val = q.get(key, 0.0)
             if val > best_q:
