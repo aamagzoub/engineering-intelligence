@@ -75,7 +75,9 @@ class WistDiscoveryWatcher:
         # Opponent shares Q-tables.
         self.opp = WistDiscoveryAgent(training=False)
         self.opp.play_q = self.discovery.play_q
+        self.opp.play_q2 = self.discovery.play_q2
         self.opp.bid_q = self.discovery.bid_q
+        self.opp.bid_q2 = self.discovery.bid_q2
         self.opp.epsilon = self.discovery.epsilon
 
         # Game state.
@@ -281,7 +283,9 @@ class WistDiscoveryWatcher:
         agent = self.discovery
         opp = WistDiscoveryAgent(training=False)
         opp.play_q = agent.play_q
+        opp.play_q2 = agent.play_q2
         opp.bid_q = agent.bid_q
+        opp.bid_q2 = agent.bid_q2
         opp.epsilon = agent.epsilon
 
         for _ in range(2000):
@@ -584,7 +588,7 @@ class WistDiscoveryWatcher:
         if hasattr(self, '_wist_win_history') and len(self._wist_win_history) > 0:
             win_rate = sum(self._wist_win_history) / len(self._wist_win_history) * 100
 
-        q_states = len(self.discovery.play_q) + len(self.discovery.bid_q)
+        q_states = len(self.discovery.play_q) + len(self.discovery.play_q2) + len(self.discovery.bid_q) + len(self.discovery.bid_q2)
         episodes = self.discovery.episodes_trained
         epsilon = self.discovery.epsilon
 
@@ -710,7 +714,9 @@ class WistDiscoveryWatcher:
         """Reset discovery agent — start from scratch."""
         self.discovery = WistDiscoveryAgent(training=True)
         self.opp.play_q = self.discovery.play_q
+        self.opp.play_q2 = self.discovery.play_q2
         self.opp.bid_q = self.discovery.bid_q
+        self.opp.bid_q2 = self.discovery.bid_q2
         self.shotas_played = 0
         self.seeks_achieved = 0
         self.bids_met = 0
