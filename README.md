@@ -84,6 +84,45 @@ The Wist agent uses **Double Q-Learning with TD(λ) eligibility traces**:
 - Prioritized experience replay for rare but important events
 - Trained through curriculum learning: 15,000+ games progressing from random to strategic opponents
 
+### Discovery Agent — What It Knows vs. Discovers
+
+The Wist Discovery Agent has zero domain knowledge. It only receives:
+1. **Environment** — there's a game to interact with
+2. **Legal moves** — what actions are allowed right now
+3. **Score signal** — a number at the end of each shota
+
+Everything else — trump power, bid accuracy, partner cooperation, seek pursuit — it discovers from experience.
+
+#### Legal Constraints (enforced — agent cannot violate these)
+
+**All players:**
+1. Bid values: 7–13 only
+2. Opening bid cannot exceed 11
+3. Each bid must exceed the current highest
+4. Bid ≥ max(7, chosen trump suit count + 3)
+5. Trump suit can be any suit with 1–7 cards
+6. 8+ cards in any single suit = must declare Dak (cannot bid)
+7. Must follow suit if able during trick play
+8. If void in led suit, may play any card
+
+**Sahib Al-Qabool additionally:**
+1. Can match the highest bid (does not need to exceed)
+2. Exempt from min bid = trump + 3 rule (can bid as low as 7)
+3. Exempt from opening bid ≤ 11 rule (can bid up to 13)
+4. Must lead trump on first trick (when Qabool won the bid)
+5. On the 3rd pass-based Dak of a game, must play (cannot pass)
+
+#### Strategy (discovered — agent learns purely from reward signal)
+- Which trump suit to prefer
+- When to bid high vs. pass
+- How to play tricks (lead, follow, trump, duck)
+- Partner cooperation and opponent exploitation
+- When to pursue seek (all 13 tricks)
+- Bid accuracy (match bid to hand strength)
+
+#### Current Engine Limitation
+Trump suit is currently auto-assigned as the longest suit by `determine_trump_suit()`. In real Wist, the player chooses any suit (1–7 cards). A future version will make this a strategic decision for the agent to learn.
+
 ### Game Rules
 
 #### The Teams
@@ -121,15 +160,17 @@ Starts from the player to Qabool's left, moves clockwise. Each player bids a num
 
 - Each bid must be higher than the previous
 - Bid value must be at least (cards in chosen trump suit + 3)
+- The player may choose any suit as trump (1–7 cards) — this choice is strategic, not declared
 - Opening bid cannot exceed 11. Subsequent bids up to 13.
-- Trump suit must have 7 or fewer cards
+- Trump suit must have 7 or fewer cards; 8+ in any suit requires Dak declaration
 - If any player bids 13, bidding stops immediately
 - Qabool can match the highest bid (does not have to go higher)
-- Both bid restrictions are lifted for Qabool
+- Both bid restrictions (min bid = trump+3, opening cap of 11) are lifted for Qabool
+- On the 3rd pass-based Dak of a game, Qabool must play (cannot pass)
 
 | Cards in trump suit | Standard bid | Qabool advantage |
 |---|---|---|
-| 4 | 7 (Marboota) | 7 |
+| 1–4 | 7 (Marboota) | 7 |
 | 5 | 8 | 7 or 8 |
 | 6 | 9 | 8 or 9 |
 | 7 | 10 | 9 or 10 |
