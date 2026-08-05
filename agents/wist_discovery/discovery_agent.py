@@ -44,7 +44,7 @@ RANK_VAL = {
 SUIT_IDX = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
 
 
-def _encode_play_state(obs: WistObservation) -> str:
+def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
     """Rich state encoding — observable features only, no strategy knowledge."""
     hand = obs.hand
     n_cards = len(hand)
@@ -99,7 +99,7 @@ def _encode_play_state(obs: WistObservation) -> str:
     # Voids: how many suits we have 0 cards in.
     voids = sum(1 for s in suits if s == 0)
 
-    return f"{shape}{pos}{phase}{td}{min(highs, 5)}{ts}v{voids}a{min(aces, 4)}"
+    return f"{shape}{pos}{phase}{td}{min(highs, 5)}{ts}v{voids}a{min(aces, 4)}o{min(opp_voids, 6)}"
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
@@ -185,6 +185,11 @@ class WistDiscoveryAgent(Agent):
 
         self.episodes_trained: int = 0
         self.total_updates: int = 0
+
+        # Opponent modeling: track known voids (suit a player can't have).
+        # Key: player_id, Value: set of suits they're void in.
+        self._known_voids: dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
+        self._last_played_cards_count: int = 0  # Track what we've already processed.
 
     def act(self, observation: Observation) -> Action:
         if isinstance(observation, BiddingObservation):
@@ -281,6 +286,9 @@ class WistDiscoveryAgent(Agent):
 
     def _act_play(self, obs: WistObservation) -> Action:
         """Play a card — learned from reward only."""
+        # Update opponent void tracking from visible trick cards.
+        self._update_voids(obs)
+
         leading_suit = None
         if obs.current_trick:
             leading_suit = obs.current_trick.leading_suit
@@ -295,7 +303,7 @@ class WistDiscoveryAgent(Agent):
             card = self._best_card(obs, playable)
 
         if self.training:
-            state = _encode_play_state(obs)
+            state = _encode_play_state(obs, self._get_opponent_voids_count(obs))
             action_key = _encode_play_action(card, obs)
             self._play_episode.append((state, action_key))
 
@@ -303,7 +311,7 @@ class WistDiscoveryAgent(Agent):
 
     def _best_card(self, obs: WistObservation, playable: list) -> object:
         """Pick card with best Q-value."""
-        state = _encode_play_state(obs)
+        state = _encode_play_state(obs, self._get_opponent_voids_count(obs))
         q = self.play_q[state]
         best_card = playable[0]
         best_q = float("-inf")
@@ -369,6 +377,31 @@ class WistDiscoveryAgent(Agent):
         """Clear episode memory (on Dak/skip)."""
         self._play_episode.clear()
         self._bid_episode.clear()
+        self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
+        self._last_played_cards_count = 0
+
+    def _update_voids(self, obs: WistObservation) -> None:
+        """Track opponent voids from completed tricks. A player who didn't follow suit is void."""
+        if not obs.current_trick or not obs.current_trick.played_cards:
+            return
+
+        leading_suit = obs.current_trick.leading_suit
+        if not leading_suit:
+            return
+
+        # Check each card in the current trick: if someone played off-suit, they're void.
+        for played_card in obs.current_trick.played_cards:
+            pid = played_card.player_id
+            if pid == obs.player_id:
+                continue  # Skip self.
+            if played_card.card.suit != leading_suit:
+                self._known_voids[pid].add(leading_suit)
+
+    def _get_opponent_voids_count(self, obs: WistObservation) -> int:
+        """Count total known opponent voids (max useful info for state encoding)."""
+        my_team = 0 if obs.player_id in (0, 2) else 1
+        opp_ids = [1, 3] if my_team == 0 else [0, 2]
+        return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
 
     def save(self, path: str) -> None:
         """Save model to JSON."""
