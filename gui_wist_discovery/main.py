@@ -13,6 +13,7 @@ Usage:
 import sys
 import os
 import threading
+from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -263,6 +264,7 @@ class WistDiscoveryWatcher:
 
         self._log(f"  Result: T1={tt[0]} T2={tt[1]} | Score: {scores.get(0,0):+d}/{scores.get(1,0):+d}")
         self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+        self._auto_discover(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
 
         self.state = "scoring"
         self.last_action_time = pygame.time.get_ticks()
@@ -332,6 +334,7 @@ class WistDiscoveryWatcher:
             # Check milestones from background games.
             bid_met = tt[res.playing_team_id] >= res.winning_bid_value
             self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+            self._auto_discover(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
 
             # Faster epsilon decay for stronger exploitation.
             if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
@@ -628,6 +631,161 @@ class WistDiscoveryWatcher:
     def _show_next_milestone(self):
         """No longer used."""
         return False
+
+    # =========================================================================
+    # Auto-Discovery: Statistical Anomaly Detection
+    # =========================================================================
+
+    def _auto_discover(self, team_tricks, bid, playing_team, bid_met, scores):
+        """
+        Detect new behaviors by watching rolling statistics.
+        No hardcoded milestones — the system notices when metrics cross
+        new thresholds or change significantly.
+        """
+        if not hasattr(self, '_auto_stats'):
+            self._auto_stats = {
+                "scores": deque(maxlen=100),
+                "tricks": deque(maxlen=100),
+                "bids_met": deque(maxlen=50),
+                "win_streaks": 0,
+                "best_win_streak": 0,
+                "best_score": -999,
+                "best_avg_score_20": -999,
+                "best_win_rate_20": 0,
+                "best_bid_accuracy_20": 0,
+                "best_avg_tricks_20": 0,
+                "total_seeks": 0,
+                "last_discovery_episode": 0,
+                "thresholds_crossed": set(),
+            }
+
+        s0 = scores.get(0, 0)
+        t0 = team_tricks[0]
+        stats = self._auto_stats
+
+        stats["scores"].append(s0)
+        stats["tricks"].append(t0)
+        stats["bids_met"].append(1 if (playing_team == 0 and bid_met) else 0)
+
+        if t0 == 13:
+            stats["total_seeks"] += 1
+
+        # Don't trigger too often — minimum 500 episodes between auto-discoveries.
+        episodes = self.discovery.episodes_trained
+        if episodes - stats["last_discovery_episode"] < 500:
+            return
+
+        # Need at least 20 data points.
+        if len(stats["scores"]) < 20:
+            return
+
+        recent_20 = list(stats["scores"])[-20:]
+        recent_tricks = list(stats["tricks"])[-20:]
+        recent_bids = list(stats["bids_met"])[-20:]
+
+        avg_score = sum(recent_20) / 20
+        avg_tricks = sum(recent_tricks) / 20
+        win_rate = sum(1 for s in recent_20 if s > 0) / 20 * 100
+        bid_acc = sum(recent_bids) / max(len(recent_bids), 1) * 100
+
+        # --- Score threshold crossings ---
+        score_thresholds = [2, 4, 6, 8, 10, 12, 15]
+        for threshold in score_thresholds:
+            key = f"avg_score_{threshold}"
+            if key not in stats["thresholds_crossed"] and avg_score >= threshold:
+                stats["thresholds_crossed"].add(key)
+                stats["last_discovery_episode"] = episodes
+                self._trigger(f"auto_score_{threshold}",
+                    f"SCORING POWER: Average score crossed +{threshold} over 20 shotas "
+                    f"(actual: {avg_score:.1f})")
+                return
+
+        # --- Win rate threshold crossings ---
+        wr_thresholds = [50, 60, 70, 80, 90]
+        for threshold in wr_thresholds:
+            key = f"win_rate_{threshold}"
+            if key not in stats["thresholds_crossed"] and win_rate >= threshold:
+                stats["thresholds_crossed"].add(key)
+                stats["last_discovery_episode"] = episodes
+                self._trigger(f"auto_wr_{threshold}",
+                    f"WIN DOMINANCE: Win rate crossed {threshold}% over 20 shotas "
+                    f"(actual: {win_rate:.0f}%)")
+                return
+
+        # --- Bid accuracy threshold crossings ---
+        bid_thresholds = [60, 70, 80, 90]
+        for threshold in bid_thresholds:
+            key = f"bid_acc_{threshold}"
+            if key not in stats["thresholds_crossed"] and bid_acc >= threshold:
+                stats["thresholds_crossed"].add(key)
+                stats["last_discovery_episode"] = episodes
+                self._trigger(f"auto_bid_{threshold}",
+                    f"BID PRECISION: Bid accuracy crossed {threshold}% over 20 shotas "
+                    f"(actual: {bid_acc:.0f}%)")
+                return
+
+        # --- Average tricks threshold crossings ---
+        trick_thresholds = [7, 8, 9, 10, 11, 12]
+        for threshold in trick_thresholds:
+            key = f"avg_tricks_{threshold}"
+            if key not in stats["thresholds_crossed"] and avg_tricks >= threshold:
+                stats["thresholds_crossed"].add(key)
+                stats["last_discovery_episode"] = episodes
+                self._trigger(f"auto_tricks_{threshold}",
+                    f"TRICK MACHINE: Averaging {threshold}+ tricks per shota "
+                    f"(actual: {avg_tricks:.1f})")
+                return
+
+        # --- Seek count milestones ---
+        seek_thresholds = [5, 10, 20, 50, 100]
+        for threshold in seek_thresholds:
+            key = f"seeks_{threshold}"
+            if key not in stats["thresholds_crossed"] and stats["total_seeks"] >= threshold:
+                stats["thresholds_crossed"].add(key)
+                stats["last_discovery_episode"] = episodes
+                self._trigger(f"auto_seeks_{threshold}",
+                    f"SEEK MASTER: Achieved {threshold} total seeks -- "
+                    f"the all-13-tricks strategy is now a reliable weapon")
+                return
+
+        # --- Win streak records ---
+        if hasattr(self, '_wist_win_history') and len(self._wist_win_history) >= 2:
+            if self._wist_win_history[-1]:
+                stats["win_streaks"] += 1
+            else:
+                stats["win_streaks"] = 0
+
+            streak_thresholds = [7, 10, 15, 20, 30]
+            for threshold in streak_thresholds:
+                key = f"streak_{threshold}"
+                if (key not in stats["thresholds_crossed"] and
+                        stats["win_streaks"] >= threshold):
+                    stats["thresholds_crossed"].add(key)
+                    stats["last_discovery_episode"] = episodes
+                    self._trigger(f"auto_streak_{threshold}",
+                        f"UNSTOPPABLE: Won {threshold} games in a row -- "
+                        f"opponents have no answer to the AI's strategy")
+                    return
+
+        # --- Significant improvement detection ---
+        if len(stats["scores"]) >= 40:
+            old_20 = list(stats["scores"])[-40:-20]
+            new_20 = list(stats["scores"])[-20:]
+            old_avg = sum(old_20) / 20
+            new_avg = sum(new_20) / 20
+            improvement = new_avg - old_avg
+
+            improvement_thresholds = [3, 5, 8]
+            for threshold in improvement_thresholds:
+                key = f"improvement_{threshold}"
+                if (key not in stats["thresholds_crossed"] and
+                        improvement >= threshold and new_avg > old_avg * 1.3):
+                    stats["thresholds_crossed"].add(key)
+                    stats["last_discovery_episode"] = episodes
+                    self._trigger(f"auto_improve_{threshold}",
+                        f"BREAKTHROUGH: Average score jumped +{improvement:.1f} "
+                        f"(from {old_avg:.1f} to {new_avg:.1f}) -- strategy evolved significantly")
+                    return
 
     def _render_hand_h(self, hand, cx, y, table):
         """Render horizontal hand with fixed 13-card spacing."""
