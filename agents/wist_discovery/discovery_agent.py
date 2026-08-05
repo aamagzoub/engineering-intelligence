@@ -38,8 +38,8 @@ from intelligence.core.cards.suit import Suit
 from intelligence.core.observation import Observation
 
 from agents.wist_discovery.neural_net import (
-    QNetwork, state_to_features, get_play_action_idx, get_bid_action_idx,
-    NUM_PLAY_ACTIONS, NUM_BID_ACTIONS,
+    CardEvaluator, QNetwork, state_to_features, state_features, card_features,
+    get_bid_action_idx, NUM_BID_ACTIONS,
 )
 
 
@@ -318,8 +318,8 @@ class WistDiscoveryAgent(Agent):
         self.bid_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
         # === Neural Network Function Approximator (Enhancement #9) ===
-        self._play_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=128,
-                                  output_size=NUM_PLAY_ACTIONS, learning_rate=0.0005)
+        # CardEvaluator: per-card evaluation (state 24 + card 8 = 32 features → 1 Q-value).
+        self._play_net = CardEvaluator(input_size=32, hidden_size=64, learning_rate=0.0005)
         self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
                                  output_size=NUM_BID_ACTIONS, learning_rate=0.001)
         self._use_neural = False  # Starts with Q-tables, switches after enough data.
@@ -339,6 +339,7 @@ class WistDiscoveryAgent(Agent):
         # === Episode memory ===
         self._play_episode: list[tuple[str, str]] = []
         self._bid_episode: list[tuple[str, str]] = []
+        self._nn_play_features: list = []  # Neural net feature vectors per play action.
 
         # === Eligibility Traces ===
         self._play_traces: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -493,26 +494,38 @@ class WistDiscoveryAgent(Agent):
             self._play_traces[state][action_key] += 1.0
             self._state_visit_counts[state] += 1
 
+            # Store neural net features for this card choice.
+            if self._use_neural:
+                s_feat = state_features(obs, self._get_opponent_voids_count(obs),
+                                        rank_value, SUIT_IDX)
+                c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
+                self._nn_play_features.append(np.concatenate([s_feat, c_feat]))
+
         return PlayCardAction(player_id=obs.player_id, card=card)
 
     def _best_card(self, obs: WistObservation, playable: list) -> object:
-        """Combined Q-table + neural net for card selection."""
-        state = _encode_play_state(obs, self._get_opponent_voids_count(obs))
-        q1 = self.play_q[state]
-        q2 = self.play_q2[state]
+        """Combined Q-table + per-card neural net for card selection."""
+        state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs))
+        q1 = self.play_q[state_str]
+        q2 = self.play_q2[state_str]
 
+        # Neural net: evaluate each card individually.
+        nn_values = {}
         if self._use_neural:
-            features = state_to_features(state, STATE_FEATURE_SIZE)
-            nn_q = self._play_net.predict(features)
-        else:
-            nn_q = None
+            s_feat = state_features(obs, self._get_opponent_voids_count(obs),
+                                    rank_value, SUIT_IDX)
+            for card in playable:
+                c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
+                combined = np.concatenate([s_feat, c_feat])
+                nn_values[id(card)] = self._play_net.predict(combined)
 
         best_card = playable[0]
         best_q = float("-inf")
         for card in playable:
             key = _encode_play_action(card, obs)
-            combined = self._combined_q(q1.get(key, 0.0), q2.get(key, 0.0),
-                                         nn_q[get_play_action_idx(key)] if nn_q is not None else 0.0)
+            q_table_val = (q1.get(key, 0.0) + q2.get(key, 0.0)) / 2
+            nn_val = nn_values.get(id(card), 0.0)
+            combined = self._combined_q(q_table_val, q_table_val, nn_val)
             if combined > best_q:
                 best_q = combined
                 best_card = card
@@ -540,11 +553,9 @@ class WistDiscoveryAgent(Agent):
             current_q = q_table[state][action]
             q_table[state][action] += effective_alpha * (micro_reward - current_q)
 
-        # Also train neural net.
-        if self._use_neural:
-            features = state_to_features(state, STATE_FEATURE_SIZE)
-            action_idx = get_play_action_idx(action)
-            self._play_net.update(features, action_idx, micro_reward)
+        # Train CardEvaluator per-trick.
+        if self._use_neural and self._nn_play_features:
+            self._play_net.update(self._nn_play_features[-1], micro_reward)
 
     def reward(self, score: float) -> None:
         """End-of-shota reward with all architecture enhancements."""
@@ -573,7 +584,8 @@ class WistDiscoveryAgent(Agent):
             play_q_update, play_q_eval = self.play_q2, self.play_q
 
         reward_signal = score
-        for state, action in reversed(self._play_episode):
+        nn_features_reversed = list(reversed(self._nn_play_features)) if self._nn_play_features else []
+        for idx, (state, action) in enumerate(reversed(self._play_episode)):
             trace = self._play_traces[state].get(action, 1.0)
             current_q = play_q_update[state][action]
             td_error = reward_signal - current_q
@@ -590,11 +602,9 @@ class WistDiscoveryAgent(Agent):
             curiosity = self._curiosity_scale / math.sqrt(visit_count)
             play_q_update[state][action] += play_alpha * 0.1 * curiosity
 
-            # Train neural net.
-            if self._use_neural:
-                features = state_to_features(state, STATE_FEATURE_SIZE)
-                action_idx = get_play_action_idx(action)
-                self._play_net.update(features, action_idx, reward_signal)
+            # Train CardEvaluator neural net.
+            if self._use_neural and idx < len(nn_features_reversed):
+                self._play_net.update(nn_features_reversed[idx], reward_signal)
 
         # === Bid phase ===
         bid_alpha = base_alpha * self._bid_alpha_scale
@@ -639,6 +649,7 @@ class WistDiscoveryAgent(Agent):
         # === Cleanup ===
         self._play_episode.clear()
         self._bid_episode.clear()
+        self._nn_play_features.clear()
         self.episodes_trained += 1
 
     def _do_replay(self, alpha: float):
@@ -649,9 +660,8 @@ class WistDiscoveryAgent(Agent):
         for state, action, reward, table_key in batch:
             if table_key == "play":
                 q = self.play_q if random.random() < 0.5 else self.play_q2
-                if self._use_neural:
-                    features = state_to_features(state, STATE_FEATURE_SIZE)
-                    self._play_net.update(features, get_play_action_idx(action), reward)
+                # CardEvaluator can't replay from string state alone (needs obs).
+                # Only Q-table replay for play actions.
             else:
                 q = self.bid_q if random.random() < 0.5 else self.bid_q2
                 if self._use_neural:
@@ -716,6 +726,7 @@ class WistDiscoveryAgent(Agent):
     def reset_episode(self):
         self._play_episode.clear()
         self._bid_episode.clear()
+        self._nn_play_features.clear()
         self._play_traces.clear()
         self._bid_traces.clear()
         self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
@@ -778,6 +789,6 @@ class WistDiscoveryAgent(Agent):
         if "elo" in data:
             self._elo_tracker.from_dict(data["elo"])
         if "play_net" in data:
-            self._play_net = QNetwork.from_dict(data["play_net"])
+            self._play_net = CardEvaluator.from_dict(data["play_net"])
         if "bid_net" in data:
             self._bid_net = QNetwork.from_dict(data["bid_net"])
