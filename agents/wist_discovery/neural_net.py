@@ -12,6 +12,7 @@ Two architectures:
 """
 
 import numpy as np
+from collections import Counter
 
 
 class CardEvaluator:
@@ -206,8 +207,6 @@ def card_features(card, obs, playable_cards, rank_val_func, suit_idx_map) -> np.
     7. Relative rank position (highest in suit in hand = 1, lowest = 0)
     8. Cards remaining in this suit (normalized)
     """
-    from collections import Counter
-
     rv = rank_val_func(card.rank)
     features = np.zeros(8)
 
@@ -291,7 +290,6 @@ def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=Non
     if rank_val_func is None:
         return features
 
-    from collections import Counter
     suit_counts = Counter(c.suit for c in hand)
 
     # 1-4. Suit distribution (sorted descending, normalized).
@@ -375,15 +373,6 @@ def state_to_features(state_str: str, max_len: int = 32) -> np.ndarray:
 BID_ACTIONS = ["PASS"] + [f"B{v}" for v in range(7, 14)]
 BID_ACTION_TO_IDX = {a: i for i, a in enumerate(BID_ACTIONS)}
 NUM_BID_ACTIONS = len(BID_ACTIONS)
-
-# Legacy compatibility.
-NUM_PLAY_ACTIONS = 32
-PLAY_ACTION_TO_IDX = {}
-
-
-def get_play_action_idx(action_str: str) -> int:
-    """Legacy compatibility — not used by CardEvaluator."""
-    return 0
 
 
 def get_bid_action_idx(action_str: str) -> int:

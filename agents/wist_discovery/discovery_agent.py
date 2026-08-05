@@ -23,7 +23,7 @@ Architecture (fully domain-agnostic, transferable):
 import json
 import random
 import math
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 from pathlib import Path
 
 import numpy as np
@@ -111,7 +111,6 @@ def _encode_play_action(card, obs: WistObservation) -> str:
     leading = obs.current_trick.leading_suit if obs.current_trick else None
     follows = "F" if (leading and card.suit == leading) else "O"
     is_trump = "T" if (obs.trump_suit and card.suit == obs.trump_suit) else "N"
-    from collections import Counter
     suit_counts = Counter(c.suit for c in obs.hand)
     longest = max(suit_counts.values()) if suit_counts else 0
     is_long = "L" if suit_counts.get(card.suit, 0) == longest else "S"
@@ -122,7 +121,6 @@ def _encode_play_action(card, obs: WistObservation) -> str:
 def _encode_bid_state(obs: BiddingObservation) -> str:
     """Richer bid state."""
     hand = obs.hand
-    from collections import Counter
     suit_counts = Counter(c.suit for c in hand)
     longest = max(suit_counts.values()) if suit_counts else 0
     shortest_valid = min((c for c in suit_counts.values() if 1 <= c <= 7), default=0)
@@ -368,9 +366,6 @@ class WistDiscoveryAgent(Agent):
         # === Meta-Learning ===
         self._meta_learner = MetaLearner()
 
-        # === Curriculum Learning ===
-        self._curriculum_level = 1  # 1=basic, 2=intermediate, 3=full game.
-
         # === Stats ===
         self.episodes_trained: int = 0
         self.total_updates: int = 0
@@ -388,7 +383,6 @@ class WistDiscoveryAgent(Agent):
 
     def _act_bid(self, obs: BiddingObservation) -> Action:
         """Bid or pass — learned from reward only."""
-        from collections import Counter
         hand = obs.hand
         suit_counts = Counter(c.suit for c in hand)
 

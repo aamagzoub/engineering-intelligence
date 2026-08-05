@@ -12,9 +12,10 @@ Usage:
 
 import sys
 import os
+import json
 import threading
 import random
-from collections import deque
+from collections import deque, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -97,14 +98,10 @@ class WistDiscoveryWatcher:
         self._continue_btn_rect = None
         self._mode_btn_rect = None
         self._reset_btn_rect = None
-        self._log_scroll_offset = 0
-        self._log_auto_scroll = True
 
         # Milestones.
         self._milestones_achieved = set()
         self._milestones_list = []  # Ordered discovered behaviors.
-        self._milestone_queue = []
-        self._milestone_announcement = None
 
         # Load previously discovered milestones.
         self._load_milestones()
@@ -771,10 +768,6 @@ class WistDiscoveryWatcher:
         suffix = f" [{', '.join(suffix_parts)}]" if suffix_parts else ""
         return f"{base_desc}{suffix}"
 
-    def _show_next_milestone(self):
-        """No longer used."""
-        return False
-
     # =========================================================================
     # Auto-Discovery: Statistical Anomaly Detection
     # =========================================================================
@@ -967,7 +960,6 @@ class WistDiscoveryWatcher:
 
     def _save_milestones(self):
         """Save discovered milestones to disk."""
-        import json
         path = "agents/wist_discovery/milestones.json"
         try:
             data = {"achieved": list(self._milestones_achieved), "list": self._milestones_list}
@@ -978,7 +970,6 @@ class WistDiscoveryWatcher:
 
     def _load_milestones(self):
         """Load previously discovered milestones."""
-        import json
         path = "agents/wist_discovery/milestones.json"
         try:
             with open(path, "r") as f:
