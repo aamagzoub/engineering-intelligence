@@ -45,16 +45,27 @@ SUIT_IDX = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
 
 
 def _encode_play_state(obs: WistObservation) -> str:
-    """Minimal state encoding — no domain knowledge, just observable features."""
+    """Rich state encoding — observable features only, no strategy knowledge."""
     hand = obs.hand
     n_cards = len(hand)
-    # How many cards in each suit (shape).
+
+    # Suit distribution (sorted descending).
     suits = [0, 0, 0, 0]
-    highs = 0
+    highs = 0  # Cards rank >= Q
+    aces = 0
+    trump_count = 0
+    trump_highs = 0
     for c in hand:
         suits[SUIT_IDX[c.suit]] += 1
         if RANK_VAL[c.rank] >= 12:
             highs += 1
+        if RANK_VAL[c.rank] == 14:
+            aces += 1
+        if obs.trump_suit and c.suit == obs.trump_suit:
+            trump_count += 1
+            if RANK_VAL[c.rank] >= 12:
+                trump_highs += 1
+
     shape = "".join(str(min(s, 9)) for s in sorted(suits, reverse=True))
 
     # Trick position (0-3 cards played before us).
@@ -62,8 +73,17 @@ def _encode_play_state(obs: WistObservation) -> str:
     if obs.current_trick and obs.current_trick.played_cards:
         pos = len(obs.current_trick.played_cards)
 
-    # Cards left bucket.
-    phase = "E" if n_cards >= 10 else ("M" if n_cards >= 5 else "L")
+    # Game phase (more granular).
+    if n_cards >= 11:
+        phase = "1"  # Opening (tricks 1-2)
+    elif n_cards >= 8:
+        phase = "2"  # Early (tricks 3-5)
+    elif n_cards >= 5:
+        phase = "3"  # Mid (tricks 6-8)
+    elif n_cards >= 2:
+        phase = "4"  # Late (tricks 9-11)
+    else:
+        phase = "5"  # Endgame (tricks 12-13)
 
     # Team score difference.
     my_team = 0 if obs.player_id in (0, 2) else 1
@@ -73,13 +93,27 @@ def _encode_play_state(obs: WistObservation) -> str:
     diff = my_t - opp_t
     td = "W" if diff >= 3 else ("A" if diff > 0 else ("T" if diff == 0 else "B"))
 
-    return f"{shape}{pos}{phase}{td}{min(highs, 4)}"
+    # Trump strength: how many trumps + are they high.
+    ts = f"{min(trump_count, 7)}{min(trump_highs, 4)}"
+
+    # Voids: how many suits we have 0 cards in.
+    voids = sum(1 for s in suits if s == 0)
+
+    return f"{shape}{pos}{phase}{td}{min(highs, 5)}{ts}v{voids}a{min(aces, 4)}"
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
-    """Encode action as relative strength — no suit/trump knowledge."""
+    """Richer action encoding — relative strength + trump awareness."""
     rv = RANK_VAL[card.rank]
-    tier = "H" if rv >= 12 else ("M" if rv >= 8 else "L")
+    # Finer rank tiers.
+    if rv == 14:
+        tier = "A"  # Ace
+    elif rv >= 12:
+        tier = "H"  # High (K, Q)
+    elif rv >= 9:
+        tier = "M"  # Mid (9, 10, J)
+    else:
+        tier = "L"  # Low (2-8)
 
     # Is it following suit?
     leading = None
@@ -87,25 +121,38 @@ def _encode_play_action(card, obs: WistObservation) -> str:
         leading = obs.current_trick.leading_suit
     follows = "F" if (leading and card.suit == leading) else "O"
 
+    # Is it trump?
+    is_trump = "T" if (obs.trump_suit and card.suit == obs.trump_suit) else "N"
+
     # Is it from longest suit in hand?
     from collections import Counter
     suit_counts = Counter(c.suit for c in obs.hand)
     longest = max(suit_counts.values()) if suit_counts else 0
     is_long = "L" if suit_counts.get(card.suit, 0) == longest else "S"
 
-    return f"{tier}{follows}{is_long}"
+    # Would this create a void? (last card of this suit)
+    creates_void = "V" if suit_counts.get(card.suit, 0) == 1 else "K"
+
+    return f"{tier}{follows}{is_trump}{is_long}{creates_void}"
 
 
 def _encode_bid_state(obs: BiddingObservation) -> str:
-    """Minimal bid state — hand shape + context."""
+    """Richer bid state — hand composition + context."""
     hand = obs.hand
     from collections import Counter
     suit_counts = Counter(c.suit for c in hand)
     longest = max(suit_counts.values()) if suit_counts else 0
+    shortest_valid = min((c for c in suit_counts.values() if 1 <= c <= 7), default=0)
     highs = sum(1 for c in hand if RANK_VAL[c.rank] >= 12)
+    aces = sum(1 for c in hand if RANK_VAL[c.rank] == 14)
+    voids = sum(1 for s in [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
+                if suit_counts.get(s, 0) == 0)
     has_bid = "Y" if obs.current_highest_bid else "N"
     is_q = "Y" if obs.is_sahib_al_qabool else "N"
-    return f"{longest}{min(highs, 5)}{has_bid}{is_q}"
+    forced = "F" if obs.must_play else "N"
+    bid_level = str(min(obs.current_highest_bid, 13)) if obs.current_highest_bid else "0"
+
+    return f"{longest}{shortest_valid}{min(highs, 5)}{min(aces, 4)}v{voids}{has_bid}{bid_level}{is_q}{forced}"
 
 
 def _encode_bid_action(action: Action) -> str:
