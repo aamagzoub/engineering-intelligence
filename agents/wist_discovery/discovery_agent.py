@@ -152,29 +152,29 @@ class WistDiscoveryAgent(Agent):
         hand = obs.hand
         suit_counts = Counter(c.suit for c in hand)
 
-        # 8+ in any suit = must Dak (handled externally, but guard here).
-        if any(count >= 8 for count in suit_counts.values()):
-            return PassAction(player_id=obs.player_id)
-
-        # Determine valid trump suits (1–7 cards).
+        # Valid trump suits: 1–7 cards. (8+ suit exists but can't be used as trump.)
         valid_trump_suits = [s for s, count in suit_counts.items() if 1 <= count <= 7]
+
         if not valid_trump_suits:
+            # Every suit has 8+ cards (extremely rare with 13 cards, but guard).
             return PassAction(player_id=obs.player_id)
 
-        # The agent can choose any valid trump suit.
-        # Min bid depends on that choice: max(7, trump_count + 3).
-        # The lowest possible min bid comes from the shortest valid suit.
+        # Min bid depends on shortest valid trump suit (gives lowest floor).
         shortest_trump_count = min(suit_counts[s] for s in valid_trump_suits)
-        min_bid_floor = max(7, shortest_trump_count + 3)
 
-        # Qabool exemptions: no min bid rule, no opening cap.
+        # Qabool rules depend on whether someone else already bid.
         if obs.is_sahib_al_qabool:
-            min_bid = 7  # Qabool exempt from trump+3 rule.
-            max_bid = 13  # Qabool exempt from opening bid cap.
             if obs.current_highest_bid:
-                min_bid = max(min_bid, obs.current_highest_bid)  # Can match.
+                # Someone bid — Qabool exempt from trump+3, can match.
+                min_bid = obs.current_highest_bid  # Can match (not exceed).
+                max_bid = 13
+            else:
+                # All passed — Qabool bids first. Trump+3 applies, but cap is 13.
+                min_bid = max(7, shortest_trump_count + 3)
+                max_bid = 13
         else:
-            min_bid = min_bid_floor
+            # Regular player.
+            min_bid = max(7, shortest_trump_count + 3)
             max_bid = 11 if obs.is_opening_bid else 13
             if obs.current_highest_bid:
                 min_bid = max(min_bid, obs.current_highest_bid + 1)  # Must exceed.

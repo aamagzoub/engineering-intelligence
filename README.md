@@ -101,19 +101,20 @@ Everything else — trump power, bid accuracy, partner cooperation, seek pursuit
 3. Each bid must exceed the current highest
 4. Bid ≥ max(7, chosen trump suit count + 3)
 5. Trump suit can be any suit with 1–7 cards
-6. 8+ cards in any single suit = must declare Dak (cannot bid)
+6. 8+ cards in a suit or no pictures = can declare Dak (optional — agent learns whether to Dak or play)
 7. Must follow suit if able during trick play
 8. If void in led suit, may play any card
 
 **Sahib Al-Qabool additionally:**
 1. Can match the highest bid (does not need to exceed)
-2. Exempt from min bid = trump + 3 rule (can bid as low as 7)
-3. Exempt from opening bid ≤ 11 rule (can bid up to 13)
+2. After someone else bid: exempt from trump+3 rule
+3. After all passed (Qabool bids first): trump+3 applies, but cap is 13 (not 11)
 4. Must lead trump on first trick (when Qabool won the bid)
 5. On the 3rd pass-based Dak of a game, must play (cannot pass)
 
 #### Strategy (discovered — agent learns purely from reward signal)
-- Which trump suit to prefer
+- Whether to declare Dak or play with an 8+ suit / no-picture hand
+- Which suit to choose as trump
 - When to bid high vs. pass
 - How to play tricks (lead, follow, trump, duck)
 - Partner cooperation and opponent exploitation
