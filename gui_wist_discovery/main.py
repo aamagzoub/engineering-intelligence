@@ -13,6 +13,7 @@ Usage:
 import sys
 import os
 import threading
+import random
 from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -113,6 +114,16 @@ class WistDiscoveryWatcher:
         self.seeks_achieved = 0
         self.bids_met = 0
         self.bids_failed = 0
+
+        # === Opponent Curriculum (3 stages) ===
+        # Stage 1: Same brain (self-play)
+        # Stage 2: Mixed (50% self + 30% weak snapshot + 20% random)
+        # Stage 3: Adversarial (frozen past-best snapshots)
+        self._opponent_stage = 1
+        self._stage_stagnation_counter = 0  # Episodes since last discovery.
+        self._last_discovery_episode_for_stage = 0
+        self._frozen_snapshot = None  # Frozen Q-tables for stage 2/3.
+        self._best_snapshot = None  # Best-ever Q-tables for stage 3.
 
         self._log(f"Wist Discovery Agent: {self.discovery.episodes_trained} shotas learned")
         self._start_new_game()
@@ -275,20 +286,125 @@ class WistDiscoveryWatcher:
         self.state = "game_over"
         self.last_action_time = pygame.time.get_ticks()
 
+        # Check curriculum stage transitions.
+        self._check_stage_transition()
+
         # Background training.
         if not getattr(self, '_bg_active', False):
             self._bg_active = True
             threading.Thread(target=self._bg_train, daemon=True).start()
 
+    def _check_stage_transition(self):
+        """Check if we should graduate to the next opponent curriculum stage."""
+        episodes = self.discovery.episodes_trained
+
+        # Stagnation: no new discovery in 5000 episodes.
+        stagnated = (episodes - self._last_discovery_episode_for_stage) > 5000
+
+        if self._opponent_stage == 1:
+            # Stage 1 → 2: 90% win rate OR stagnation.
+            has_90_wr = "auto_wr_90" in self._milestones_achieved
+            if has_90_wr or stagnated:
+                self._opponent_stage = 2
+                # Snapshot current brain as the "weak" opponent for stage 2.
+                self._frozen_snapshot = self._snapshot_brain()
+                self._log(f"  ** CURRICULUM: Stage 2 — Mixed opponents (episode {episodes}) **")
+                self._trigger("stage_2",
+                    f"CURRICULUM STAGE 2: Graduated to mixed opponents. "
+                    f"{'90% win rate reached' if has_90_wr else 'Stagnation detected'}.")
+
+        elif self._opponent_stage == 2:
+            # Stage 2 → 3: 80% against mix OR stagnation.
+            # Track mix performance via recent win rate.
+            if hasattr(self, '_wist_win_history') and len(self._wist_win_history) >= 20:
+                recent_20 = self._wist_win_history[-20:]
+                mix_wr = sum(recent_20) / 20
+                if mix_wr >= 0.8 or stagnated:
+                    self._opponent_stage = 3
+                    # Snapshot current brain as "best" for adversarial play.
+                    self._best_snapshot = self._snapshot_brain()
+                    self._log(f"  ** CURRICULUM: Stage 3 — Adversarial (episode {episodes}) **")
+                    self._trigger("stage_3",
+                        f"CURRICULUM STAGE 3: Graduated to adversarial training. "
+                        f"Playing against frozen best-ever snapshots.")
+
+        elif self._opponent_stage == 3:
+            # Stage 3: periodically update the best snapshot if agent improved.
+            if hasattr(self, '_wist_win_history') and len(self._wist_win_history) >= 10:
+                recent_10 = self._wist_win_history[-10:]
+                if sum(recent_10) / 10 >= 0.7:
+                    # Agent is beating its past best — update snapshot.
+                    self._best_snapshot = self._snapshot_brain()
+
+    def _snapshot_brain(self) -> dict:
+        """Take a frozen snapshot of current Q-tables."""
+        return {
+            "play_q": {k: dict(v) for k, v in self.discovery.play_q.items()},
+            "play_q2": {k: dict(v) for k, v in self.discovery.play_q2.items()},
+            "bid_q": {k: dict(v) for k, v in self.discovery.bid_q.items()},
+            "bid_q2": {k: dict(v) for k, v in self.discovery.bid_q2.items()},
+        }
+
+    def _create_opponent(self, agent) -> "WistDiscoveryAgent":
+        """Create opponent based on current curriculum stage."""
+        if self._opponent_stage == 1:
+            # Stage 1: same brain.
+            opp = WistDiscoveryAgent(training=False)
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = agent.epsilon
+            return opp
+
+        elif self._opponent_stage == 2:
+            # Stage 2: mixed.
+            roll = random.random()
+            opp = WistDiscoveryAgent(training=False)
+            if roll < 0.5:
+                # 50% current brain.
+                opp.play_q = agent.play_q
+                opp.play_q2 = agent.play_q2
+                opp.bid_q = agent.bid_q
+                opp.bid_q2 = agent.bid_q2
+                opp.epsilon = agent.epsilon
+            elif roll < 0.8 and self._frozen_snapshot:
+                # 30% frozen weak snapshot.
+                from collections import defaultdict
+                opp.play_q = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["play_q"])
+                opp.play_q2 = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["play_q2"])
+                opp.bid_q = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["bid_q"])
+                opp.bid_q2 = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["bid_q2"])
+                opp.epsilon = 0.1
+            else:
+                # 20% random.
+                opp.epsilon = 1.0
+            return opp
+
+        else:
+            # Stage 3: adversarial (frozen best).
+            opp = WistDiscoveryAgent(training=False)
+            if self._best_snapshot and random.random() < 0.7:
+                # 70% frozen best snapshot.
+                from collections import defaultdict
+                opp.play_q = defaultdict(lambda: defaultdict(float), self._best_snapshot["play_q"])
+                opp.play_q2 = defaultdict(lambda: defaultdict(float), self._best_snapshot["play_q2"])
+                opp.bid_q = defaultdict(lambda: defaultdict(float), self._best_snapshot["bid_q"])
+                opp.bid_q2 = defaultdict(lambda: defaultdict(float), self._best_snapshot["bid_q2"])
+                opp.epsilon = 0.05
+            else:
+                # 30% current brain.
+                opp.play_q = agent.play_q
+                opp.play_q2 = agent.play_q2
+                opp.bid_q = agent.bid_q
+                opp.bid_q2 = agent.bid_q2
+                opp.epsilon = agent.epsilon
+            return opp
+
     def _bg_train(self):
         """2000 silent self-play shotas in background, played as full 5-shota games."""
         agent = self.discovery
-        opp = WistDiscoveryAgent(training=False)
-        opp.play_q = agent.play_q
-        opp.play_q2 = agent.play_q2
-        opp.bid_q = agent.bid_q
-        opp.bid_q2 = agent.bid_q2
-        opp.epsilon = agent.epsilon
+        opp = self._create_opponent(agent)
 
         shotas_done = 0
         while shotas_done < 2000:
@@ -592,13 +708,12 @@ class WistDiscoveryWatcher:
             self._trigger("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
 
     def _trigger(self, key, msg):
-        """Record a discovered behavior with title and dynamic description.
-        
-        Descriptions are enriched with live game stats so they reflect
-        actual performance rather than static text.
-        """
+        """Record a discovered behavior with title and dynamic description."""
         if key not in self._milestones_achieved:
             self._milestones_achieved.add(key)
+
+            # Track for curriculum stagnation detection.
+            self._last_discovery_episode_for_stage = self.discovery.episodes_trained
 
             # Build dynamic context from current game state.
             stats = self._build_stats_context()
