@@ -1899,26 +1899,20 @@ class HeartsWatcher:
             self.screen.set_clip(None)
         else:
             disc_scroll = getattr(self, '_disc_scroll_offset', 0)
-            available_h = disc_rect.bottom - y - 5
-            # Each milestone takes ~50px (title + 2 lines of desc).
-            line_h = 50
-            max_visible = max(1, available_h // line_h)
             total = len(self._milestones_list)
-
-            max_scroll = max(0, total - max_visible)
+            max_scroll = max(0, total - 1)
             disc_scroll = max(0, min(disc_scroll, max_scroll))
             self._disc_scroll_offset = disc_scroll
 
-            # Reversed: newest first. scroll=0 shows the latest at top.
+            # Reversed: newest first. Render from scroll offset until panel is full.
             reversed_list = list(reversed(self._milestones_list))
             start_idx = disc_scroll
-            end_idx = min(total, start_idx + max_visible)
-            visible = reversed_list[start_idx:end_idx]
 
             panel_text_w = panel_w - 30
-            for i, (title_text, desc_text) in enumerate(visible):
-                num = total - start_idx - i
-                is_latest = (start_idx == 0 and i == 0)
+            for i in range(start_idx, total):
+                title_text, desc_text = reversed_list[i]
+                num = total - i
+                is_latest = (i == 0)
 
                 # Don't render title if there's no room for at least one desc line too.
                 if y + 18 + 15 > disc_rect.bottom - 15:
