@@ -310,6 +310,21 @@ class TasmiyaEngine:
         # Phase 2: Sahib Al-Qabool decides.
         all_others_passed = bidding_engine.highest_bid is None
 
+        # First shota special rule: if all 3 passed, automatic Dak.
+        # Qabool has no say — re-deal immediately.
+        if is_first_shota and all_others_passed:
+            bid_history.append((sahib_al_qabool_id, None))
+            return TasmiyaResult(
+                winning_bidder_id=None,
+                winning_bid_value=None,
+                trump_suit=None,
+                playing_team_id=None,
+                defending_team_id=None,
+                sahib_al_qabool_id=sahib_al_qabool_id,
+                is_dak=True,
+                bid_history=bid_history,
+            )
+
         qabool_player = players[sahib_al_qabool_id]
 
         qabool_observation = BiddingObservation(

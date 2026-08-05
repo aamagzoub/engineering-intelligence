@@ -150,9 +150,11 @@ class WistDiscoveryWatcher:
 
             tasmiya = TasmiyaEngine()
             qabool_id = (self.shota_num - 1) % 4
+            is_first = (self.game_num == 1 and self.shota_num == 1)
             try:
                 self._tasmiya_result = tasmiya.run(
-                    players=self._players, agents=self._agents, sahib_al_qabool_id=qabool_id)
+                    players=self._players, agents=self._agents,
+                    sahib_al_qabool_id=qabool_id, is_first_shota=is_first)
             except (ValueError, Exception):
                 self.discovery.reset_episode()
                 self._log("  Bidding error — re-dealing")
