@@ -328,6 +328,11 @@ class WistDiscoveryWatcher:
                 playing_team_tricks=tt[res.playing_team_id],
                 defending_team_tricks=tt[1 - res.playing_team_id])
             agent.reward(float(scores[0]))
+
+            # Check milestones from background games.
+            bid_met = tt[res.playing_team_id] >= res.winning_bid_value
+            self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+
             # Faster epsilon decay for stronger exploitation.
             if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
                 agent.epsilon *= 0.98
