@@ -215,6 +215,7 @@ class TasmiyaEngine:
         agents: list[Agent],
         sahib_al_qabool_id: int,
         is_first_shota: bool = False,
+        dak_count: int = 0,
     ) -> TasmiyaResult:
         """
         Run the full Al-Tasmiya phase and return the result.
@@ -222,6 +223,7 @@ class TasmiyaEngine:
         is_first_shota: enables the special first-Shota rule where the
         third player (dealer) can declare automatic Dak if the first two
         passed, without Qabool having a say.
+        dak_count: number of pass-based Daks already in this game (3rd = forced play).
         """
 
         bidding_engine = BiddingEngine()
@@ -338,6 +340,7 @@ class TasmiyaEngine:
             ),
             is_sahib_al_qabool=True,
             is_opening_bid=(not has_opening_bid),
+            must_play=(dak_count >= 2 and all_others_passed),
         )
 
         qabool_action = agents[sahib_al_qabool_id].act(qabool_observation)

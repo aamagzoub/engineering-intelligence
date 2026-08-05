@@ -41,3 +41,4 @@ class BiddingObservation(Observation):
     current_highest_bid: int | None = None
     is_sahib_al_qabool: bool = False
     is_opening_bid: bool = False
+    must_play: bool = False  # True on 3rd Dak — Qabool cannot pass.

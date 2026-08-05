@@ -110,7 +110,7 @@ Everything else — trump power, bid accuracy, partner cooperation, seek pursuit
 2. After someone else bid: exempt from trump+3 rule
 3. After all passed (Qabool bids first): trump+3 applies, but cap is 13 (not 11)
 4. Must lead trump on first trick (when Qabool won the bid)
-5. On the 3rd pass-based Dak of a game, must play (cannot pass)
+5. On the 3rd pass-based Dak of a game, must play (cannot pass — pass removed from legal options)
 
 #### Strategy (discovered — agent learns purely from reward signal)
 - Whether to declare Dak or play with an 8+ suit / no-picture hand

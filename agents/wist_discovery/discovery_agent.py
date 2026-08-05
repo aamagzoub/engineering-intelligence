@@ -179,8 +179,22 @@ class WistDiscoveryAgent(Agent):
             if obs.current_highest_bid:
                 min_bid = max(min_bid, obs.current_highest_bid + 1)  # Must exceed.
 
-        if min_bid > max_bid:
+        if min_bid > max_bid and not obs.must_play:
             action = PassAction(player_id=obs.player_id)
+        elif min_bid > max_bid and obs.must_play:
+            # Forced to play but no valid range — bid minimum possible.
+            action = BidAction(player_id=obs.player_id, value=min(min_bid, 13))
+        elif obs.must_play:
+            # 3rd Dak: must bid, cannot pass.
+            if self.training and random.random() < self.epsilon:
+                bid_val = random.randint(min_bid, min(max_bid, min_bid + 2))
+            else:
+                best = self._best_bid(obs, min_bid, max_bid)
+                if isinstance(best, BidAction):
+                    bid_val = best.value
+                else:
+                    bid_val = min_bid
+            action = BidAction(player_id=obs.player_id, value=bid_val)
         elif self.training and random.random() < self.epsilon:
             # Explore: 50% pass, 50% bid random valid value.
             if random.random() < 0.5:
