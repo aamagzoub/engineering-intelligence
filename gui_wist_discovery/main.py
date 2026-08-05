@@ -745,10 +745,10 @@ class WistDiscoveryWatcher:
             desc = (
                 f"{base_desc}\n"
                 f"Total compute: {total_str} | Since last: {delta_str}\n"
-                f"Shota: #{stats['episodes']} | Win rate: {stats['win_rate']:.0f}% | Bid accuracy: {stats['bid_accuracy']:.0f}%"
+                f"Win rate: {stats['win_rate']:.0f}% | Bid accuracy: {stats['bid_accuracy']:.0f}%"
             )
 
-            self._milestones_list.append((title, desc))
+            self._milestones_list.append((f"{title} (#{stats['episodes']})", desc))
             self._log(f"  ** DISCOVERED: {title} **")
 
     @staticmethod
@@ -1291,31 +1291,41 @@ class WistDiscoveryWatcher:
                 is_latest = (i == 0)
 
                 # Don't render if there's no room for title + at least one desc line.
-                if y + 18 + 15 > disc_rect.bottom - 15:
+                if y + 22 + 16 > disc_rect.bottom - 15:
                     break
 
                 title_color = (100, 255, 100) if is_latest else (255, 255, 255)
                 self.screen.blit(self.fonts["large"].render(
                     f"{num}. {title_text}", True, title_color), (px + 10, y))
-                y += 18
+                y += 22  # Space after title.
 
-                desc_color = (200, 255, 200) if is_latest else (210, 210, 210)
                 desc_font = self.fonts["medium"]
-                words = desc_text.split()
-                line = ""
-                for w in words:
-                    test = line + " " + w if line else w
-                    if desc_font.size(test)[0] < panel_text_w:
-                        line = test
+                # Render each line separately (split on \n), then word-wrap within each.
+                for line_idx, line_part in enumerate(desc_text.split("\n")):
+                    # First line (description) in warm yellow, rest in light gray.
+                    if line_idx == 0:
+                        line_color = (255, 220, 130)  # Warm yellow for description.
                     else:
-                        if y > disc_rect.bottom - 20:
-                            break
-                        self.screen.blit(desc_font.render(line, True, desc_color), (px + 20, y))
-                        y += 15
-                        line = w
-                if line and y <= disc_rect.bottom - 20:
-                    self.screen.blit(desc_font.render(line, True, desc_color), (px + 20, y))
-                    y += 17
+                        line_color = (170, 190, 210)  # Light blue-gray for stats/times.
+
+                    words = line_part.split()
+                    line = ""
+                    for w in words:
+                        test = line + " " + w if line else w
+                        if desc_font.size(test)[0] < panel_text_w:
+                            line = test
+                        else:
+                            if y > disc_rect.bottom - 20:
+                                break
+                            self.screen.blit(desc_font.render(line, True, line_color), (px + 20, y))
+                            y += 16
+                            line = w
+                    if line and y <= disc_rect.bottom - 20:
+                        self.screen.blit(desc_font.render(line, True, line_color), (px + 20, y))
+                        y += 16
+                    if y > disc_rect.bottom - 20:
+                        break
+                y += 10  # Breathing room between discoveries.
 
                 if y > disc_rect.bottom - 15:
                     break
