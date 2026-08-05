@@ -753,11 +753,25 @@ class WistDiscoveryWatcher:
         }
 
     def _enrich_description(self, key: str, base_desc: str, stats: dict) -> str:
-        """Add live stats to the description."""
+        """Add live stats and run-time elapsed since last discovery."""
+        import time
         suffix_parts = []
 
         if stats["episodes"] > 0:
             suffix_parts.append(f"Shota #{stats['episodes']}")
+
+        # Run-time elapsed since last discovery (only while app is running).
+        now = time.monotonic()
+        last_time = getattr(self, '_last_discovery_time', None)
+        if last_time is not None:
+            elapsed_sec = now - last_time
+            if elapsed_sec < 60:
+                suffix_parts.append(f"+{elapsed_sec:.0f}s")
+            elif elapsed_sec < 3600:
+                suffix_parts.append(f"+{elapsed_sec/60:.1f}m")
+            else:
+                suffix_parts.append(f"+{elapsed_sec/3600:.1f}h")
+        self._last_discovery_time = now
 
         if stats["win_rate"] > 0:
             suffix_parts.append(f"win rate: {stats['win_rate']:.0f}%")
