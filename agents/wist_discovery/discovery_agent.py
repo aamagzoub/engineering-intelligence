@@ -409,38 +409,55 @@ class WistDiscoveryAgent(Agent):
         raise TypeError(f"Unsupported: {type(observation).__name__}")
 
     def _act_bid(self, obs: BiddingObservation) -> Action:
-        """Bid or pass — learned from reward only."""
+        """Bid or pass — learned from reward only.
+
+        Bid rules:
+          Regular player:
+            min_bid = max(7, trump_count + 3)   [1-4 trump → 7, 5→8, 6→9, 7→10]
+            max_bid = 11 if opening bid, else 13
+            must exceed current highest bid if one exists
+
+          Sahib Al-Qabool:
+            min_bid (no one bid) = max(7, trump_count + 3)   [same as regular]
+            min_bid (someone bid, matching) = max(7, trump_count + 2)  [one card advantage]
+            max_bid = 13 always (no opening cap)
+            can match current highest bid (not required to exceed)
+        """
         hand = obs.hand
         suit_counts = Counter(c.suit for c in hand)
 
-        # Valid trump suits: 1–7 cards (8+ cannot be trump).
+        # Valid trump suits: 1–7 cards (8+ = Dak, cannot be trump).
         valid_trump_suits = [s for s, count in suit_counts.items() if 1 <= count <= 7]
         if not valid_trump_suits:
             return PassAction(player_id=obs.player_id)
 
-        # Max bid is determined by the LONGEST valid trump suit (more trump = higher ceiling).
         longest_trump_count = max(suit_counts[s] for s in valid_trump_suits)
 
-        # Determine min and max bid based on role.
-        min_bid = 7  # Always 7.
+        # Min bid is driven by trump count (floor of what you can responsibly bid).
+        trump_floor = max(7, longest_trump_count + 3)  # 1-4 trump→7, 5→8, 6→9, 7→10
 
         if obs.is_sahib_al_qabool:
+            # Max is always 13 for Qabool — no opening cap.
+            max_bid = 13
             if obs.current_highest_bid:
-                # Someone bid — Qabool gets trump+4 ceiling (one extra card advantage).
-                max_bid = longest_trump_count + 4
-                min_bid = obs.current_highest_bid  # Must match or exceed.
+                # Matching advantage: Qabool's floor drops by 1 (trump+2 instead of trump+3).
+                match_floor = max(7, longest_trump_count + 2)
+                # Must bid at least the current highest (to match), and at least own floor.
+                min_bid = max(match_floor, obs.current_highest_bid)
             else:
-                # All passed — same ceiling as regular (trump+3), but can also bid 13.
-                max_bid = max(longest_trump_count + 3, 13)  # Can always bid 13.
+                # All others passed — standard floor, free range up to 13.
+                min_bid = trump_floor
         else:
-            # Regular player: max bid = trump+3 (ceiling).
-            max_bid = longest_trump_count + 3
+            # Regular player.
+            min_bid = trump_floor
             if obs.is_opening_bid:
-                max_bid = min(max_bid, 11)  # Opening bid capped at 11.
+                max_bid = 11           # Opening bid capped at 11.
+            else:
+                max_bid = 13           # Not opening — can go up to 13.
             if obs.current_highest_bid:
-                min_bid = obs.current_highest_bid + 1  # Must exceed.
+                min_bid = max(min_bid, obs.current_highest_bid + 1)  # Must exceed.
 
-        # Clamp max_bid to 13.
+        # Safety clamp.
         max_bid = min(max_bid, 13)
 
         if min_bid > max_bid and not obs.must_play:

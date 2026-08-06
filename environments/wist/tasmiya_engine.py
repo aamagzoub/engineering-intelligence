@@ -56,41 +56,28 @@ def determine_trump_suit(hand: list[Card]) -> Suit:
 
 def max_bid_for_hand(hand: list[Card]) -> int:
     """
-    Determine the maximum bid a regular player can make.
+    Determine the minimum bid floor for a hand (used to check if bidding is possible).
 
-    Per the rules:
-    - The bid must be at least (cards in chosen trump suit) + 3.
-    - The trump suit must have 7 or fewer cards.
-    - The maximum bid equals the number of cards in the chosen trump suit + 3.
-    - So the maximum bid based on suit length alone is capped at 7
-      from the trump constraint, but the bid itself represents total
-      expected tricks and can be based on cards across all suits.
+    Rules:
+    - Trump suit must have 1–7 cards (8+ = Dak, cannot bid).
+    - Min bid = max(7, trump_count + 3):
+        1–4 cards → min 7
+        5 cards   → min 8
+        6 cards   → min 9
+        7 cards   → min 10
+    - Max bid = 11 (opening) or 13 (not opening) — always higher than the floor.
 
-    The standard table is:
-      4 cards in strongest suit → bid 7
-      5 cards → bid 8
-      6 cards → bid 9
-      7 cards → bid 10
-
-    However, the bid does not have to come from one suit. It can be
-    based on strongest cards across all suits. The constraint is that
-    the trump suit (longest suit) must have ≤ 7 cards.
-
-    For this function, we return the maximum allowed bid value based
-    on the longest suit length using the standard formula:
-      max_bid = longest_suit_count + 3
-
-    Capped at 13 (maximum possible bid).
+    Returns the minimum bid floor based on longest valid trump suit.
+    Returns 0 if no valid trump suit exists (all suits 8+ = Dak).
     """
-
     suit_counts = Counter(card.suit for card in hand)
-    longest_suit_count = max(suit_counts.values())
+    valid_counts = [c for c in suit_counts.values() if 1 <= c <= 7]
 
-    # 8+ in one suit means Dak — should not be bidding at all.
-    if longest_suit_count >= 8:
-        return 0
+    if not valid_counts:
+        return 0  # All suits have 8+ cards — Dak.
 
-    return min(longest_suit_count + 3, 13)
+    longest_valid = max(valid_counts)
+    return max(7, longest_valid + 3)
 
 
 def tasmiya_order(sahib_al_qabool_id: int) -> list[int]:
