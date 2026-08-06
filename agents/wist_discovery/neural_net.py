@@ -75,15 +75,29 @@ class CardEvaluator:
         if not self._batch_x:
             return
 
-        batch_x = np.array(self._batch_x)
-        batch_y = np.array(self._batch_y)
+        # Snapshot and clear atomically to avoid race conditions with concurrent writes.
+        batch_x_list = self._batch_x
+        batch_y_list = self._batch_y
+        self._batch_x = []
+        self._batch_y = []
+
+        batch_x = np.array(batch_x_list)
+        batch_y = np.array(batch_y_list)
         n = len(batch_x)
+
+        # Validate shapes match (defensive against concurrent modification).
+        if len(batch_y) != n:
+            return
 
         # Forward pass (batch).
         h1 = np.maximum(0, batch_x @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
         h3 = np.maximum(0, h2 @ self.w3 + self.b3)
         predictions = (h3 @ self.w4 + self.b4).flatten()
+
+        # Validate prediction shape matches batch.
+        if predictions.shape[0] != n:
+            return
 
         # Error.
         errors = batch_y - predictions  # (n,)
