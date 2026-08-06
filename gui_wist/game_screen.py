@@ -288,14 +288,17 @@ class GameScreen:
                 self._player_points = data.get("points", 0)
                 self._player_games_played = data.get("games_played", 0)
                 self._player_games_won = data.get("games_won", 0)
+                self._eval_history = data.get("eval_history", [])
             else:
                 self._player_points = 0
                 self._player_games_played = 0
                 self._player_games_won = 0
+                self._eval_history = []
         except Exception:
             self._player_points = 0
             self._player_games_played = 0
             self._player_games_won = 0
+            self._eval_history = []
 
     def _save_player_stats(self):
         """Save player stats to JSON file."""
@@ -306,11 +309,99 @@ class GameScreen:
             "games_played": self._player_games_played,
             "games_won": self._player_games_won,
         }
+        # Include evaluation history.
+        eval_history = getattr(self, '_eval_history', [])
+        if eval_history:
+            data["eval_history"] = eval_history[-20:]  # Keep last 20 games.
         try:
             with open(self._player_stats_file, 'w') as f:
                 json.dump(data, f)
         except Exception:
             pass
+
+    def _compute_game_evaluation(self):
+        """Compute end-of-game evaluation: AI agreement score + strategy feedback."""
+        if not hasattr(self, '_eval_moves_total') or self._eval_moves_total == 0:
+            self._game_evaluation = None
+            return
+
+        agreement_pct = (self._eval_moves_matched / self._eval_moves_total) * 100
+
+        # Determine rating.
+        if agreement_pct >= 80:
+            rating = "Expert"
+            feedback = "You play like the AI — very strong. Keep it up!"
+        elif agreement_pct >= 60:
+            rating = "Advanced"
+            feedback = "Solid play. You diverge from the AI occasionally — sometimes that's smart, sometimes costly."
+        elif agreement_pct >= 40:
+            rating = "Intermediate"
+            feedback = "You're developing your own style. Study when the AI plays differently — those are learning moments."
+        elif agreement_pct >= 20:
+            rating = "Learning"
+            feedback = "You're still building intuition. Try showing recommendations next game to understand the AI's reasoning."
+        else:
+            rating = "Beginner"
+            feedback = "Very different from the AI's strategy. Turn on recommendations to learn the patterns."
+
+        # Strategy lessons from move log.
+        lessons = self._generate_strategy_lessons()
+
+        self._game_evaluation = {
+            "agreement_pct": agreement_pct,
+            "rating": rating,
+            "feedback": feedback,
+            "lessons": lessons,
+            "moves_total": self._eval_moves_total,
+            "moves_matched": self._eval_moves_matched,
+            "game_won": self.game_scores[0] > self.game_scores[1],
+        }
+
+        # Save to history for trend tracking.
+        if not hasattr(self, '_eval_history'):
+            self._eval_history = []
+        self._eval_history.append({
+            "agreement_pct": agreement_pct,
+            "rating": rating,
+            "game_won": self.game_scores[0] > self.game_scores[1],
+            "score": f"{self.game_scores[0]}-{self.game_scores[1]}",
+        })
+        self._save_player_stats()
+
+    def _generate_strategy_lessons(self) -> list:
+        """Analyze move log to generate specific strategy lessons."""
+        lessons = []
+        if not hasattr(self, '_eval_move_log'):
+            return lessons
+
+        # Count disagreement patterns.
+        disagreements = [m for m in self._eval_move_log if not m["matched"]]
+        if not disagreements:
+            lessons.append("Perfect agreement with AI — no corrections needed!")
+            return lessons
+
+        # Group disagreements by reason category.
+        reasons = [m.get("reason", "") for m in disagreements]
+        if any("trump" in r.lower() or "whip" in r.lower() for r in reasons):
+            lessons.append("Trump timing: The AI uses trump more strategically — consider when to whip vs save.")
+        if any("save" in r.lower() or "low" in r.lower() for r in reasons):
+            lessons.append("Card conservation: The AI saves high cards for critical tricks — don't spend royals too early.")
+        if any("void" in r.lower() or "clear" in r.lower() for r in reasons):
+            lessons.append("Void creation: The AI clears short suits to enable future whipping — plan ahead.")
+        if any("ace" in r.lower() or "guaranteed" in r.lower() for r in reasons):
+            lessons.append("Ace usage: Play Aces decisively — they win guaranteed, don't hold them forever.")
+        if any("lead" in r.lower() or "long suit" in r.lower() for r in reasons):
+            lessons.append("Leading strategy: The AI leads from long suits to bleed opponents — length is power.")
+
+        # If many disagreements in early tricks.
+        early_disagree = sum(1 for m in disagreements if m.get("trick", 13) <= 4)
+        if early_disagree > len(disagreements) * 0.5:
+            lessons.append("Opening play: Most disagreements are in early tricks — your opening strategy diverges from the AI.")
+
+        if not lessons:
+            lessons.append("Your style differs from the AI in subtle ways — study the specific moments to improve.")
+
+        return lessons[:5]  # Max 5 lessons.
 
     def _award_points(self, event: str, value: int = 0):
         """Award points based on game events."""
@@ -397,6 +488,7 @@ class GameScreen:
                         card = action.card
                         r, s = card_key(card)
                         self._ai_rec_card = (r, s)
+                        self._last_ai_rec_card_obj = card  # For evaluation tracking.
                         # Generate strategic teaching reason.
                         leading = obs.current_trick.leading_suit if obs.current_trick else None
                         n_played = len(obs.current_trick.played_cards) if obs.current_trick else 0
@@ -579,6 +671,15 @@ class GameScreen:
         self._game_log = []
         self._log_game_event("=== NEW GAME ===")
         self._show_quit_overlay = False
+
+        # Recommendation visibility — toggled per game, once hidden stays hidden.
+        self._rec_visible = True
+        self._rec_hidden_permanently = False
+
+        # Player evaluation — track moves vs AI recommendations.
+        self._eval_moves_total = 0
+        self._eval_moves_matched = 0
+        self._eval_move_log = []  # List of (player_card, ai_card, matched, reason)
 
         # Load AI advisor if model path is set.
         self._load_ai_advisor()
@@ -1313,6 +1414,7 @@ class GameScreen:
             self._save_player_stats()
             self.phase = "game_over"
             self._log_game_event("=== GAME OVER (SEEK) ===")
+            self._compute_game_evaluation()
             self._spawn_confetti()
             return
 
@@ -1328,6 +1430,7 @@ class GameScreen:
 
             self.phase = "game_over"
             self._log_game_event("=== GAME OVER ===")
+            self._compute_game_evaluation()
             self._spawn_confetti()
         else:
             self.phase = "shota_end"
@@ -1553,6 +1656,30 @@ class GameScreen:
                     pass
             self._play_idx += 1
             self._ai_timer = 15
+
+    def _track_move_evaluation(self, played_card: Card):
+        """Track whether the player's move matched the AI recommendation."""
+        if not hasattr(self, '_eval_moves_total'):
+            return
+        # Get the AI's recommended card (stored before player clicked).
+        rec = getattr(self, '_last_ai_rec_card_obj', None)
+        if rec is None:
+            return
+        self._eval_moves_total += 1
+        matched = (played_card.rank == rec.rank and played_card.suit == rec.suit)
+        if matched:
+            self._eval_moves_matched += 1
+        reason = getattr(self, '_ai_recommendation', '') or ''
+        pr, ps = card_key(played_card)
+        ar, a_s = card_key(rec)
+        self._eval_move_log.append({
+            "player": f"{pr}{ps}",
+            "ai": f"{ar}{a_s}",
+            "matched": matched,
+            "reason": reason,
+            "trick": self.trick_number,
+            "shota": self.shota_number,
+        })
 
     def _start_play_animation(self, pid: int, rank: str, suit: str):
         """Start a card play animation with swoosh scale effect (Feature 17)."""
@@ -1782,6 +1909,15 @@ class GameScreen:
 
     def _handle_click(self, pos):
         """Handle mouse click — bidding or card selection."""
+        # Recommendation toggle button.
+        toggle_rect = getattr(self, '_rec_toggle_rect', None)
+        if toggle_rect and toggle_rect.collidepoint(pos):
+            if not getattr(self, '_rec_hidden_permanently', False):
+                self._rec_visible = not self._rec_visible
+                if not self._rec_visible:
+                    self._rec_hidden_permanently = True  # Once hidden, stays hidden all game.
+            return
+
         # Restart and Exit buttons ALWAYS work regardless of phase.
         panel_x = TABLE_WIDTH
         pad = 10
@@ -2082,6 +2218,9 @@ class GameScreen:
         # Clear recommendation after playing.
         self._ai_rec_card = None
         self._ai_recommendation = ""
+
+        # Track player vs AI evaluation.
+        self._track_move_evaluation(card)
 
         # Feature 1: Reveal trump on first card.
         if not self._trump_revealed:
@@ -2418,46 +2557,70 @@ class GameScreen:
             self._draw_stat_row(panel_x, pad + 4, panel_w, y, label_font, value_font, lbl, val, clr)
             y += 19
 
-        # ========== RECOMMENDATION BOX (always visible, fixed size) ==========
+        # ========== RECOMMENDATION BOX (toggleable per game) ==========
         y = game_card_y + game_card_h + 12
         ai_box_h = 145
         ai_box_rect = pygame.Rect(panel_x + 5, y, panel_w - 10, ai_box_h)
         pygame.draw.rect(self.screen, (22, 40, 22), ai_box_rect, border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
+
+        # Toggle button (eye icon) — top-right of the box.
+        rec_visible = getattr(self, '_rec_visible', True)
+        rec_hidden_perm = getattr(self, '_rec_hidden_permanently', False)
+        toggle_rect = pygame.Rect(ai_box_rect.right - 30, y + 3, 24, 18)
+        self._rec_toggle_rect = toggle_rect
+        hover_toggle = toggle_rect.collidepoint(pygame.mouse.get_pos())
+        if not rec_hidden_perm:
+            eye_color = TEXT_GREEN if rec_visible else TEXT_DIM
+            eye_label = "👁" if rec_visible else "—"
+            toggle_bg = (30, 60, 30) if hover_toggle else (22, 40, 22)
+            pygame.draw.rect(self.screen, toggle_bg, toggle_rect, border_radius=4)
+            eye_font = pygame.font.SysFont("Segoe UI", 11)
+            eye_surf = eye_font.render(eye_label, True, eye_color)
+            self.screen.blit(eye_surf, eye_surf.get_rect(center=toggle_rect.center))
+
         # Title.
         box_title = "Expert-Model Rec." if self._ai_model_path else "Rule-Based Rec."
-        self.screen.blit(header_font.render(box_title, True, TEXT_GREEN),
+        if rec_hidden_perm:
+            box_title = "Recommendations Hidden"
+        self.screen.blit(header_font.render(box_title, True, TEXT_GREEN if rec_visible else TEXT_DIM),
                          (panel_x + pad + 6, y + 5))
 
-        # Reason text only in box — left aligned, wrapped with label_font.
-        content_x = panel_x + pad + 6
-        content_w = panel_w - pad * 2 - 12
-        rec_text = self._ai_recommendation if self._ai_recommendation else ""
-        if rec_text:
-            words = rec_text.split()
-            lines = []
-            current_line = ""
-            for word in words:
-                test = current_line + (" " if current_line else "") + word
-                if label_font.size(test)[0] <= content_w:
-                    current_line = test
-                else:
-                    if current_line:
-                        lines.append(current_line)
-                    current_line = word
-            if current_line:
-                lines.append(current_line)
-            text_y = y + 24
-            for line in lines[:5]:
-                ls = label_font.render(line, True, TEXT_LIGHT)
-                self.screen.blit(ls, (content_x, text_y))
-                text_y += 16
+        # Content — only show if visible and not permanently hidden.
+        if rec_visible and not rec_hidden_perm:
+            content_x = panel_x + pad + 6
+            content_w = panel_w - pad * 2 - 12
+            rec_text = self._ai_recommendation if self._ai_recommendation else ""
+            if rec_text:
+                words = rec_text.split()
+                lines = []
+                current_line = ""
+                for word in words:
+                    test = current_line + (" " if current_line else "") + word
+                    if label_font.size(test)[0] <= content_w:
+                        current_line = test
+                    else:
+                        if current_line:
+                            lines.append(current_line)
+                        current_line = word
+                if current_line:
+                    lines.append(current_line)
+                text_y = y + 24
+                for line in lines[:5]:
+                    ls = label_font.render(line, True, TEXT_LIGHT)
+                    self.screen.blit(ls, (content_x, text_y))
+                    text_y += 16
+        elif rec_hidden_perm:
+            hint_surf = label_font.render("Hidden for this game", True, TEXT_DIM)
+            self.screen.blit(hint_surf, (panel_x + pad + 6, y + 28))
 
         y += ai_box_h + 8
 
         # Recommended card — to the right of user's hand, vertically centered with cards.
         rec_card = getattr(self, '_ai_rec_card', None)
-        if rec_card:
+        rec_visible = getattr(self, '_rec_visible', True)
+        rec_hidden_perm = getattr(self, '_rec_hidden_permanently', False)
+        if rec_card and rec_visible and not rec_hidden_perm:
             r, s = rec_card
             rc_w, rc_h = 50, 72
             # Position: right of the user's hand area, vertically centered.
@@ -2672,6 +2835,59 @@ class GameScreen:
         hint = self.fonts["medium"].render(
             "Press SPACE for new game  |  ESC for menu", True, TEXT_LIGHT)
         self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 80))
+
+        # Player evaluation section.
+        game_eval = getattr(self, '_game_evaluation', None)
+        if game_eval:
+            eval_y = cy + 110
+            # Agreement score.
+            pct = game_eval["agreement_pct"]
+            rating = game_eval["rating"]
+            pct_color = HIGHLIGHT_GREEN if pct >= 60 else TEXT_GOLD if pct >= 40 else BUTTON_RED
+            eval_font = pygame.font.SysFont("Segoe UI", 15, bold=True)
+            eval_text = f"AI Agreement: {pct:.0f}% — Rating: {rating}"
+            self.screen.blit(eval_font.render(eval_text, True, pct_color),
+                             eval_font.render(eval_text, True, pct_color)
+                             .get_rect(centerx=cx, y=eval_y))
+            eval_y += 22
+
+            # Trend (compare to previous games).
+            eval_history = getattr(self, '_eval_history', [])
+            if len(eval_history) >= 2:
+                prev_pct = eval_history[-2]["agreement_pct"]
+                delta = pct - prev_pct
+                if delta > 0:
+                    trend_text = f"↑ +{delta:.0f}% from last game — improving!"
+                    trend_color = HIGHLIGHT_GREEN
+                elif delta < 0:
+                    trend_text = f"↓ {delta:.0f}% from last game — AI is tougher?"
+                    trend_color = BUTTON_RED
+                else:
+                    trend_text = "→ Same as last game"
+                    trend_color = TEXT_LIGHT
+                trend_font = pygame.font.SysFont("Segoe UI", 12)
+                self.screen.blit(trend_font.render(trend_text, True, trend_color),
+                                 trend_font.render(trend_text, True, trend_color)
+                                 .get_rect(centerx=cx, y=eval_y))
+                eval_y += 18
+
+            # Strategy feedback.
+            fb_font = pygame.font.SysFont("Segoe UI", 12)
+            feedback = game_eval.get("feedback", "")
+            if feedback:
+                fb_surf = fb_font.render(feedback, True, TEXT_LIGHT)
+                self.screen.blit(fb_surf, fb_surf.get_rect(centerx=cx, y=eval_y))
+                eval_y += 18
+
+            # Lessons learned.
+            lessons = game_eval.get("lessons", [])
+            if lessons:
+                eval_y += 4
+                lesson_font = pygame.font.SysFont("Segoe UI", 11)
+                for lesson in lessons[:3]:
+                    ls = lesson_font.render(f"• {lesson}", True, TEXT_DIM)
+                    self.screen.blit(ls, ls.get_rect(centerx=cx, y=eval_y))
+                    eval_y += 15
 
         self._render_game_log()
 
