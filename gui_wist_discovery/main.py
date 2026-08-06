@@ -106,6 +106,7 @@ class WistDiscoveryWatcher:
         self._last_discovery_time = None
         self._total_paused_time = 0.0  # Accumulated paused seconds.
         self._pause_start = None  # When current pause began.
+        self._accumulated_compute = 0.0  # Compute time from previous sessions.
 
         # Load previously discovered milestones.
         self._load_milestones()
@@ -338,13 +339,19 @@ class WistDiscoveryWatcher:
                     self._best_snapshot = self._snapshot_brain()
 
     def _snapshot_brain(self) -> dict:
-        """Take a frozen snapshot of current Q-tables."""
-        return {
-            "play_q": {k: dict(v) for k, v in self.discovery.play_q.items()},
-            "play_q2": {k: dict(v) for k, v in self.discovery.play_q2.items()},
-            "bid_q": {k: dict(v) for k, v in self.discovery.bid_q.items()},
-            "bid_q2": {k: dict(v) for k, v in self.discovery.bid_q2.items()},
-        }
+        """Take a frozen snapshot of current Q-tables (thread-safe)."""
+        try:
+            return {
+                "play_q": {k: dict(v) for k, v in list(self.discovery.play_q.items())},
+                "play_q2": {k: dict(v) for k, v in list(self.discovery.play_q2.items())},
+                "bid_q": {k: dict(v) for k, v in list(self.discovery.bid_q.items())},
+                "bid_q2": {k: dict(v) for k, v in list(self.discovery.bid_q2.items())},
+            }
+        except RuntimeError:
+            # If dict changes during iteration, return empty snapshot.
+            return {
+                "play_q": {}, "play_q2": {}, "bid_q": {}, "bid_q2": {},
+            }
 
     def _create_opponent(self, agent) -> "WistDiscoveryAgent":
         """Create opponent based on current curriculum stage."""
@@ -403,12 +410,30 @@ class WistDiscoveryWatcher:
             return opp
 
     def _bg_train(self):
-        """2000 silent self-play shotas in background, played as full 5-shota games."""
-        agent = self.discovery
-        opp = self._create_opponent(agent)
+        """10000 silent self-play shotas in background, played as full 5-shota games."""
+        # Create a separate training agent for the background thread.
+        # Shares Q-tables with main agent but has its own mutable state.
+        agent = WistDiscoveryAgent(training=True)
+        agent.play_q = self.discovery.play_q
+        agent.play_q2 = self.discovery.play_q2
+        agent.bid_q = self.discovery.bid_q
+        agent.bid_q2 = self.discovery.bid_q2
+        agent.epsilon = self.discovery.epsilon
+        agent._use_neural = self.discovery._use_neural
+        agent._play_net = self.discovery._play_net
+        agent._target_net = self.discovery._target_net
+        agent._bid_net = self.discovery._bid_net
+        agent._replay_buffer = self.discovery._replay_buffer
+        agent._state_visit_counts = self.discovery._state_visit_counts
+        agent._reward_normalizer = self.discovery._reward_normalizer
+        agent.episodes_trained = self.discovery.episodes_trained
+        agent.total_updates = self.discovery.total_updates
+
+        opp = self._create_opponent(self.discovery)
+        self._bg_agent = agent  # Expose for UI to read episodes_trained live.
 
         shotas_done = 0
-        while shotas_done < 2000:
+        while shotas_done < 10000:
             # Play a full 5-shota game.
             bg_team_scores = [0, 0]
             bg_shota_count = 0
@@ -485,6 +510,11 @@ class WistDiscoveryWatcher:
                 self._wist_win_history.append(game_won)
 
         self._bg_active = False
+        self._bg_agent = None
+        # Sync stats back to the main discovery agent.
+        self.discovery.episodes_trained = agent.episodes_trained
+        self.discovery.total_updates = agent.total_updates
+        self.discovery.epsilon = agent.epsilon
 
     def _check_milestones(self, team_tricks, bid, playing_team, bid_met, scores):
         """Detect Wist behavioral milestones — positive discoveries only."""
@@ -726,19 +756,19 @@ class WistDiscoveryWatcher:
                 title = key.upper()
                 base_desc = msg
 
-            # Compute times.
-            now_compute = self._get_compute_time()
-            last_disc_time = getattr(self, '_last_discovery_compute', None)
+            # Compute times (accumulated across sessions).
+            total_compute = self._accumulated_compute + self._get_compute_time()
+            last_disc_compute = getattr(self, '_last_discovery_compute', None)
 
-            total_str = self._format_time(now_compute)
+            total_str = self._format_time(total_compute)
 
-            if last_disc_time is not None:
-                delta_sec = now_compute - last_disc_time
+            if last_disc_compute is not None:
+                delta_sec = total_compute - last_disc_compute
                 delta_str = self._format_time(delta_sec)
             else:
                 delta_str = "—"
 
-            self._last_discovery_compute = now_compute
+            self._last_discovery_compute = total_compute
 
             # Multi-line structured description.
             desc = (
@@ -975,17 +1005,21 @@ class WistDiscoveryWatcher:
         pygame.quit()
 
     def _save_milestones(self):
-        """Save discovered milestones to disk."""
+        """Save discovered milestones and accumulated compute time to disk."""
         path = "agents/wist_discovery/milestones.json"
         try:
-            data = {"achieved": list(self._milestones_achieved), "list": self._milestones_list}
+            data = {
+                "achieved": list(self._milestones_achieved),
+                "list": self._milestones_list,
+                "total_compute_sec": self._accumulated_compute + self._get_compute_time(),
+            }
             with open(path, "w") as f:
                 json.dump(data, f)
         except Exception:
             pass
 
     def _load_milestones(self):
-        """Load previously discovered milestones."""
+        """Load previously discovered milestones and accumulated compute time."""
         path = "agents/wist_discovery/milestones.json"
         try:
             with open(path, "r") as f:
@@ -993,6 +1027,7 @@ class WistDiscoveryWatcher:
             self._milestones_achieved = set(data.get("achieved", []))
             self._milestones_list = [tuple(x) if isinstance(x, list) else x
                                      for x in data.get("list", [])]
+            self._accumulated_compute = data.get("total_compute_sec", 0.0)
         except (FileNotFoundError, Exception):
             pass
 
@@ -1049,6 +1084,7 @@ class WistDiscoveryWatcher:
 
     def _reset_brain(self):
         """Reset discovery agent — start from scratch."""
+        import time
         self.discovery = WistDiscoveryAgent(training=True)
         self.opp.play_q = self.discovery.play_q
         self.opp.play_q2 = self.discovery.play_q2
@@ -1060,6 +1096,12 @@ class WistDiscoveryWatcher:
         self.bids_failed = 0
         self._milestones_achieved.clear()
         self._milestones_list.clear()
+        # Reset timer.
+        self._accumulated_compute = 0.0
+        self._app_start_time = time.monotonic()
+        self._total_paused_time = 0.0
+        self._pause_start = None
+        self._last_discovery_compute = None
         self._save_milestones()
         self._log("  BRAIN RESET -- starting from zero.")
 
@@ -1092,8 +1134,18 @@ class WistDiscoveryWatcher:
         t = self.fonts["title"].render(TITLE, True, TEXT_WHITE)
         self.screen.blit(t, (25, 15))
 
-        # Info — right-aligned above panel, two lines, white.
+        # Timer — left-aligned above scoreboard, vertically centered in the header space.
         panel_x = SCREEN_WIDTH - 290
+
+        total_sec = self._accumulated_compute + self._get_compute_time()
+        hours = int(total_sec // 3600)
+        minutes = int((total_sec % 3600) // 60)
+        seconds = int(total_sec % 60)
+        timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
+        timer_y = (60 - timer_surf.get_height()) // 2
+        self.screen.blit(timer_surf, (panel_x, timer_y))
+
+        # Info — right-aligned above panel.
         info1 = f"Game {self.game_num} | Shota {self.shota_num}/5 | Speed: {self.speed:.1f}x"
         info2 = f"Score: T1={self.team_scores[0]:+d} T2={self.team_scores[1]:+d} | SPACE: pause | ESC: quit"
         self.screen.blit(self.fonts["small"].render(info1, True, TEXT_WHITE),
@@ -1268,8 +1320,10 @@ class WistDiscoveryWatcher:
 
         y += 8
         # Stats below the table.
+        bg_episodes = getattr(self, '_bg_agent', None)
+        live_episodes = bg_episodes.episodes_trained if bg_episodes else self.discovery.episodes_trained
         stats = [
-            f"Shotas learned: {self.discovery.episodes_trained:,}",
+            f"Shotas learned: {live_episodes:,}",
             f"Seeks: {self.seeks_achieved}",
             f"Bids met: {self.bids_met}/{self.bids_met + self.bids_failed}",
             f"Epsilon: {self.discovery.epsilon:.3f}  |  Stage: {self._opponent_stage}",
@@ -1298,9 +1352,9 @@ class WistDiscoveryWatcher:
             disc_scroll = getattr(self, '_disc_scroll_offset', 0)
             total = len(self._milestones_list)
 
-            # Estimate how many items fill the panel (conservative: ~45px each).
+            # Estimate how many items fill the panel.
             available_h = disc_rect.bottom - y - 15
-            items_fit = max(1, available_h // 45)
+            items_fit = max(1, available_h // 80)  # ~80px per discovery with new formatting.
             max_scroll = max(0, total - items_fit)
             disc_scroll = max(0, min(disc_scroll, max_scroll))
             self._disc_scroll_offset = disc_scroll

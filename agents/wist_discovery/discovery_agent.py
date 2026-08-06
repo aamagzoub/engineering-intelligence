@@ -193,16 +193,18 @@ class PrioritizedReplayBuffer:
     def sample(self, batch_size: int = 64) -> list:
         if len(self._buffer) == 0:
             return []
-        size = min(batch_size, len(self._buffer))
-        # Probability proportional to priority.
-        total = sum(self._priorities)
-        if total == 0:
-            indices = random.sample(range(len(self._buffer)), size)
+        # Take a snapshot to avoid race conditions with concurrent writes.
+        buf_snapshot = list(self._buffer)
+        pri_snapshot = list(self._priorities[:len(buf_snapshot)])
+        size = min(batch_size, len(buf_snapshot))
+        total = sum(pri_snapshot)
+        if total == 0 or len(pri_snapshot) != len(buf_snapshot):
+            indices = random.sample(range(len(buf_snapshot)), size)
         else:
-            probs = np.array([p / total for p in self._priorities])
-            probs /= probs.sum()  # Ensure exact sum to 1.0 (float precision fix).
-            indices = np.random.choice(len(self._buffer), size=size, replace=False, p=probs).tolist()
-        return [self._buffer[i] for i in indices]
+            probs = np.array(pri_snapshot, dtype=np.float64)
+            probs /= probs.sum()
+            indices = np.random.choice(len(buf_snapshot), size=size, replace=False, p=probs).tolist()
+        return [buf_snapshot[i] for i in indices]
 
     def __len__(self):
         return len(self._buffer)
@@ -317,8 +319,10 @@ class WistDiscoveryAgent(Agent):
         self.bid_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
         # === Neural Network Function Approximator (Enhancement #9) ===
-        # CardEvaluator: per-card evaluation (state 24 + card 8 = 32 features → 1 Q-value).
-        self._play_net = CardEvaluator(input_size=32, hidden_size=64, learning_rate=0.0005)
+        # CardEvaluator: per-card evaluation (state 28 + card 8 + memory 52 = 88 features → 1 Q-value).
+        self._play_net = CardEvaluator(input_size=88, hidden_size=128, learning_rate=0.0003)
+        self._target_net = self._play_net.copy()  # Target network (frozen, updated every 500 episodes).
+        self._target_update_interval = 500
         self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
                                  output_size=NUM_BID_ACTIONS, learning_rate=0.001)
         self._use_neural = False  # Starts with Q-tables, switches after enough data.
@@ -340,6 +344,11 @@ class WistDiscoveryAgent(Agent):
         self._bid_episode: list[tuple[str, str]] = []
         self._nn_play_features: list = []  # Neural net feature vectors per play action.
 
+        # === Sequence Memory (full shota history) ===
+        # Each entry: (rank_norm, was_trump, followed_suit, won_trick)
+        self._trick_memory: list[tuple[float, float, float, float]] = []
+        self._memory_size = 13  # Remember all tricks in the shota.
+
         # === Eligibility Traces ===
         self._play_traces: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self._bid_traces: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -357,6 +366,9 @@ class WistDiscoveryAgent(Agent):
 
         # === Opponent Modeling ===
         self._known_voids: dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
+
+        # === Card Counting — track suits played globally ===
+        self._suits_played: dict = {0: 0, 1: 0, 2: 0, 3: 0}  # SUIT_IDX → count of cards played
 
         # === Opponent Prediction ===
         self._opp_predictor = OpponentPredictor()
@@ -387,24 +399,35 @@ class WistDiscoveryAgent(Agent):
         hand = obs.hand
         suit_counts = Counter(c.suit for c in hand)
 
+        # Valid trump suits: 1–7 cards (8+ cannot be trump).
         valid_trump_suits = [s for s, count in suit_counts.items() if 1 <= count <= 7]
         if not valid_trump_suits:
             return PassAction(player_id=obs.player_id)
 
-        shortest_trump_count = min(suit_counts[s] for s in valid_trump_suits)
+        # Max bid is determined by the LONGEST valid trump suit (more trump = higher ceiling).
+        longest_trump_count = max(suit_counts[s] for s in valid_trump_suits)
+
+        # Determine min and max bid based on role.
+        min_bid = 7  # Always 7.
 
         if obs.is_sahib_al_qabool:
             if obs.current_highest_bid:
-                min_bid = obs.current_highest_bid
-                max_bid = 13
+                # Someone bid — Qabool gets trump+4 ceiling (one extra card advantage).
+                max_bid = longest_trump_count + 4
+                min_bid = obs.current_highest_bid  # Must match or exceed.
             else:
-                min_bid = max(7, shortest_trump_count + 3)
-                max_bid = 13
+                # All passed — same ceiling as regular (trump+3), but can also bid 13.
+                max_bid = max(longest_trump_count + 3, 13)  # Can always bid 13.
         else:
-            min_bid = max(7, shortest_trump_count + 3)
-            max_bid = 11 if obs.is_opening_bid else 13
+            # Regular player: max bid = trump+3 (ceiling).
+            max_bid = longest_trump_count + 3
+            if obs.is_opening_bid:
+                max_bid = min(max_bid, 11)  # Opening bid capped at 11.
             if obs.current_highest_bid:
-                min_bid = max(min_bid, obs.current_highest_bid + 1)
+                min_bid = obs.current_highest_bid + 1  # Must exceed.
+
+        # Clamp max_bid to 13.
+        max_bid = min(max_bid, 13)
 
         if min_bid > max_bid and not obs.must_play:
             action = PassAction(player_id=obs.player_id)
@@ -412,7 +435,7 @@ class WistDiscoveryAgent(Agent):
             action = BidAction(player_id=obs.player_id, value=min(min_bid, 13))
         elif obs.must_play:
             if self.training and random.random() < self.epsilon:
-                bid_val = random.randint(min_bid, min(max_bid, min_bid + 2))
+                bid_val = random.randint(min_bid, max_bid)
             else:
                 best = self._best_bid(obs, min_bid, max_bid)
                 bid_val = best.value if isinstance(best, BidAction) else min_bid
@@ -421,7 +444,7 @@ class WistDiscoveryAgent(Agent):
             if random.random() < 0.5:
                 action = PassAction(player_id=obs.player_id)
             else:
-                bid_val = random.randint(min_bid, min(max_bid, min_bid + 2))
+                bid_val = random.randint(min_bid, max_bid)
                 action = BidAction(player_id=obs.player_id, value=bid_val)
         else:
             action = self._best_bid(obs, min_bid, max_bid)
@@ -492,9 +515,10 @@ class WistDiscoveryAgent(Agent):
             # Store neural net features for this card choice.
             if self._use_neural:
                 s_feat = state_features(obs, self._get_opponent_voids_count(obs),
-                                        rank_value, SUIT_IDX)
+                                        rank_value, SUIT_IDX, self._suits_played)
                 c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
-                self._nn_play_features.append(np.concatenate([s_feat, c_feat]))
+                mem_feat = self._get_memory_features()
+                self._nn_play_features.append(np.concatenate([s_feat, c_feat, mem_feat]))
 
         return PlayCardAction(player_id=obs.player_id, card=card)
 
@@ -504,15 +528,16 @@ class WistDiscoveryAgent(Agent):
         q1 = self.play_q[state_str]
         q2 = self.play_q2[state_str]
 
-        # Neural net: evaluate each card individually.
+        # Neural net: evaluate each card individually with sequence memory.
         nn_values = {}
         if self._use_neural:
             s_feat = state_features(obs, self._get_opponent_voids_count(obs),
-                                    rank_value, SUIT_IDX)
+                                    rank_value, SUIT_IDX, self._suits_played)
+            mem_feat = self._get_memory_features()
             for card in playable:
                 c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
-                combined = np.concatenate([s_feat, c_feat])
-                nn_values[id(card)] = self._play_net.predict(combined)
+                combined_feat = np.concatenate([s_feat, c_feat, mem_feat])
+                nn_values[id(card)] = self._play_net.predict(combined_feat)
 
         best_card = playable[0]
         best_q = float("-inf")
@@ -538,8 +563,20 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """Per-trick intermediate reward."""
+        """Per-trick intermediate reward + update sequence memory."""
         if not self.training or not self._play_episode:
+            return
+
+        # Record this trick in memory buffer.
+        state, action = self._play_episode[-1]
+        # Extract basic info from action encoding for memory.
+        rank_norm = 1.0 if action.startswith("A") else (0.7 if action.startswith("H") else (0.4 if action.startswith("M") else 0.1))
+        was_trump = 1.0 if "T" in action else 0.0
+        followed = 1.0 if "F" in action else 0.0
+        won_f = 1.0 if won else 0.0
+        self._trick_memory.append((rank_norm, was_trump, followed, won_f))
+        if len(self._trick_memory) > self._memory_size:
+            self._trick_memory = self._trick_memory[-self._memory_size:]
             return
         micro_reward = 0.3 if won else -0.1
         effective_alpha = max(0.03, self.alpha * 0.3 * (1.0 / (1.0 + self.episodes_trained / 2000)))
@@ -641,6 +678,10 @@ class WistDiscoveryAgent(Agent):
         if not self._use_neural and self.episodes_trained >= self._neural_switch_threshold:
             self._use_neural = True
 
+        # === Target network update (every N episodes) ===
+        if self._use_neural and self.episodes_trained % self._target_update_interval == 0:
+            self._target_net = self._play_net.copy()
+
         # === Cleanup ===
         self._play_episode.clear()
         self._bid_episode.clear()
@@ -693,6 +734,9 @@ class WistDiscoveryAgent(Agent):
                 continue
             if played_card.card.suit != leading_suit:
                 self._known_voids[pid].add(leading_suit)
+            # Card counting — track how many of each suit played.
+            suit_idx = SUIT_IDX.get(played_card.card.suit, 0)
+            self._suits_played[suit_idx] = min(13, self._suits_played.get(suit_idx, 0) + 1)
 
     def _observe_opponents(self, obs: WistObservation) -> None:
         """Track opponent play patterns for prediction."""
@@ -714,6 +758,17 @@ class WistDiscoveryAgent(Agent):
         opp_ids = [1, 3] if my_team == 0 else [0, 2]
         return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
 
+    def _get_memory_features(self) -> np.ndarray:
+        """Get sequence memory as a fixed 52-dim feature vector (13 tricks × 4 features)."""
+        features = np.zeros(52)
+        for i, (rank_n, trump, follow, won) in enumerate(self._trick_memory[:13]):
+            base = i * 4
+            features[base] = rank_n
+            features[base + 1] = trump
+            features[base + 2] = follow
+            features[base + 3] = won
+        return features
+
     # =========================================================================
     # Episode Management
     # =========================================================================
@@ -722,9 +777,11 @@ class WistDiscoveryAgent(Agent):
         self._play_episode.clear()
         self._bid_episode.clear()
         self._nn_play_features.clear()
+        self._trick_memory.clear()
         self._play_traces.clear()
         self._bid_traces.clear()
         self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
+        self._suits_played = {0: 0, 1: 0, 2: 0, 3: 0}
 
     # =========================================================================
     # Persistence

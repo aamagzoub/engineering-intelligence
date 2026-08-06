@@ -99,16 +99,16 @@ Everything else — trump power, bid accuracy, partner cooperation, seek pursuit
 1. Bid values: 7–13 only
 2. Opening bid cannot exceed 11
 3. Each bid must exceed the current highest
-4. Bid ≥ max(7, chosen trump suit count + 3)
+4. Max bid = chosen trump suit count + 3 (ceiling, not floor: more trump = higher allowed bid)
 5. Trump suit can be any suit with 1–7 cards
-6. 8+ cards in a suit or no pictures = can declare Dak (optional — agent learns whether to Dak or play)
+6. 8+ cards in a suit cannot be used as trump (Dak declaration is optional — agent learns whether to Dak or play)
 7. Must follow suit if able during trick play
 8. If void in led suit, may play any card
 
 **Sahib Al-Qabool additionally:**
 1. Can match the highest bid (does not need to exceed)
-2. After someone else bid: exempt from trump+3 rule
-3. After all passed (Qabool bids first): trump+3 applies, but cap is 13 (not 11)
+2. After someone else bid: max bid = trump count + 4 (one extra card advantage)
+3. After all passed (Qabool bids first): max bid = trump count + 3, but can also bid 13
 4. Must lead trump on first trick (when Qabool won the bid)
 5. On the 3rd pass-based Dak of a game, must play (cannot pass — pass removed from legal options)
 
@@ -160,22 +160,23 @@ Declaring card-based Dak is **optional**. The player may choose to play instead 
 Starts from the player to Qabool's left, moves clockwise. Each player bids a number only — no suit is named.
 
 - Each bid must be higher than the previous
-- Bid value must be at least (cards in chosen trump suit + 3)
+- Max bid is limited by cards in chosen trump suit: max bid = trump count + 3 (ceiling)
 - The player may choose any suit as trump (1–7 cards) — this choice is strategic, not declared
-- Opening bid cannot exceed 11. Subsequent bids up to 13.
+- Opening bid cannot exceed 11. Subsequent bids up to trump+3 ceiling.
 - Trump suit must have 7 or fewer cards; 8+ in any suit allows optional Dak declaration (or play with a different suit)
 - If any player bids 13, bidding stops immediately
 - Qabool can match the highest bid (does not have to go higher)
-- Both bid restrictions (min bid = trump+3, opening cap of 11) are lifted for Qabool
+- Qabool advantage: max bid = trump count + 4 (one extra card) when someone bid before them
+- Qabool can bid 13 when all others passed
 - On the 3rd pass-based Dak of a game, Qabool must play (cannot pass)
 
-| Cards in trump suit | Standard bid | Qabool advantage |
-|---|---|---|
-| 1–4 | 7 (Marboota) | 7 |
-| 5 | 8 | 7 or 8 |
-| 6 | 9 | 8 or 9 |
-| 7 | 10 | 9 or 10 |
-| 8+ | Cannot be trump (may declare Dak or use another suit) | — |
+| Cards in trump suit | Max bid (regular) | Max bid (Qabool after bid) | Qabool after all pass |
+|---|---|---|---|
+| 1–4 | 7 (Marboota) | 7 or 8 | 7 or 13 |
+| 5 | 8 | 9 | 8 or 13 |
+| 6 | 9 | 10 | 9 or 13 |
+| 7 | 10 | 11 | 10 or 13 |
+| 8+ | Cannot be trump (may declare Dak or use another suit) | — | — |
 
 #### Al-Ato (The Trump Suit)
 
