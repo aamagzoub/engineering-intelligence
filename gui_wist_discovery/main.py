@@ -15,7 +15,7 @@ import os
 import json
 import threading
 import random
-from collections import deque, defaultdict
+from collections import deque, defaultdict, Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1118,6 +1118,20 @@ class WistDiscoveryWatcher:
         self.bids_failed = 0
         self._milestones_achieved.clear()
         self._milestones_list.clear()
+        # Reset strategic insights.
+        self._cached_insights = []
+        self._last_insight_episode = 0
+        # Reset auto-discovery stats.
+        if hasattr(self, '_auto_stats'):
+            del self._auto_stats
+        # Reset curriculum.
+        self._opponent_stage = 1
+        self._frozen_snapshot = None
+        self._best_snapshot = None
+        self._last_discovery_episode_for_stage = 0
+        # Reset win history.
+        if hasattr(self, '_wist_win_history'):
+            self._wist_win_history.clear()
         # Reset timer.
         self._accumulated_compute = 0.0
         self._app_start_time = time.monotonic()
@@ -1563,33 +1577,176 @@ class WistDiscoveryWatcher:
 
         play_q = agent.play_q
 
-        # Analyze play Q-table for strong patterns.
+        # === 1. Action-based insights (what actions work in general) ===
         action_avg = defaultdict(list)
         for state, actions in list(play_q.items())[:3000]:
             for action_key, q_val in actions.items():
                 if abs(q_val) > 0.1:
                     action_avg[action_key].append(q_val)
 
-        # Build insights from action patterns.
         for action_key, values in action_avg.items():
             if len(values) < 10:
                 continue
             avg = sum(values) / len(values)
             if abs(avg) < 0.2:
                 continue
-
             cat, desc = self._categorize_insight(action_key, avg)
             if cat and desc:
                 insights.append(f"{cat}: {desc}")
 
-        # Bid insights.
+        # === 2. State-based insights (what contexts favor what actions) ===
+        # Analyze by game phase (encoded in state string).
+        phase_action_q = {"1": defaultdict(list), "2": defaultdict(list),
+                          "3": defaultdict(list), "4": defaultdict(list), "5": defaultdict(list)}
+        # Analyze by position (0-3 cards before us).
+        pos_action_q = {"0": defaultdict(list), "1": defaultdict(list),
+                        "2": defaultdict(list), "3": defaultdict(list)}
+
+        for state, actions in list(play_q.items())[:5000]:
+            if len(state) < 6:
+                continue
+            # State format: shape(4) + pos(1) + phase(1) + ...
+            pos = state[4] if len(state) > 4 else "0"
+            phase = state[5] if len(state) > 5 else "1"
+
+            for action_key, q_val in actions.items():
+                if abs(q_val) > 0.2:
+                    if phase in phase_action_q:
+                        phase_action_q[phase][action_key].append(q_val)
+                    if pos in pos_action_q:
+                        pos_action_q[pos][action_key].append(q_val)
+
+        # Phase insights.
+        for phase, label in [("1", "opening"), ("3", "mid-game"), ("5", "endgame")]:
+            actions = phase_action_q.get(phase, {})
+            if not actions:
+                continue
+            # Find best action in this phase.
+            best_action = ""
+            best_avg = 0
+            for a, vals in actions.items():
+                if len(vals) >= 5:
+                    avg = sum(vals) / len(vals)
+                    if avg > best_avg:
+                        best_avg = avg
+                        best_action = a
+            if best_action and best_avg > 0.3:
+                tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards (9-10)", "L": "low cards (5-8)", "X": "very low cards (2-4)"}.get(best_action[0], "cards")
+                trump_flag = "trump " if len(best_action) > 2 and best_action[2] == "T" else ""
+                if label == "opening":
+                    insights.append(f"OPENING: In the first few tricks, playing {trump_flag}{tier} tends to set up a strong position")
+                elif label == "mid-game":
+                    insights.append(f"TIMING: In the middle of the shota, {trump_flag}{tier} are the most effective plays")
+                elif label == "endgame":
+                    insights.append(f"ENDGAME: In the final tricks, {trump_flag}{tier} dominate — save them for this moment")
+
+        # Position insights.
+        for pos, label in [("0", "leading"), ("3", "last to play")]:
+            actions = pos_action_q.get(pos, {})
+            if not actions:
+                continue
+            best_action = ""
+            best_avg = 0
+            for a, vals in actions.items():
+                if len(vals) >= 5:
+                    avg = sum(vals) / len(vals)
+                    if avg > best_avg:
+                        best_avg = avg
+                        best_action = a
+            if best_action and best_avg > 0.3:
+                tier = {"A": "Ace", "K": "King", "Q": "Queen", "J": "Jack", "M": "9 or 10", "L": "low card", "X": "very low card"}.get(best_action[0], "card")
+                if label == "leading":
+                    insights.append(f"LEAD: When you lead the trick, starting with a {tier} works best")
+                elif label == "last to play":
+                    insights.append(f"POSITION: When you play last (4th), you see everything — play the minimum {tier} needed to win")
+
+        # === 3. Score-difference insights (ahead vs behind) ===
+        ahead_actions = defaultdict(list)
+        behind_actions = defaultdict(list)
+        for state, actions in list(play_q.items())[:3000]:
+            if len(state) < 7:
+                continue
+            score_flag = state[6] if len(state) > 6 else "T"
+            for action_key, q_val in actions.items():
+                if abs(q_val) > 0.2:
+                    if score_flag == "W":
+                        ahead_actions[action_key].append(q_val)
+                    elif score_flag == "B":
+                        behind_actions[action_key].append(q_val)
+
+        # Best when ahead.
+        for a, vals in ahead_actions.items():
+            if len(vals) >= 10:
+                avg = sum(vals) / len(vals)
+                if avg > 0.4:
+                    tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards", "L": "low cards", "X": "very low cards"}.get(a[0], "cards")
+                    is_trump = "trump " if len(a) > 2 and a[2] == "T" else ""
+                    insights.append(f"CONTROL: When ahead in score, playing {is_trump}{tier} maintains your lead safely")
+                    break
+
+        # Best when behind.
+        for a, vals in behind_actions.items():
+            if len(vals) >= 10:
+                avg = sum(vals) / len(vals)
+                if avg > 0.4:
+                    tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards", "L": "low cards", "X": "very low cards"}.get(a[0], "cards")
+                    is_trump = "trump " if len(a) > 2 and a[2] == "T" else ""
+                    insights.append(f"RECOVER: When behind in score, playing {is_trump}{tier} is the best way to catch up")
+                    break
+
+        # === 4. Trump-specific insights ===
+        trump_heavy_states = []
+        trump_light_states = []
+        for state, actions in list(play_q.items())[:3000]:
+            if len(state) < 10:
+                continue
+            # Trump count is encoded at positions 8-9 in state string.
+            try:
+                trump_count = int(state[8]) if state[8].isdigit() else 0
+            except (IndexError, ValueError):
+                continue
+            if trump_count >= 4:
+                for a, q in actions.items():
+                    if q > 0.3:
+                        trump_heavy_states.append((a, q))
+            elif trump_count <= 1:
+                for a, q in actions.items():
+                    if q > 0.3:
+                        trump_light_states.append((a, q))
+
+        if trump_heavy_states:
+            # What works when you have many trumps.
+            most_common = Counter(a for a, _ in trump_heavy_states).most_common(1)
+            if most_common:
+                a = most_common[0][0]
+                is_trump = "trumping" if len(a) > 2 and a[2] == "T" else "playing aggressively"
+                insights.append(f"TRUMP: When you hold many trumps (4+), {is_trump} dominates — you have the power to control every trick")
+
+        if trump_light_states:
+            most_common = Counter(a for a, _ in trump_light_states).most_common(1)
+            if most_common:
+                a = most_common[0][0]
+                tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards", "L": "low cards", "X": "very low cards"}.get(a[0], "cards")
+                insights.append(f"ADAPT: When you have few trumps (0-1), rely on {tier} in side suits — you can't afford to waste what little trump you have")
+
+        # === 5. Bid insights ===
         bid_q = agent.bid_q
+        bid_pass_values = []
+        bid_values_by_num = defaultdict(list)
         for state, actions in list(bid_q.items())[:500]:
             for action_key, q_val in actions.items():
-                if action_key == "PASS" and q_val > 0.4:
-                    insights.append("BID: When your hand is weak, passing is smarter than overbidding — let the opponents take the risk")
-                    break
-                if action_key.startswith("B") and q_val > 0.4:
+                if action_key == "PASS":
+                    bid_pass_values.append(q_val)
+                elif action_key.startswith("B"):
+                    bid_values_by_num[action_key].append(q_val)
+
+        if bid_pass_values and sum(bid_pass_values) / len(bid_pass_values) > 0.3:
+            insights.append("BID: When your hand is weak, passing is smarter than overbidding — let the opponents take the risk")
+
+        for action_key, values in sorted(bid_values_by_num.items(), key=lambda x: -sum(x[1])/len(x[1]) if x[1] else 0):
+            if len(values) >= 3:
+                avg = sum(values) / len(values)
+                if avg > 0.3:
                     val = int(action_key[1:])
                     if val == 7:
                         insights.append("UNDERBID: Bidding 7 (the minimum) is the safest bet — easy to meet and hard to fail")
@@ -1599,7 +1756,7 @@ class WistDiscoveryWatcher:
                         insights.append(f"RISK: Bidding {val} requires a powerful hand — only do this with many trumps and high cards")
                     break
 
-        # Performance-based strategy insights.
+        # === 6. Performance-based strategy insights ===
         if hasattr(self, '_auto_stats') and self._auto_stats:
             stats = self._auto_stats
             if len(stats.get("scores", [])) >= 20:
@@ -1612,6 +1769,32 @@ class WistDiscoveryWatcher:
 
             if stats.get("total_seeks", 0) >= 5:
                 insights.append("SEEK: Going for all 13 tricks is possible when you hold many high trumps — the agent actively pursues this when the hand is strong enough")
+
+        # === 7. Void-related insights from opponent voids ===
+        # Check states with high opp_voids (encoded as 'o' + digit near end of state).
+        void_exploit_values = []
+        for state, actions in list(play_q.items())[:2000]:
+            if 'o' in state:
+                o_idx = state.index('o')
+                if o_idx + 1 < len(state) and state[o_idx + 1].isdigit():
+                    opp_voids = int(state[o_idx + 1])
+                    if opp_voids >= 2:
+                        for a, q in actions.items():
+                            if q > 0.3 and len(a) > 2 and a[2] == "T":
+                                void_exploit_values.append(q)
+
+        if len(void_exploit_values) >= 5:
+            insights.append("EXPLOIT: When opponents are void in suits, they will trump your leads — switch to leading trump to neutralize their advantage")
+
+        # Deduplicate exact same text only.
+        seen = set()
+        unique = []
+        for ins in insights:
+            if ins not in seen:
+                seen.add(ins)
+                unique.append(ins)
+
+        return unique
 
         # Deduplicate exact same text only (not by category).
         seen = set()
@@ -1628,7 +1811,7 @@ class WistDiscoveryWatcher:
         if len(action_key) < 4:
             return ("", "")
 
-        tier = action_key[0]   # A/H/M/L
+        tier = action_key[0]   # A/K/Q/J/M/L/X
         follows = action_key[1] if len(action_key) > 1 else ""  # F/O
         is_trump = action_key[2] if len(action_key) > 2 else ""  # T/N
         is_long = action_key[3] if len(action_key) > 3 else ""  # L/S
@@ -1638,15 +1821,18 @@ class WistDiscoveryWatcher:
 
         # === POSITIVE STRATEGIES (things that work) ===
         if positive:
-            # WHIP patterns.
+            # WHIP patterns (trumping when void).
             if is_trump == "T" and follows == "O":
                 if tier == "A":
                     return ("WHIP", "When void in the led suit, trump with your Ace — it's unbeatable and guarantees the trick")
-                if tier == "H":
-                    return ("WHIP", "When void in the led suit, use a high trump to steal the trick from opponents")
-                if tier == "L":
+                if tier == "K":
+                    return ("WHIP", "When void, trump with King — only Ace can beat it, and it might already be played")
+                if tier == "Q":
+                    return ("WHIP", "When void, Queen of trump is a strong whip — beats everything except Ace and King")
+                if tier == "J":
+                    return ("WHIP", "When void, Jack of trump is a decent whip — wins unless opponents have higher trump")
+                if tier in ("M", "L", "X"):
                     return ("WHIP", "When void in the led suit, play a small trump — you win cheaply and save your big trumps for later")
-                return ("WHIP", "Trumping when you have no cards of the led suit is a reliable way to steal tricks")
 
             # VOID creation.
             if creates_void == "V":
@@ -1660,56 +1846,91 @@ class WistDiscoveryWatcher:
                     return ("FLUSH", "Leading Ace of trump forces everyone to follow with their trumps — you thin out their trump supply")
                 return ("CONTROL", "Play your Ace when following suit — it wins guaranteed and you take the lead for the next trick")
 
-            # HIGH card following suit.
-            if tier == "H" and follows == "F":
+            # KING plays.
+            if tier == "K" and follows == "F":
                 if is_trump == "T":
-                    return ("TRUMP", "Playing a high trump when following suit secures the trick — opponents can't beat it without a higher trump")
+                    return ("TRUMP", "King of trump following suit is extremely strong — only Ace beats it")
+                return ("PRESSURE", "Play King when following — it wins unless the Ace is still out there")
+
+            # QUEEN plays.
+            if tier == "Q" and follows == "F":
+                if is_trump == "T":
+                    return ("TRUMP", "Queen of trump is a solid follow — saves your King and Ace for later")
                 if is_long == "L":
-                    return ("PRESSURE", "Play high from your longest suit — it forces opponents to use their best cards or lose the trick")
-                return ("BLOCK", "Play a high card when following suit to contest the trick — don't let opponents win cheaply")
+                    return ("BLEED", "Queen from your long suit forces out opponents' higher cards — setting up your remaining cards to win")
+                return ("BLOCK", "Queen following suit is competitive — it beats everything below it")
 
-            # LOW card following suit.
-            if tier == "L" and follows == "F":
+            # JACK plays.
+            if tier == "J" and follows == "F":
                 if is_trump == "T":
-                    return ("SAVING", "Play low trump when you must follow trump — save your King and Ace for tricks that matter more")
-                return ("DUCK", "When you can't beat what's on the table, play your lowest card — save high cards for tricks you can actually win")
+                    return ("SAVING", "Jack of trump following suit is conservative — keep your royals for more critical tricks")
+                return ("PROBE", "Jack following suit tests if opponents still have Queen, King, or Ace in that suit")
 
-            # MID card following.
+            # MID cards (9-10).
             if tier == "M" and follows == "F":
                 if is_trump == "T":
-                    return ("TIMING", "Mid-range trump following suit is a safe play — it might win without spending your best card")
-                return ("PROBE", "A mid-range card following suit tests the waters — see what opponents are willing to spend")
+                    return ("TIMING", "Mid-range trump (9 or 10) following suit is safe — might win without spending royals")
+                return ("PROBE", "Playing 9 or 10 when following suit tests the waters safely")
 
-            # OFF-SUIT low (dumping).
+            # LOW cards (5-8).
+            if tier == "L" and follows == "F":
+                if is_trump == "T":
+                    return ("SAVING", "Play low trump (5-8) when following trump — preserve your high trumps for when they really matter")
+                return ("DUCK", "When you can't beat what's on the table, play a mid-low card — save your face cards for tricks you can win")
+
+            # VERY LOW cards (2-4).
+            if tier == "X" and follows == "F":
+                return ("DUCK", "Playing your smallest card (2-4) when following is the safest possible move — zero waste, pure preservation")
+
+            # OFF-SUIT dumping.
+            if tier == "X" and follows == "O" and is_trump == "N":
+                return ("DUMP", "Throw your 2, 3, or 4 when void — these cards will never win anything, get rid of them first")
             if tier == "L" and follows == "O" and is_trump == "N":
-                return ("DUMP", "When void in the led suit and choosing not to trump, throw your lowest worthless card — clean up your hand")
+                return ("DUMP", "When void in the led suit and not trumping, dump your lowest non-trump — minimize loss")
 
             # LEAD from long suit.
-            if is_long == "L" and tier == "H":
-                return ("BLEED", "Lead high from your longest suit — opponents will run out of that suit faster than you, giving you control")
-            if is_long == "L" and tier == "M":
-                return ("PROBE", "Lead a mid card from your long suit to test who still has cards in it — gather information safely")
+            if is_long == "L" and follows == "F":
+                if tier == "K":
+                    return ("BLEED", "Leading King from your longest suit depletes opponents' cards in that suit — dominance through length")
+                if tier == "Q":
+                    return ("BLEED", "Leading Queen from long suit forces responses — sets up lower cards to win later")
+                if tier == "M":
+                    return ("PROBE", "Lead a mid card from your long suit to test who still has cards in it — gather information safely")
 
             # HIGH off-suit.
-            if tier == "H" and follows == "O" and is_trump == "N":
-                return ("SACRIFICE", "Sometimes playing a high card off-suit sets up your partner — they might trump and win")
+            if tier == "K" and follows == "O" and is_trump == "N":
+                return ("SACRIFICE", "Playing King off-suit is a sacrifice — but it might help your partner win with a trump")
+            if tier == "Q" and follows == "O" and is_trump == "N":
+                return ("SACRIFICE", "Queen off-suit is expendable when you can't follow — better than wasting your Ace")
 
         # === NEGATIVE STRATEGIES (things that don't work) ===
         else:
             if tier == "A" and follows == "O" and is_trump == "N":
                 return ("WASTE", "Don't play your Ace off-suit when you can't follow — it's your strongest card wasted on a trick you can't win")
 
-            if tier == "H" and follows == "O" and is_trump == "N":
-                return ("WASTE", "Playing King or Queen off-suit when void is wasteful — those cards could win tricks in their own suit later")
+            if tier == "K" and follows == "O" and is_trump == "N":
+                return ("WASTE", "Playing King off-suit when void is wasteful — it could win a trick in its own suit later")
 
-            if tier == "H" and follows == "F" and is_trump == "N":
-                return ("TRAP", "Be careful playing high when following — if someone behind you has the Ace or can trump, your King is wasted")
+            if tier == "Q" and follows == "O" and is_trump == "N":
+                return ("WASTE", "Queen off-suit when void is a wasted card — play something lower instead")
+
+            if tier == "Q" and follows == "F" and is_trump == "N":
+                return ("TRAP", "Playing Queen when following can be a trap — if King or Ace is behind you, your Queen is wasted and you lose a strong card")
+
+            if tier == "K" and follows == "F" and is_trump == "N":
+                return ("TRAP", "Be careful playing King when following — if the Ace hasn't appeared yet, you might lose your King for nothing")
+
+            if tier == "J" and follows == "O" and is_trump == "N":
+                return ("RISK", "Jack off-suit when void is marginal — it won't win and it's not worthless enough to dump freely")
 
             if tier == "M" and follows == "O" and is_trump == "N":
-                return ("RISK", "Mid-range off-suit cards rarely help — they can't win the trick and they don't save anything valuable")
+                return ("RISK", "Mid-range cards (9-10) off-suit rarely help — they can't win the trick and they're not truly expendable")
 
             if tier == "A" and follows == "F" and is_trump == "N" and is_long == "S":
-                return ("TIMING", "Playing Ace from a short suit early can backfire — you might need that suit control later in the game")
+                return ("TIMING", "Playing Ace from a short suit early can backfire — you lose control of that suit permanently")
+
+            if tier == "X" and follows == "F" and is_trump == "T":
+                return ("RISK", "Playing your lowest trump (2-4) when following trump barely contributes — opponents' mid trumps beat it easily")
 
         return ("", "")
 

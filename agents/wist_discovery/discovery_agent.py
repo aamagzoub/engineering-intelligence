@@ -105,9 +105,23 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
-    """Richer action encoding."""
+    """Fine-grained action encoding with 7 rank tiers."""
     rv = RANK_VAL[card.rank]
-    tier = "A" if rv == 14 else ("H" if rv >= 12 else ("M" if rv >= 9 else "L"))
+    # 7 tiers: A=Ace, K=King, Q=Queen, J=Jack, M=9-10, L=5-8, X=2-4
+    if rv == 14:
+        tier = "A"
+    elif rv == 13:
+        tier = "K"
+    elif rv == 12:
+        tier = "Q"
+    elif rv == 11:
+        tier = "J"
+    elif rv >= 9:
+        tier = "M"
+    elif rv >= 5:
+        tier = "L"
+    else:
+        tier = "X"
     leading = obs.current_trick.leading_suit if obs.current_trick else None
     follows = "F" if (leading and card.suit == leading) else "O"
     is_trump = "T" if (obs.trump_suit and card.suit == obs.trump_suit) else "N"
