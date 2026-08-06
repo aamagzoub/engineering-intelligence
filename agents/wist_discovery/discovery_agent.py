@@ -523,7 +523,16 @@ class WistDiscoveryAgent(Agent):
         return PlayCardAction(player_id=obs.player_id, card=card)
 
     def _best_card(self, obs: WistObservation, playable: list) -> object:
-        """Combined Q-table + per-card neural net for card selection."""
+        """Combined Q-table + per-card neural net + optional MCTS for card selection."""
+        # MCTS: if context is available, use simulation-based look-ahead.
+        if getattr(self, '_mcts_context', None) and len(playable) > 1:
+            from agents.wist_discovery.mcts import mcts_choose_card
+            ctx = self._mcts_context
+            return mcts_choose_card(
+                obs, playable, ctx.get('round_state'), ctx.get('players'),
+                ctx.get('trump_suit'), num_simulations=ctx.get('num_simulations', 80)
+            )
+
         state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs))
         q1 = self.play_q[state_str]
         q2 = self.play_q2[state_str]

@@ -373,8 +373,15 @@ class GameScreen:
 
                     # Decide which agent to use.
                     if self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "discovery":
-                        # Discovery agent — call act() directly.
+                        # Discovery agent — set MCTS context for look-ahead, then call act().
+                        self._ai_advisor._mcts_context = {
+                            'round_state': getattr(self, 'round', None) and self.round.state,
+                            'players': self.players,
+                            'trump_suit': self.trump_suit,
+                            'num_simulations': 80,
+                        }
                         action = self._ai_advisor.act(obs)
+                        self._ai_advisor._mcts_context = None
                     elif self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "learning":
                         from agents.wist_learning.learning_agent import encode_play_state
                         state = encode_play_state(obs, set())
@@ -1495,7 +1502,18 @@ class GameScreen:
             # AI plays.
             try:
                 obs = self.environment.observe(pid)
+                # Set MCTS context for discovery agents (look-ahead play).
+                agent = self.agents[pid]
+                if hasattr(agent, '_mcts_context'):
+                    agent._mcts_context = {
+                        'round_state': self.round.state if self.round else None,
+                        'players': self.players,
+                        'trump_suit': self.trump_suit,
+                        'num_simulations': 50,
+                    }
                 action = self.agents[pid].act(obs)
+                if hasattr(agent, '_mcts_context'):
+                    agent._mcts_context = None
                 self.environment.apply_action(action)
                 r, s = card_key(action.card)
                 self._trick_played[pid] = (r, s)
