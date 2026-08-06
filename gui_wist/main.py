@@ -4,7 +4,7 @@ Sudanese Wist — Pro PyGame UI
 Run this file to launch the PyGame version of the game.
 """
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 import sys
 import os
