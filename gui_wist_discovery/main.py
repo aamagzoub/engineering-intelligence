@@ -3,7 +3,7 @@ Sudanese Wist -- Discovery Watcher
 
 Watch a Discovery AI learn Wist from scratch with only:
 - Environment (there's a game)
-- Legal moves (what cards/bids are allowed)  
+- Legal moves (what cards/bids are allowed)
 - Score signal (end-of-shota points)
 
 Usage:
@@ -12,35 +12,32 @@ Usage:
 
 import sys
 import os
-import json
+import time
 import threading
-import random
-from collections import deque, defaultdict, Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pygame
-from gui_wist_discovery.constants import *
-from gui_wist.card_renderer import create_card_surface, create_card_back
+
+from gui_wist_discovery.constants import (
+    SCREEN_WIDTH, SCREEN_HEIGHT, FPS, TITLE, TRICK_DELAY_MS,
+)
+from gui_wist_discovery.game_engine import (
+    sort_hand, try_setup_shota, play_trick, score_completed_shota,
+)
+from gui_wist_discovery.milestones import (
+    save_milestones, load_milestones, check_milestones,
+    auto_discover, create_auto_stats,
+)
+from gui_wist_discovery.insights import generate_insights
+from gui_wist_discovery.training import (
+    snapshot_brain, create_opponent, create_training_clone,
+    run_background_training, STAGE_STAGNATION_THRESHOLD,
+)
+from gui_wist_discovery.renderer import Renderer
 
 from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
 from environments.wist.environment import WistEnvironment
-from environments.wist.round import Round
-from environments.wist.rules import trick_winner
-from environments.wist.scoring import score_shota
-from environments.wist.setup import create_standard_players
-from environments.wist.tasmiya_engine import TasmiyaEngine
-from environments.wist.trick import Trick
-from intelligence.core.cards.suit import Suit
-from intelligence.core.cards.rank import Rank
-
-SUIT_ORDER = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
-SUIT_IDX = SUIT_ORDER
-RANK_ORDER = {
-    Rank.TWO: 2, Rank.THREE: 3, Rank.FOUR: 4, Rank.FIVE: 5, Rank.SIX: 6,
-    Rank.SEVEN: 7, Rank.EIGHT: 8, Rank.NINE: 9, Rank.TEN: 10,
-    Rank.JACK: 11, Rank.QUEEN: 12, Rank.KING: 13, Rank.ACE: 14,
-}
 
 
 class WistDiscoveryWatcher:
@@ -59,9 +56,9 @@ class WistDiscoveryWatcher:
             "medium": pygame.font.SysFont("Segoe UI", 12),
             "small": pygame.font.SysFont("Segoe UI", 10),
         }
+        self.renderer = Renderer(self.screen, self.fonts)
 
-        # Mode.
-        self.mode = "watch"
+        # Mode & speed.
         self.speed = 3.0
         self.paused = False
         self.state = "idle"
@@ -75,13 +72,9 @@ class WistDiscoveryWatcher:
             except Exception:
                 pass
 
-        # Opponent shares Q-tables.
+        # Opponent shares Q-tables (stage 1: self-play).
         self.opp = WistDiscoveryAgent(training=False)
-        self.opp.play_q = self.discovery.play_q
-        self.opp.play_q2 = self.discovery.play_q2
-        self.opp.bid_q = self.discovery.bid_q
-        self.opp.bid_q2 = self.discovery.bid_q2
-        self.opp.epsilon = self.discovery.epsilon
+        self._sync_opponent()
 
         # Game state.
         self.shota_num = 0
@@ -91,56 +84,79 @@ class WistDiscoveryWatcher:
         self.trick_num = 0
         self.current_trick_cards = []
         self.last_winner = -1
-        self.event_log = []
         self.last_action_time = 0
-        self._card_cache = {}
-        self._card_back = create_card_back(CARD_WIDTH, CARD_HEIGHT)
-        self._continue_btn_rect = None
-        self._mode_btn_rect = None
-        self._reset_btn_rect = None
+        self._hands = {}
+
+        # Event log.
+        self._event_log = []
 
         # Milestones.
-        self._milestones_achieved = set()
-        self._milestones_list = []  # Ordered discovered behaviors.
-        self._app_start_time = __import__('time').monotonic()
-        self._last_discovery_time = None
-        self._total_paused_time = 0.0  # Accumulated paused seconds.
-        self._pause_start = None  # When current pause began.
-        self._accumulated_compute = 0.0  # Compute time from previous sessions.
+        achieved, milestones_list, accumulated_compute = load_milestones()
+        self._milestones_achieved = achieved
+        self._milestones_list = milestones_list
+        self._accumulated_compute = accumulated_compute
+        self._last_discovery_compute = None
 
-        # Load previously discovered milestones.
-        self._load_milestones()
+        # Timing.
+        self._app_start_time = time.monotonic()
+        self._total_paused_time = 0.0
+        self._pause_start = None
 
         # Stats.
         self.shotas_played = 0
         self.seeks_achieved = 0
         self.bids_met = 0
         self.bids_failed = 0
+        self._wist_win_history = []
+        self._last_score = None
+        self._best_score = -999
+        self._bids_met_streak = 0
+        self._bid_history = []
+        self._score_at_shota3 = None
 
-        # === Opponent Curriculum (3 stages) ===
-        # Stage 1: Same brain (self-play)
-        # Stage 2: Mixed (50% self + 30% weak snapshot + 20% random)
-        # Stage 3: Adversarial (frozen past-best snapshots)
+        # Auto-discovery stats.
+        self._auto_stats = create_auto_stats()
+
+        # Opponent curriculum.
         self._opponent_stage = 1
-        self._stage_stagnation_counter = 0  # Episodes since last discovery.
         self._last_discovery_episode_for_stage = 0
-        self._frozen_snapshot = None  # Frozen Q-tables for stage 2/3.
-        self._best_snapshot = None  # Best-ever Q-tables for stage 3.
+        self._frozen_snapshot = None
+        self._best_snapshot = None
+
+        # Insights cache.
+        self._cached_insights = []
+        self._last_insight_episode = 0
+
+        # Scroll offsets.
+        self._disc_scroll_offset = 0
+        self._insight_scroll_offset = 0
+
+        # Background training.
+        self._bg_active = False
+        self._bg_agent = None
+
+        # Button rects (set by renderer).
+        self._mode_btn_rect = None
+        self._reset_btn_rect = None
 
         self._log(f"Wist Discovery Agent: {self.discovery.episodes_trained} shotas learned")
         self._start_new_game()
 
+    # ─── Event Log ──────────────────────────────────────────────────────────────
+
     def _log(self, msg):
-        self.event_log.append(msg)
-        if len(self.event_log) > 200:
-            self.event_log = self.event_log[-200:]
+        self._event_log.append(msg)
+        if len(self._event_log) > 200:
+            self._event_log = self._event_log[-200:]
+
+    # ─── Game Flow ──────────────────────────────────────────────────────────────
 
     def _start_new_game(self):
         self.game_num += 1
         self.shota_num = 0
         self.team_scores = [0, 0]
-        self.shota_scores = []  # List of {0: score, 1: score} — one per shota played.
-        self._log(f"{'='*30} Game #{self.game_num} {'='*30}")
+        self.shota_scores = []
+        self._log(f"{'=' * 30} Game #{self.game_num} {'=' * 30}")
         self._start_new_shota()
 
     def _start_new_shota(self):
@@ -148,112 +164,57 @@ class WistDiscoveryWatcher:
         if self.shota_num > 5:
             self._end_game()
             return
+
         self.trick_num = 0
         self.current_trick_cards = []
         self._log(f"--- Shota {self.shota_num}/5 ---")
 
-        # Keep trying to set up a valid shota (re-deal on dak/error).
-        for _attempt in range(10):
-            self._players = create_standard_players()
-            self._agents = [self.discovery, self.opp, self.discovery, self.opp]
-            self._round = Round(self._players)
-            self._round.deal()
+        agents = [self.discovery, self.opp]
+        players, rnd, result, logs = try_setup_shota(agents, self.shota_num, self.game_num)
 
-            if self._round.has_card_based_dak():
-                self.discovery.reset_episode()
-                self._log("  Dak — re-dealing")
-                continue
+        for msg in logs:
+            self._log(msg)
 
-            tasmiya = TasmiyaEngine()
-            qabool_id = (self.shota_num - 1) % 4
-            is_first = (self.game_num == 1 and self.shota_num == 1)
-            try:
-                self._tasmiya_result = tasmiya.run(
-                    players=self._players, agents=self._agents,
-                    sahib_al_qabool_id=qabool_id, is_first_shota=is_first)
-            except (ValueError, Exception):
-                self.discovery.reset_episode()
-                self._log("  Bidding error — re-dealing")
-                continue
-
-            if self._tasmiya_result.is_dak:
-                self.discovery.reset_episode()
-                self._log("  Pass Dak — re-dealing")
-                continue
-
-            # Valid shota — break out and play.
-            break
-        else:
-            # All attempts failed — record 0-0 and move on.
-            self._log("  Could not deal a valid shota — scoring 0/0")
+        if players is None:
+            # All attempts failed.
             self.shota_scores.append({0: 0, 1: 0})
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
 
-        self._log(f"  Bid: {self._tasmiya_result.winning_bid_value} by P{self._tasmiya_result.winning_bidder_id}")
+        self._tasmiya_result = result
+        self._players = players
+        self._agents_list = [self.discovery, self.opp, self.discovery, self.opp]
+        self._round = rnd
+        self._log(f"  Bid: {result.winning_bid_value} by P{result.winning_bidder_id}")
 
         # Setup play.
-        self._round.state.trump_suit = self._tasmiya_result.trump_suit
-        self._round.state.winning_bidder_id = self._tasmiya_result.winning_bidder_id
-        self._round.next_leading_player_id = self._tasmiya_result.winning_bidder_id
-        self._env = WistEnvironment(self._round.state)
+        rnd.state.trump_suit = result.trump_suit
+        rnd.state.winning_bidder_id = result.winning_bidder_id
+        rnd.next_leading_player_id = result.winning_bidder_id
+        self._env = WistEnvironment(rnd.state)
         self._team_tricks = {0: 0, 1: 0}
         self.trick_num = 1
 
-        # Store hands for display.
-        self._hands = {p.player_id: sorted(
-            p.hand, key=lambda c: (SUIT_IDX[c.suit], RANK_ORDER[c.rank])
-        ) for p in self._players}
-
+        self._update_hands()
         self.state = "playing"
         self.last_action_time = pygame.time.get_ticks()
 
     def _play_one_trick(self):
-        """Play a single trick with MCTS look-ahead for visible games."""
-        r = self._round
-        lid = r.next_leading_player_id
-        r.state.current_trick = Trick(leading_player_id=lid)
-        play_order = [(lid + i) % 4 for i in range(4)]
+        """Play a single trick."""
+        trick_cards, winner, winner_team = play_trick(
+            self._round, self._env, self._agents_list,
+            self._players, self.discovery, use_mcts=True,
+        )
 
-        # Set MCTS context for visible play (smarter decisions).
-        self.discovery._mcts_context = {
-            'round_state': r.state,
-            'players': self._players,
-            'trump_suit': r.state.trump_suit,
-            'num_simulations': 50,
-        }
-
-        trick_cards = []
-        for pid in play_order:
-            obs = self._env.observe(pid)
-            action = self._agents[pid].act(obs)
-            self._env.apply_action(action)
-            trick_cards.append((pid, action.card))
-
-        # Clear MCTS context after trick.
-        self.discovery._mcts_context = None
-
-        completed = r.state.current_trick
-        winner = trick_winner(completed, r.state.trump_suit)
-        r.state.completed_tricks.append(completed)
-        r.state.current_trick = None
-        r.next_leading_player_id = winner
         self._team_tricks[self._players[winner].team_id] += 1
-
-        # Per-trick intermediate reward for faster learning.
-        winner_team = self._players[winner].team_id
         self.discovery.trick_reward(won=(winner_team == 0))
 
         self.current_trick_cards = trick_cards
         self.last_winner = winner
+        self._update_hands()
 
-        # Update hands display.
-        self._hands = {p.player_id: sorted(
-            p.hand, key=lambda c: (SUIT_IDX[c.suit], RANK_ORDER[c.rank])
-        ) for p in self._players}
-
-        self._log(f"  T{self.trick_num}: {' '.join(f'P{pid}:{c.rank.symbol}{c.suit.symbol}' for pid,c in trick_cards)} -> P{winner}")
+        self._log(f"  T{self.trick_num}: {' '.join(f'P{pid}:{c.rank.symbol}{c.suit.symbol}' for pid, c in trick_cards)} -> P{winner}")
         self.trick_num += 1
         self.last_action_time = pygame.time.get_ticks()
 
@@ -261,15 +222,10 @@ class WistDiscoveryWatcher:
             self._finish_shota()
 
     def _finish_shota(self):
-        """Score the completed shota."""
+        """Score the completed shota and check milestones."""
         res = self._tasmiya_result
         tt = self._team_tricks
-        scores = score_shota(
-            playing_team_id=res.playing_team_id,
-            defending_team_id=1 - res.playing_team_id,
-            bid=res.winning_bid_value,
-            playing_team_tricks=tt[res.playing_team_id],
-            defending_team_tricks=tt[1 - res.playing_team_id])
+        scores = score_completed_shota(res, tt)
 
         self.team_scores[0] += scores.get(0, 0)
         self.team_scores[1] += scores.get(1, 0)
@@ -278,520 +234,233 @@ class WistDiscoveryWatcher:
         self.shotas_played += 1
 
         bid_met = tt[res.playing_team_id] >= res.winning_bid_value
+        s0 = scores.get(0, 0)
+
+        # Update stats.
         if res.playing_team_id == 0:
             if bid_met:
                 self.bids_met += 1
+                self._bids_met_streak += 1
             else:
                 self.bids_failed += 1
+                self._bids_met_streak = 0
+            self._bid_history.append(res.winning_bid_value)
+
         if tt[0] == 13 or tt[1] == 13:
             self.seeks_achieved += 1
 
-        self._log(f"  Result: T1={tt[0]} T2={tt[1]} | Score: {scores.get(0,0):+d}/{scores.get(1,0):+d}")
-        self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
-        self._auto_discover(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+        if s0 > self._best_score:
+            self._best_score = s0
+
+        self._log(f"  Result: T1={tt[0]} T2={tt[1]} | Score: {scores.get(0, 0):+d}/{scores.get(1, 0):+d}")
+
+        # Milestones.
+        self._run_milestone_checks(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
+
+        self._last_score = s0
+        if self.shota_num == 3:
+            self._score_at_shota3 = self.team_scores[0] - self.team_scores[1]
 
         self.state = "scoring"
         self.last_action_time = pygame.time.get_ticks()
 
     def _end_game(self):
+        """Handle game completion."""
         winner = 0 if self.team_scores[0] > self.team_scores[1] else 1
-        self._log(f"  GAME OVER: Team{winner+1} wins ({self.team_scores[0]}:{self.team_scores[1]})")
+        self._log(f"  GAME OVER: Team{winner + 1} wins ({self.team_scores[0]}:{self.team_scores[1]})")
         self.state = "game_over"
         self.last_action_time = pygame.time.get_ticks()
 
-        # Check curriculum stage transitions.
+        # Record game result.
+        game_won = self.team_scores[0] > self.team_scores[1]
+        self._wist_win_history.append(game_won)
+
+        # Curriculum stage check.
         self._check_stage_transition()
 
         # Background training.
-        if not getattr(self, '_bg_active', False):
+        if not self._bg_active:
             self._bg_active = True
             threading.Thread(target=self._bg_train, daemon=True).start()
 
-    def _check_stage_transition(self):
-        """Check if we should graduate to the next opponent curriculum stage."""
+    # ─── Milestone Integration ──────────────────────────────────────────────────
+
+    def _run_milestone_checks(self, team_tricks, bid, playing_team, bid_met, scores):
+        """Run both hardcoded and auto-discovery milestone checks."""
+        context = {
+            "team_tricks": team_tricks,
+            "bid": bid,
+            "playing_team": playing_team,
+            "bid_met": bid_met,
+            "scores": scores,
+            "team_scores": self.team_scores,
+            "shota_num": self.shota_num,
+            "game_num": self.game_num,
+            "shotas_played": self.shotas_played,
+            "seeks_achieved": self.seeks_achieved,
+            "bids_met": self.bids_met,
+            "bids_failed": self.bids_failed,
+            "wist_win_history": self._wist_win_history,
+            "last_score": self._last_score,
+            "best_score": self._best_score,
+            "bids_met_streak": self._bids_met_streak,
+            "bid_history": self._bid_history,
+            "score_at_shota3": self._score_at_shota3,
+            "episodes": self.discovery.episodes_trained,
+        }
+
+        check_milestones(context, self._trigger)
+
+        auto_context = {
+            "team_tricks": team_tricks,
+            "scores": scores,
+            "playing_team": playing_team,
+            "bid_met": bid_met,
+            "episodes": self.discovery.episodes_trained,
+            "wist_win_history": self._wist_win_history,
+        }
+        auto_discover(self._auto_stats, auto_context, self._trigger)
+
+    def _trigger(self, key, msg):
+        """Record a discovered behavior."""
+        if key in self._milestones_achieved:
+            return
+
+        self._milestones_achieved.add(key)
+        self._last_discovery_episode_for_stage = self.discovery.episodes_trained
+
+        # Parse title and description.
+        if ":" in msg:
+            title = msg.split(":")[0].strip()
+            base_desc = msg.split(":", 1)[1].strip()
+        else:
+            title = key.upper()
+            base_desc = msg
+
+        # Compute time info.
+        total_compute = self._accumulated_compute + self._get_compute_time()
+        total_str = self._format_time(total_compute)
+
+        if self._last_discovery_compute is not None:
+            delta_str = self._format_time(total_compute - self._last_discovery_compute)
+        else:
+            delta_str = "—"
+
+        self._last_discovery_compute = total_compute
+
+        # Build stats.
+        total_bids = self.bids_met + self.bids_failed
+        bid_accuracy = (self.bids_met / max(total_bids, 1)) * 100
+        win_rate = 0
+        if self._wist_win_history:
+            win_rate = sum(self._wist_win_history) / len(self._wist_win_history) * 100
         episodes = self.discovery.episodes_trained
 
-        # Stagnation: no new discovery in 5000 episodes.
-        stagnated = (episodes - self._last_discovery_episode_for_stage) > 5000
+        desc = (
+            f"{base_desc}\n"
+            f"Total compute: {total_str} | Since last: {delta_str}\n"
+            f"Win rate: {win_rate:.0f}% | Bid accuracy: {bid_accuracy:.0f}%"
+        )
+
+        self._milestones_list.append((f"{title} (#{episodes})", desc))
+        self._log(f"  ** DISCOVERED: {title} **")
+
+    # ─── Curriculum ─────────────────────────────────────────────────────────────
+
+    def _check_stage_transition(self):
+        """Graduate to next opponent curriculum stage if conditions are met."""
+        episodes = self.discovery.episodes_trained
+        stagnated = (episodes - self._last_discovery_episode_for_stage) > STAGE_STAGNATION_THRESHOLD
 
         if self._opponent_stage == 1:
-            # Stage 1 → 2: 90% win rate OR stagnation.
             has_90_wr = "auto_wr_90" in self._milestones_achieved
             if has_90_wr or stagnated:
                 self._opponent_stage = 2
-                # Snapshot current brain as the "weak" opponent for stage 2.
-                self._frozen_snapshot = self._snapshot_brain()
+                self._frozen_snapshot = snapshot_brain(self.discovery)
                 self._log(f"  ** CURRICULUM: Stage 2 — Mixed opponents (episode {episodes}) **")
                 self._trigger("stage_2",
-                    f"CURRICULUM STAGE 2: Graduated to mixed opponents. "
-                    f"{'90% win rate reached' if has_90_wr else 'Stagnation detected'}.")
+                              f"CURRICULUM STAGE 2: Graduated to mixed opponents. "
+                              f"{'90% win rate reached' if has_90_wr else 'Stagnation detected'}.")
 
         elif self._opponent_stage == 2:
-            # Stage 2 → 3: 80% against mix OR stagnation.
-            # Track mix performance via recent win rate.
-            if hasattr(self, '_wist_win_history') and len(self._wist_win_history) >= 20:
-                recent_20 = self._wist_win_history[-20:]
-                mix_wr = sum(recent_20) / 20
+            if len(self._wist_win_history) >= 20:
+                mix_wr = sum(self._wist_win_history[-20:]) / 20
                 if mix_wr >= 0.8 or stagnated:
                     self._opponent_stage = 3
-                    # Snapshot current brain as "best" for adversarial play.
-                    self._best_snapshot = self._snapshot_brain()
+                    self._best_snapshot = snapshot_brain(self.discovery)
                     self._log(f"  ** CURRICULUM: Stage 3 — Adversarial (episode {episodes}) **")
                     self._trigger("stage_3",
-                        f"CURRICULUM STAGE 3: Graduated to adversarial training. "
-                        f"Playing against frozen best-ever snapshots.")
+                                  f"CURRICULUM STAGE 3: Graduated to adversarial training. "
+                                  f"Playing against frozen best-ever snapshots.")
 
         elif self._opponent_stage == 3:
-            # Stage 3: periodically update the best snapshot if agent improved.
-            if hasattr(self, '_wist_win_history') and len(self._wist_win_history) >= 10:
-                recent_10 = self._wist_win_history[-10:]
-                if sum(recent_10) / 10 >= 0.7:
-                    # Agent is beating its past best — update snapshot.
-                    self._best_snapshot = self._snapshot_brain()
+            if len(self._wist_win_history) >= 10:
+                if sum(self._wist_win_history[-10:]) / 10 >= 0.7:
+                    self._best_snapshot = snapshot_brain(self.discovery)
 
-    def _snapshot_brain(self) -> dict:
-        """Take a frozen snapshot of current Q-tables (thread-safe)."""
-        try:
-            return {
-                "play_q": {k: dict(v) for k, v in list(self.discovery.play_q.items())},
-                "play_q2": {k: dict(v) for k, v in list(self.discovery.play_q2.items())},
-                "bid_q": {k: dict(v) for k, v in list(self.discovery.bid_q.items())},
-                "bid_q2": {k: dict(v) for k, v in list(self.discovery.bid_q2.items())},
-            }
-        except RuntimeError:
-            # If dict changes during iteration, return empty snapshot.
-            return {
-                "play_q": {}, "play_q2": {}, "bid_q": {}, "bid_q2": {},
-            }
-
-    def _create_opponent(self, agent) -> "WistDiscoveryAgent":
-        """Create opponent based on current curriculum stage."""
-        if self._opponent_stage == 1:
-            # Stage 1: same brain.
-            opp = WistDiscoveryAgent(training=False)
-            opp.play_q = agent.play_q
-            opp.play_q2 = agent.play_q2
-            opp.bid_q = agent.bid_q
-            opp.bid_q2 = agent.bid_q2
-            opp.epsilon = agent.epsilon
-            return opp
-
-        elif self._opponent_stage == 2:
-            # Stage 2: mixed.
-            roll = random.random()
-            opp = WistDiscoveryAgent(training=False)
-            if roll < 0.5:
-                # 50% current brain.
-                opp.play_q = agent.play_q
-                opp.play_q2 = agent.play_q2
-                opp.bid_q = agent.bid_q
-                opp.bid_q2 = agent.bid_q2
-                opp.epsilon = agent.epsilon
-            elif roll < 0.8 and self._frozen_snapshot:
-                # 30% frozen weak snapshot.
-                opp.play_q = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["play_q"])
-                opp.play_q2 = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["play_q2"])
-                opp.bid_q = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["bid_q"])
-                opp.bid_q2 = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["bid_q2"])
-                opp.epsilon = 0.1
-            else:
-                # 20% random.
-                opp.epsilon = 1.0
-            return opp
-
-        else:
-            # Stage 3: adversarial (60% frozen best + 20% current + 20% random/weak).
-            opp = WistDiscoveryAgent(training=False)
-            roll = random.random()
-            if self._best_snapshot and roll < 0.6:
-                # 60% frozen best snapshot.
-                opp.play_q = defaultdict(lambda: defaultdict(float), self._best_snapshot["play_q"])
-                opp.play_q2 = defaultdict(lambda: defaultdict(float), self._best_snapshot["play_q2"])
-                opp.bid_q = defaultdict(lambda: defaultdict(float), self._best_snapshot["bid_q"])
-                opp.bid_q2 = defaultdict(lambda: defaultdict(float), self._best_snapshot["bid_q2"])
-                opp.epsilon = 0.05
-            elif roll < 0.8:
-                # 20% current brain.
-                opp.play_q = agent.play_q
-                opp.play_q2 = agent.play_q2
-                opp.bid_q = agent.bid_q
-                opp.bid_q2 = agent.bid_q2
-                opp.epsilon = agent.epsilon
-            else:
-                # 20% random/weak — allows metrics to push past ceiling.
-                opp.epsilon = 0.8
-            return opp
+    # ─── Background Training ────────────────────────────────────────────────────
 
     def _bg_train(self):
-        """10000 silent self-play shotas in background, played as full 5-shota games."""
-        # Create a separate training agent for the background thread.
-        # Shares Q-tables with main agent but has its own mutable state.
-        agent = WistDiscoveryAgent(training=True)
-        agent.play_q = self.discovery.play_q
-        agent.play_q2 = self.discovery.play_q2
-        agent.bid_q = self.discovery.bid_q
-        agent.bid_q2 = self.discovery.bid_q2
-        agent.epsilon = self.discovery.epsilon
-        agent._use_neural = self.discovery._use_neural
-        agent._play_net = self.discovery._play_net
-        agent._target_net = self.discovery._target_net
-        agent._bid_net = self.discovery._bid_net
-        agent._replay_buffer = self.discovery._replay_buffer
-        agent._state_visit_counts = self.discovery._state_visit_counts
-        agent._reward_normalizer = self.discovery._reward_normalizer
-        agent.episodes_trained = self.discovery.episodes_trained
-        agent.total_updates = self.discovery.total_updates
+        """Run background self-play training."""
+        agent = create_training_clone(self.discovery)
+        opp = create_opponent(self.discovery, self._opponent_stage,
+                              self._frozen_snapshot, self._best_snapshot)
+        self._bg_agent = agent
 
-        opp = self._create_opponent(self.discovery)
-        self._bg_agent = agent  # Expose for UI to read episodes_trained live.
+        def milestone_cb(tt, bid, playing_team, bid_met, scores):
+            context = {
+                "team_tricks": tt, "scores": scores,
+                "playing_team": playing_team, "bid_met": bid_met,
+                "episodes": agent.episodes_trained,
+                "wist_win_history": self._wist_win_history,
+            }
+            auto_discover(self._auto_stats, context, self._trigger)
 
-        shotas_done = 0
-        while shotas_done < 10000:
-            # Play a full 5-shota game.
-            bg_team_scores = [0, 0]
-            bg_shota_count = 0
+        win_history = run_background_training(agent, opp, num_shotas=10000,
+                                              milestone_callback=milestone_cb)
+        self._wist_win_history.extend(win_history)
 
-            for shota_idx in range(5):
-                # Try to set up a valid shota (retry on dak/errors).
-                valid = False
-                for _attempt in range(10):
-                    players = create_standard_players()
-                    agents_list = [agent, opp, agent, opp]
-                    r = Round(players); r.deal()
-                    if r.has_card_based_dak():
-                        agent.reset_episode(); continue
-                    tasmiya = TasmiyaEngine()
-                    try:
-                        res = tasmiya.run(players=players, agents=agents_list, sahib_al_qabool_id=0)
-                    except (ValueError, Exception):
-                        agent.reset_episode(); continue
-                    if res.is_dak:
-                        agent.reset_episode(); continue
-                    valid = True
-                    break
-
-                if not valid:
-                    continue
-
-                r.state.trump_suit = res.trump_suit
-                r.state.winning_bidder_id = res.winning_bidder_id
-                r.next_leading_player_id = res.winning_bidder_id
-                env = WistEnvironment(r.state)
-                tt = {0: 0, 1: 0}
-                for _ in range(13):
-                    lid = r.next_leading_player_id
-                    r.state.current_trick = Trick(leading_player_id=lid)
-                    for pid in [(lid + j) % 4 for j in range(4)]:
-                        obs = env.observe(pid)
-                        action = agents_list[pid].act(obs)
-                        env.apply_action(action)
-                    trick = r.state.current_trick
-                    w = trick_winner(trick, r.state.trump_suit)
-                    r.state.completed_tricks.append(trick)
-                    r.state.current_trick = None
-                    r.next_leading_player_id = w
-                    tt[players[w].team_id] += 1
-                    agent.trick_reward(won=(players[w].team_id == 0))
-
-                scores = score_shota(
-                    playing_team_id=res.playing_team_id,
-                    defending_team_id=1 - res.playing_team_id,
-                    bid=res.winning_bid_value,
-                    playing_team_tricks=tt[res.playing_team_id],
-                    defending_team_tricks=tt[1 - res.playing_team_id])
-                agent.reward(float(scores[0]))
-
-                bg_team_scores[0] += scores.get(0, 0)
-                bg_team_scores[1] += scores.get(1, 0)
-                bg_shota_count += 1
-                shotas_done += 1
-
-                # Check milestones per shota.
-                bid_met = tt[res.playing_team_id] >= res.winning_bid_value
-                self._check_milestones(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
-                self._auto_discover(tt, res.winning_bid_value, res.playing_team_id, bid_met, scores)
-
-                # Epsilon decay.
-                if agent.episodes_trained % 50 == 0 and agent.epsilon > 0.03:
-                    agent.epsilon *= 0.98
-
-            # End of 5-shota game — record in win history.
-            if bg_shota_count > 0:
-                game_won = bg_team_scores[0] > bg_team_scores[1]
-                if not hasattr(self, '_wist_win_history'):
-                    self._wist_win_history = []
-                self._wist_win_history.append(game_won)
-
-        self._bg_active = False
-        self._bg_agent = None
-        # Sync stats back to the main discovery agent.
+        # Sync back.
         self.discovery.episodes_trained = agent.episodes_trained
         self.discovery.total_updates = agent.total_updates
         self.discovery.epsilon = agent.epsilon
 
-    def _check_milestones(self, team_tricks, bid, playing_team, bid_met, scores):
-        """Detect Wist behavioral milestones — positive discoveries only."""
-        t0 = team_tricks[0]  # AI team tricks.
-        t1 = team_tricks[1]  # Opponent tricks.
-        s0 = scores.get(0, 0)
+        self._bg_active = False
+        self._bg_agent = None
 
-        # === BASIC (first games) ===
-        self._trigger("first_shota", "FIRST SHOTA: Played all 13 tricks successfully.")
+    # ─── Insights ───────────────────────────────────────────────────────────────
 
-        if t0 > 0:
-            self._trigger("first_trick", "FIRST TRICK WON: The AI's team won at least one trick.")
+    def _refresh_insights(self):
+        """Refresh cached insights if enough episodes have passed."""
+        current_ep = self.discovery.episodes_trained
+        if self._bg_agent:
+            current_ep = max(current_ep, self._bg_agent.episodes_trained)
+        if current_ep - self._last_insight_episode >= 2000 or not self._cached_insights:
+            self._cached_insights = generate_insights(self.discovery)
+            self._last_insight_episode = current_ep
 
-        if s0 >= 0:
-            self._trigger("no_loss", "ZERO LOSS SHOTA: Scored 0 or positive -- no penalty.")
+    # ─── Helpers ────────────────────────────────────────────────────────────────
 
-        if s0 > 0:
-            self._trigger("positive_score", "POSITIVE SCORE: Earned points this shota.")
+    def _sync_opponent(self):
+        """Sync opponent Q-tables with discovery agent."""
+        self.opp.play_q = self.discovery.play_q
+        self.opp.play_q2 = self.discovery.play_q2
+        self.opp.bid_q = self.discovery.bid_q
+        self.opp.bid_q2 = self.discovery.bid_q2
+        self.opp.epsilon = self.discovery.epsilon
 
-        if t0 > t1:
-            self._trigger("won_majority", "WON MAJORITY: Won more tricks than the opponent.")
+    def _update_hands(self):
+        """Update displayed hands from player objects."""
+        self._hands = {p.player_id: sort_hand(p.hand) for p in self._players}
 
-        # === BIDDING ===
-        if playing_team == 0 and bid_met:
-            self._trigger("bid_met", "BID MET: Bid and delivered the promised tricks.")
-
-        if playing_team == 0 and bid_met and bid == t0:
-            self._trigger("efficient_win", "EFFICIENT WIN: Met bid with exactly the right number of tricks.")
-
-        if playing_team == 0 and bid <= 8 and bid_met and t0 > bid:
-            self._trigger("conservative_bid", "CONSERVATIVE BID: Bid low and exceeded it -- under-promise, over-deliver.")
-
-        if playing_team == 0 and bid >= 10 and bid_met:
-            self._trigger("aggressive_bid", "AGGRESSIVE BID: Bid 10+ and met it -- confidence and accuracy.")
-
-        if playing_team == 1 and not bid_met:
-            self._trigger("defended_well", "DEFENDED WELL: Opponent bid and failed -- the AI's team stopped them.")
-
-        # === TRICK-LEVEL ===
-        if t0 >= 3:
-            self._trigger("trick_streak", "TRICK STREAK: Won 3+ tricks -- building momentum.")
-
-        if t0 >= 11:
-            self._trigger("near_seek", "NEAR SEEK: Won 11+ tricks -- almost got the seek.")
-
-        if t0 == 13:
-            self._trigger("seek", "SEEK: Won ALL 13 tricks -- instant game win territory.")
-
-        # === SHOTA ===
-        if hasattr(self, '_last_score') and s0 > self._last_score:
-            self._trigger("improved", "IMPROVED: Scored better than the previous shota.")
-        self._last_score = s0
-
-        if not hasattr(self, '_best_score'):
-            self._best_score = s0
-        if s0 > self._best_score:
-            self._best_score = s0
-            if s0 > 5:
-                self._trigger("best_yet", "BEST SHOTA YET: Highest score in any shota so far.")
-
-        # === GAME ===
-        if self.team_scores[0] >= 25:
-            self._trigger("first_win", "FIRST WIN: Reached 25 points and won a game.")
-
-        if self.team_scores[0] >= 25 and self.team_scores[0] - self.team_scores[1] >= 10:
-            self._trigger("dominated", "DOMINATED: Won a game by 10+ point margin.")
-
-        if self.shotas_played >= 3 and s0 > 0:
-            self._trigger("consistent", "CONSISTENCY: Multiple shotas with positive scores -- strategy forming.")
-
-        # Track win history for game-level milestones.
-        if not hasattr(self, '_wist_win_history'):
-            self._wist_win_history = []
-        if self.shota_num == 5:
-            game_won = self.team_scores[0] > self.team_scores[1]
-            self._wist_win_history.append(game_won)
-            if len(self._wist_win_history) >= 3 and all(self._wist_win_history[-3:]):
-                self._trigger("win_streak", "WIN STREAK: Won 3 games in a row.")
-            if len(self._wist_win_history) >= 10:
-                recent = sum(self._wist_win_history[-10:])
-                if recent >= 6:
-                    self._trigger("mastery", "MASTERY: Win rate above 60% over 10 games.")
-            if len(self._wist_win_history) >= 10:
-                early = sum(self._wist_win_history[:5]) / 5
-                late = sum(self._wist_win_history[-5:]) / 5
-                if late - early >= 0.2:
-                    self._trigger("learning_curve", "LEARNING CURVE: Win rate jumped 20%+ from early to recent games.")
-
-        # === PARTNER COOPERATION ===
-
-        # Partner support — partner team won bid and AI contributed tricks.
-        if playing_team == 0 and bid_met and t0 >= bid:
-            if t0 - bid <= 2:
-                self._trigger("team_delivery", "TEAM DELIVERY: The team met their bid with tight execution -- both partners contributed.")
-
-        # Defensive partnership — both partners held opponents below their bid.
-        if playing_team == 1 and not bid_met:
-            opp_deficit = bid - t1
-            if opp_deficit >= 3:
-                self._trigger("defensive_wall", "DEFENSIVE WALL: Held opponents 3+ tricks below their bid -- strong partnership defense.")
-
-        # Partner relay — AI's team won tricks alternately (teamwork rhythm).
-        if hasattr(self, '_trick_winners') and len(getattr(self, '_trick_winners', [])) >= 6:
-            winners = self._trick_winners
-            team_wins = [1 if self._players[w].team_id == 0 else 0 for w in winners]
-            alternating = sum(1 for i in range(1, len(team_wins))
-                             if team_wins[i] != team_wins[i-1])
-            if alternating >= 8 and t0 >= 7:
-                self._trigger("partner_relay", "PARTNER RELAY: Team won tricks in alternating rhythm -- coordinated play.")
-
-        # === OPPONENT EXPLOITATION ===
-
-        # Over-bid punishment — opponents bid high and AI's team stopped them hard.
-        if playing_team == 1 and bid >= 9 and not bid_met:
-            self._trigger("overbid_punish", "OVER-BID PUNISHMENT: Opponents bid 9+ and failed -- exploited their overconfidence.")
-
-        # Trump dominance — AI used trump to win multiple tricks.
-        if hasattr(self, '_trump_wins'):
-            trump_wins = getattr(self, '_trump_wins', 0)
-            if trump_wins >= 4:
-                self._trigger("trump_dominance", "TRUMP DOMINANCE: Won 4+ tricks using trump -- controlled the game through trump power.")
-
-        # Opponent starved — opponents won 3 or fewer tricks total.
-        if t1 <= 3:
-            self._trigger("opponent_starved", "OPPONENT STARVED: Opponents won 3 or fewer tricks total -- complete tactical suffocation.")
-
-        # Cut opponent's winner — trumped an opponent's high card in a side suit.
-        # (Tracked indirectly by low opponent tricks when they bid high)
-        if playing_team == 1 and bid >= 8 and t1 <= bid - 4:
-            self._trigger("opponent_crushed", "OPPONENT CRUSHED: Opponents missed their bid by 4+ tricks -- devastating defensive play.")
-
-        # === GAME-WINNING STRATEGIES ===
-
-        # Seek victory — won all 13 tricks and the massive bonus.
-        if t0 == 13 and s0 > 20:
-            self._trigger("seek_victory", "SEEK VICTORY: Won ALL 13 tricks with a huge score bonus -- the ultimate Wist achievement.")
-
-        # Perfect bid — bid exactly what was won, no waste.
-        if playing_team == 0 and bid_met and bid == t0 and bid >= 7:
-            self._trigger("perfect_bid", "PERFECT BID: Bid 7+ and won exactly that many tricks -- precision hand evaluation.")
-
-        # Score explosion — earned 15+ points in a single shota.
-        if s0 >= 15:
-            self._trigger("score_explosion", "SCORE EXPLOSION: Earned 15+ points in a single shota -- maximized scoring opportunity.")
-
-        # Comeback victory — won the game after being behind at shota 3.
-        if self.shota_num == 5:
-            game_won = self.team_scores[0] > self.team_scores[1]
-            if hasattr(self, '_score_at_shota3') and self._score_at_shota3 is not None:
-                if self._score_at_shota3 < 0 and game_won:
-                    self._trigger("comeback_win", "COMEBACK WIN: Was behind at shota 3 but rallied to win the game -- adaptive strategy.")
-                self._score_at_shota3 = None
-        if self.shota_num == 3:
-            self._score_at_shota3 = self.team_scores[0] - self.team_scores[1]
-
-        # Runaway game — won the game by 20+ points.
-        if self.shota_num == 5 and self.team_scores[0] - self.team_scores[1] >= 20:
-            self._trigger("runaway_game", "RUNAWAY GAME: Won by 20+ points -- complete strategic superiority over 5 shotas.")
-
-        # === ADVANCED PLAY PATTERNS ===
-
-        # Bid escalation — AI bid higher over multiple games (increasing confidence).
-        if not hasattr(self, '_bid_history'):
-            self._bid_history = []
-        if playing_team == 0:
-            self._bid_history.append(bid)
-        if len(getattr(self, '_bid_history', [])) >= 5:
-            recent_bids = self._bid_history[-5:]
-            if all(recent_bids[i] <= recent_bids[i+1] for i in range(len(recent_bids)-1)) and recent_bids[-1] >= 9:
-                self._trigger("bid_escalation", "BID ESCALATION: Bids increasing over 5 shotas -- growing confidence in hand evaluation.")
-
-        # Trump conservation — won tricks without using trump, saving trump for later.
-        # Detected by: won many tricks overall but opponent still had high cards trumped late.
-        if t0 >= 9 and playing_team == 0 and bid_met:
-            self._trigger("dominant_play", "DOMINANT PLAY: Won 9+ tricks and met the bid -- overwhelming hand strength exploited perfectly.")
-
-        # Defensive precision — as defending team, won exactly enough to stop the bid.
-        if playing_team == 1 and not bid_met and t0 == (14 - bid):
-            self._trigger("defensive_precision", "DEFENSIVE PRECISION: Won exactly enough tricks to stop the opponent's bid -- surgical defense.")
-
-        # Consistent bidder — met bid in 3+ consecutive shotas.
-        if not hasattr(self, '_bids_met_streak'):
-            self._bids_met_streak = 0
-        if playing_team == 0 and bid_met:
-            self._bids_met_streak += 1
-        elif playing_team == 0 and not bid_met:
-            self._bids_met_streak = 0
-        if getattr(self, '_bids_met_streak', 0) >= 3:
-            self._trigger("reliable_bidder", "RELIABLE BIDDER: Met bid in 3+ consecutive shotas -- accurate hand assessment.")
-
-        # High-low strategy — bid low in one shota (and exceeded), bid high in next (and met).
-        if len(getattr(self, '_bid_history', [])) >= 2 and playing_team == 0:
-            prev_bid = self._bid_history[-2] if len(self._bid_history) >= 2 else 0
-            if prev_bid <= 7 and bid >= 10 and bid_met:
-                self._trigger("high_low_strategy", "HIGH-LOW STRATEGY: Alternated between conservative and aggressive bids successfully -- adaptive bidding.")
-
-        # === META-MASTERY ===
-
-        # Unbeatable streak — won 5 games in a row.
-        if len(self._wist_win_history) >= 5 and all(self._wist_win_history[-5:]):
-            self._trigger("unbeatable", "UNBEATABLE: Won 5 games in a row -- opponents cannot counter the AI's strategy.")
-
-        # Grand mastery — 70%+ win rate over 20 games.
-        if len(self._wist_win_history) >= 20:
-            rate = sum(self._wist_win_history[-20:]) / 20
-            if rate >= 0.7:
-                self._trigger("grand_mastery", "GRAND MASTERY: Win rate exceeds 70% over 20 games -- deep strategic understanding achieved.")
-
-        # Bid accuracy mastery — met bid in 80%+ of bidding shotas over 10 attempts.
-        total_bids = self.bids_met + self.bids_failed
-        if total_bids >= 10:
-            accuracy = self.bids_met / total_bids
-            if accuracy >= 0.8:
-                self._trigger("bid_mastery", "BID MASTERY: Met bid in 80%+ of attempts over 10+ shotas -- expert hand evaluation.")
-
-        # Score accumulator — total team score exceeds 50 in a single game.
-        if self.team_scores[0] >= 50:
-            self._trigger("score_accumulator", "SCORE ACCUMULATOR: Team score exceeded 50 in a single game -- sustained excellence across all shotas.")
-
-        # Seek hunter — achieved 3+ seeks across all games.
-        if self.seeks_achieved >= 3:
-            self._trigger("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
-
-    def _trigger(self, key, msg):
-        """Record a discovered behavior with structured multi-line format."""
-        if key not in self._milestones_achieved:
-            self._milestones_achieved.add(key)
-
-            # Track for curriculum stagnation detection.
-            self._last_discovery_episode_for_stage = self.discovery.episodes_trained
-
-            # Build dynamic context.
-            stats = self._build_stats_context()
-
-            if ":" in msg:
-                title = msg.split(":")[0].strip()
-                base_desc = msg.split(":", 1)[1].strip()
-            else:
-                title = key.upper()
-                base_desc = msg
-
-            # Compute times (accumulated across sessions).
-            total_compute = self._accumulated_compute + self._get_compute_time()
-            last_disc_compute = getattr(self, '_last_discovery_compute', None)
-
-            total_str = self._format_time(total_compute)
-
-            if last_disc_compute is not None:
-                delta_sec = total_compute - last_disc_compute
-                delta_str = self._format_time(delta_sec)
-            else:
-                delta_str = "—"
-
-            self._last_discovery_compute = total_compute
-
-            # Multi-line structured description.
-            desc = (
-                f"{base_desc}\n"
-                f"Total compute: {total_str} | Since last: {delta_str}\n"
-                f"Win rate: {stats['win_rate']:.0f}% | Bid accuracy: {stats['bid_accuracy']:.0f}%"
-            )
-
-            self._milestones_list.append((f"{title} (#{stats['episodes']})", desc))
-            self._log(f"  ** DISCOVERED: {title} **")
+    def _get_compute_time(self) -> float:
+        """Get actual compute seconds (excludes paused time)."""
+        now = time.monotonic()
+        total_elapsed = now - self._app_start_time
+        paused = self._total_paused_time
+        if self._pause_start is not None:
+            paused += now - self._pause_start
+        return total_elapsed - paused
 
     @staticmethod
     def _format_time(seconds: float) -> str:
@@ -799,213 +468,10 @@ class WistDiscoveryWatcher:
         if seconds < 60:
             return f"{seconds:.0f}s"
         elif seconds < 3600:
-            return f"{seconds/60:.1f}m"
-        else:
-            return f"{seconds/3600:.1f}h"
+            return f"{seconds / 60:.1f}m"
+        return f"{seconds / 3600:.1f}h"
 
-    def _build_stats_context(self) -> dict:
-        """Gather current performance stats."""
-        total_bids = self.bids_met + self.bids_failed
-        bid_accuracy = (self.bids_met / max(total_bids, 1)) * 100
-        win_rate = 0
-        if hasattr(self, '_wist_win_history') and len(self._wist_win_history) > 0:
-            win_rate = sum(self._wist_win_history) / len(self._wist_win_history) * 100
-
-        q_states = len(self.discovery.play_q) + len(self.discovery.play_q2) + len(self.discovery.bid_q) + len(self.discovery.bid_q2)
-        episodes = self.discovery.episodes_trained
-        epsilon = self.discovery.epsilon
-
-        return {
-            "games_played": self.game_num,
-            "shotas_played": self.shotas_played,
-            "win_rate": win_rate,
-            "bid_accuracy": bid_accuracy,
-            "seeks": self.seeks_achieved,
-            "episodes": episodes,
-            "q_states": q_states,
-            "epsilon": epsilon,
-            "team_score": self.team_scores[0],
-        }
-
-    # =========================================================================
-    # Auto-Discovery: Statistical Anomaly Detection
-    # =========================================================================
-
-    def _auto_discover(self, team_tricks, bid, playing_team, bid_met, scores):
-        """
-        Detect new behaviors by watching rolling statistics.
-        No hardcoded milestones — the system notices when metrics cross
-        new thresholds or change significantly.
-        """
-        if not hasattr(self, '_auto_stats'):
-            self._auto_stats = {
-                "scores": deque(maxlen=100),
-                "tricks": deque(maxlen=100),
-                "bids_met": deque(maxlen=50),
-                "win_streaks": 0,
-                "best_win_streak": 0,
-                "best_score": -999,
-                "best_avg_score_20": -999,
-                "best_win_rate_20": 0,
-                "best_bid_accuracy_20": 0,
-                "best_avg_tricks_20": 0,
-                "total_seeks": 0,
-                "last_discovery_episode": 0,
-                "thresholds_crossed": set(),
-            }
-
-        s0 = scores.get(0, 0)
-        t0 = team_tricks[0]
-        stats = self._auto_stats
-
-        stats["scores"].append(s0)
-        stats["tricks"].append(t0)
-        stats["bids_met"].append(1 if (playing_team == 0 and bid_met) else 0)
-
-        if t0 == 13:
-            stats["total_seeks"] += 1
-
-        # Don't trigger too often — minimum 200 episodes between auto-discoveries.
-        episodes = self.discovery.episodes_trained
-        if episodes - stats["last_discovery_episode"] < 200:
-            return
-
-        # Need at least 20 data points.
-        if len(stats["scores"]) < 20:
-            return
-
-        recent_20 = list(stats["scores"])[-20:]
-        recent_tricks = list(stats["tricks"])[-20:]
-        recent_bids = list(stats["bids_met"])[-20:]
-
-        avg_score = sum(recent_20) / 20
-        avg_tricks = sum(recent_tricks) / 20
-        win_rate = sum(1 for s in recent_20 if s > 0) / 20 * 100
-        bid_acc = sum(recent_bids) / max(len(recent_bids), 1) * 100
-
-        # --- Score threshold crossings (adjusted for correct bid ceiling rules) ---
-        score_thresholds = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12]
-        for threshold in score_thresholds:
-            key = f"avg_score_{threshold}"
-            if key not in stats["thresholds_crossed"] and avg_score >= threshold:
-                stats["thresholds_crossed"].add(key)
-                stats["last_discovery_episode"] = episodes
-                self._trigger(f"auto_score_{threshold}",
-                    f"SCORING POWER: Average score crossed +{threshold} over 20 shotas "
-                    f"(actual: {avg_score:.1f})")
-                return
-
-        # --- Win rate threshold crossings (finer increments) ---
-        wr_thresholds = [45, 50, 55, 60, 65, 70, 75, 80, 85, 90]
-        for threshold in wr_thresholds:
-            key = f"win_rate_{threshold}"
-            if key not in stats["thresholds_crossed"] and win_rate >= threshold:
-                stats["thresholds_crossed"].add(key)
-                stats["last_discovery_episode"] = episodes
-                self._trigger(f"auto_wr_{threshold}",
-                    f"WIN DOMINANCE: Win rate crossed {threshold}% over 20 shotas "
-                    f"(actual: {win_rate:.0f}%)")
-                return
-
-        # --- Bid accuracy threshold crossings (finer increments) ---
-        bid_thresholds = [50, 55, 60, 65, 70, 75, 80, 85, 90]
-        for threshold in bid_thresholds:
-            key = f"bid_acc_{threshold}"
-            if key not in stats["thresholds_crossed"] and bid_acc >= threshold:
-                stats["thresholds_crossed"].add(key)
-                stats["last_discovery_episode"] = episodes
-                self._trigger(f"auto_bid_{threshold}",
-                    f"BID PRECISION: Bid accuracy crossed {threshold}% over 20 shotas "
-                    f"(actual: {bid_acc:.0f}%)")
-                return
-
-        # --- Average tricks threshold crossings (finer increments) ---
-        trick_thresholds = [6, 7, 8, 9, 10, 11, 12]
-        for threshold in trick_thresholds:
-            key = f"avg_tricks_{threshold}"
-            if key not in stats["thresholds_crossed"] and avg_tricks >= threshold:
-                stats["thresholds_crossed"].add(key)
-                stats["last_discovery_episode"] = episodes
-                self._trigger(f"auto_tricks_{threshold}",
-                    f"TRICK MACHINE: Averaging {threshold}+ tricks per shota "
-                    f"(actual: {avg_tricks:.1f})")
-                return
-
-        # --- Seek count milestones ---
-        seek_thresholds = [5, 10, 20, 50, 100]
-        for threshold in seek_thresholds:
-            key = f"seeks_{threshold}"
-            if key not in stats["thresholds_crossed"] and stats["total_seeks"] >= threshold:
-                stats["thresholds_crossed"].add(key)
-                stats["last_discovery_episode"] = episodes
-                self._trigger(f"auto_seeks_{threshold}",
-                    f"SEEK MASTER: Achieved {threshold} total seeks -- "
-                    f"the all-13-tricks strategy is now a reliable weapon")
-                return
-
-        # --- Win streak records ---
-        if hasattr(self, '_wist_win_history') and len(self._wist_win_history) >= 2:
-            if self._wist_win_history[-1]:
-                stats["win_streaks"] += 1
-            else:
-                stats["win_streaks"] = 0
-
-            streak_thresholds = [7, 10, 15, 20, 30]
-            for threshold in streak_thresholds:
-                key = f"streak_{threshold}"
-                if (key not in stats["thresholds_crossed"] and
-                        stats["win_streaks"] >= threshold):
-                    stats["thresholds_crossed"].add(key)
-                    stats["last_discovery_episode"] = episodes
-                    self._trigger(f"auto_streak_{threshold}",
-                        f"UNSTOPPABLE: Won {threshold} games in a row -- "
-                        f"opponents have no answer to the AI's strategy")
-                    return
-
-        # --- Significant improvement detection ---
-        if len(stats["scores"]) >= 40:
-            old_20 = list(stats["scores"])[-40:-20]
-            new_20 = list(stats["scores"])[-20:]
-            old_avg = sum(old_20) / 20
-            new_avg = sum(new_20) / 20
-            improvement = new_avg - old_avg
-
-            improvement_thresholds = [3, 5, 8]
-            for threshold in improvement_thresholds:
-                key = f"improvement_{threshold}"
-                if (key not in stats["thresholds_crossed"] and
-                        improvement >= threshold and new_avg > old_avg * 1.3):
-                    stats["thresholds_crossed"].add(key)
-                    stats["last_discovery_episode"] = episodes
-                    self._trigger(f"auto_improve_{threshold}",
-                        f"BREAKTHROUGH: Average score jumped +{improvement:.1f} "
-                        f"(from {old_avg:.1f} to {new_avg:.1f}) -- strategy evolved significantly")
-                    return
-
-    def _render_hand_h(self, hand, cx, y, table):
-        """Render horizontal hand with fixed 13-card spacing."""
-        if not hand:
-            return
-        overlap = min(CARD_WIDTH - 8, (table.width - 200) // 13)
-        start_x = cx - (overlap * 12 + CARD_WIDTH) // 2
-        for i, card in enumerate(hand):
-            key = f"{card.rank.symbol}{card.suit.symbol}"
-            if key not in self._card_cache:
-                self._card_cache[key] = create_card_surface(card.rank.symbol, card.suit.symbol, CARD_WIDTH, CARD_HEIGHT)
-            self.screen.blit(self._card_cache[key], (start_x + i * overlap, y))
-
-    def _render_hand_v(self, hand, x, start_y):
-        """Render vertical hand with fixed 16px overlap."""
-        if not hand:
-            return
-        for i, card in enumerate(hand):
-            key = f"{card.rank.symbol}{card.suit.symbol}"
-            if key not in self._card_cache:
-                self._card_cache[key] = create_card_surface(card.rank.symbol, card.suit.symbol, CARD_WIDTH, CARD_HEIGHT)
-            surf = pygame.transform.smoothscale(self._card_cache[key], (CARD_MINI_W, CARD_MINI_H))
-            self.screen.blit(surf, (x, start_y + i * 16))
-
-    # === Main loop ===
+    # ─── Main Loop ──────────────────────────────────────────────────────────────
 
     def run(self):
         while self.running:
@@ -1013,36 +479,11 @@ class WistDiscoveryWatcher:
             self._update()
             self._render()
             self.clock.tick(FPS)
+
         self.discovery.save(self.model_path)
-        self._save_milestones()
+        save_milestones(self._milestones_achieved, self._milestones_list,
+                        self._accumulated_compute + self._get_compute_time())
         pygame.quit()
-
-    def _save_milestones(self):
-        """Save discovered milestones and accumulated compute time to disk."""
-        path = "agents/wist_discovery/milestones.json"
-        try:
-            data = {
-                "achieved": list(self._milestones_achieved),
-                "list": self._milestones_list,
-                "total_compute_sec": self._accumulated_compute + self._get_compute_time(),
-            }
-            with open(path, "w") as f:
-                json.dump(data, f)
-        except Exception:
-            pass
-
-    def _load_milestones(self):
-        """Load previously discovered milestones and accumulated compute time."""
-        path = "agents/wist_discovery/milestones.json"
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-            self._milestones_achieved = set(data.get("achieved", []))
-            self._milestones_list = [tuple(x) if isinstance(x, list) else x
-                                     for x in data.get("list", [])]
-            self._accumulated_compute = data.get("total_compute_sec", 0.0)
-        except (FileNotFoundError, Exception):
-            pass
 
     def _handle_events(self):
         for event in pygame.event.get():
@@ -1054,101 +495,69 @@ class WistDiscoveryWatcher:
                 elif event.key == pygame.K_SPACE:
                     self._toggle_pause()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self._continue_btn_rect and self._continue_btn_rect.collidepoint(event.pos):
-                    self._on_continue()
                 if self._mode_btn_rect and self._mode_btn_rect.collidepoint(event.pos):
                     self._toggle_pause()
                 if self._reset_btn_rect and self._reset_btn_rect.collidepoint(event.pos):
                     self._reset_brain()
             elif event.type == pygame.MOUSEWHEEL:
-                mx, my = pygame.mouse.get_pos()
-                # Right panel (discoveries) — right side of screen.
+                mx, _my = pygame.mouse.get_pos()
                 right_panel_x = SCREEN_WIDTH - 290
                 if mx >= right_panel_x:
-                    self._disc_scroll_offset = getattr(self, '_disc_scroll_offset', 0)
-                    self._disc_scroll_offset -= event.y * 1
-                    self._disc_scroll_offset = max(0, self._disc_scroll_offset)
-                # Left panel (insights) — left 230px.
+                    self._disc_scroll_offset = max(0, self._disc_scroll_offset - event.y)
                 elif mx <= 230:
-                    self._insight_scroll_offset = getattr(self, '_insight_scroll_offset', 0)
-                    self._insight_scroll_offset -= event.y * 1
-                    self._insight_scroll_offset = max(0, self._insight_scroll_offset)
-
-    def _on_continue(self):
-        if self.state == "scoring":
-            self._start_new_shota()
-        elif self.state == "game_over":
-            self._start_new_game()
+                    self._insight_scroll_offset = max(0, self._insight_scroll_offset - event.y)
 
     def _toggle_pause(self):
         """Toggle pause and track paused time accurately."""
-        import time
         if self.paused:
-            # Resuming — record how long we were paused.
             if self._pause_start is not None:
                 self._total_paused_time += time.monotonic() - self._pause_start
                 self._pause_start = None
         else:
-            # Pausing — record when pause started.
             self._pause_start = time.monotonic()
         self.paused = not self.paused
 
-    def _get_compute_time(self) -> float:
-        """Get actual compute seconds (excludes paused time)."""
-        import time
-        now = time.monotonic()
-        total_elapsed = now - self._app_start_time
-        paused = self._total_paused_time
-        # If currently paused, add current pause duration.
-        if self._pause_start is not None:
-            paused += now - self._pause_start
-        return total_elapsed - paused
-
     def _reset_brain(self):
         """Reset discovery agent — start from scratch."""
-        import time
         self.discovery = WistDiscoveryAgent(training=True)
-        self.opp.play_q = self.discovery.play_q
-        self.opp.play_q2 = self.discovery.play_q2
-        self.opp.bid_q = self.discovery.bid_q
-        self.opp.bid_q2 = self.discovery.bid_q2
+        self._sync_opponent()
+
         self.shotas_played = 0
         self.seeks_achieved = 0
         self.bids_met = 0
         self.bids_failed = 0
         self._milestones_achieved.clear()
         self._milestones_list.clear()
-        # Reset strategic insights.
         self._cached_insights = []
         self._last_insight_episode = 0
-        # Reset auto-discovery stats.
-        if hasattr(self, '_auto_stats'):
-            del self._auto_stats
-        # Reset curriculum.
+        self._auto_stats = create_auto_stats()
         self._opponent_stage = 1
         self._frozen_snapshot = None
         self._best_snapshot = None
         self._last_discovery_episode_for_stage = 0
-        # Reset win history.
-        if hasattr(self, '_wist_win_history'):
-            self._wist_win_history.clear()
-        # Reset timer.
+        self._wist_win_history.clear()
+        self._bid_history.clear()
+        self._bids_met_streak = 0
+        self._last_score = None
+        self._best_score = -999
+
         self._accumulated_compute = 0.0
         self._app_start_time = time.monotonic()
         self._total_paused_time = 0.0
         self._pause_start = None
         self._last_discovery_compute = None
-        self._save_milestones()
+
+        save_milestones(self._milestones_achieved, self._milestones_list, 0.0)
         self._log("  BRAIN RESET -- starting from zero.")
 
     def _update(self):
         if self.paused:
             return
         now = pygame.time.get_ticks()
-
         delay = int(TRICK_DELAY_MS / max(self.speed, 2.0))
         if now - self.last_action_time < delay:
             return
+
         if self.state == "playing":
             self._play_one_trick()
         elif self.state == "scoring":
@@ -1156,788 +565,43 @@ class WistDiscoveryWatcher:
         elif self.state == "game_over":
             self._start_new_game()
 
-    # === Rendering (identical layout to Hearts) ===
-
     def _render(self):
-        self.screen.fill(BG_DARK)
-
-        # Left panel for strategic insights.
-        left_panel_w = 230
-
-        # Table area (shifted right to make room for left panel).
-        table = pygame.Rect(left_panel_w + 10, 60, SCREEN_WIDTH - left_panel_w - 320, SCREEN_HEIGHT - 80)
-        pygame.draw.rect(self.screen, TABLE_FELT, table, border_radius=12)
-        pygame.draw.rect(self.screen, TABLE_BORDER, table, width=2, border_radius=12)
-
-        # Title.
-        t = self.fonts["title"].render(TITLE, True, TEXT_WHITE)
-        self.screen.blit(t, (left_panel_w + 15, 15))
-
-        # Render left panel (strategic insights).
-        self._render_insights_panel(left_panel_w)
-
-        # Timer — left-aligned above scoreboard, vertically centered in the header space.
-        panel_x = SCREEN_WIDTH - 290
-
-        total_sec = self._accumulated_compute + self._get_compute_time()
-        hours = int(total_sec // 3600)
-        minutes = int((total_sec % 3600) // 60)
-        seconds = int(total_sec % 60)
-        timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
-        timer_y = (60 - timer_surf.get_height()) // 2
-        self.screen.blit(timer_surf, (panel_x, timer_y))
-
-        # Info — right-aligned above panel.
-        info1 = f"Game {self.game_num} | Shota {self.shota_num}/5 | Speed: {self.speed:.1f}x"
-        info2 = f"Score: T1={self.team_scores[0]:+d} T2={self.team_scores[1]:+d} | SPACE: pause | ESC: quit"
-        self.screen.blit(self.fonts["small"].render(info1, True, TEXT_WHITE),
-            (panel_x - self.fonts["small"].size(info1)[0] - 10, 15))
-        self.screen.blit(self.fonts["small"].render(info2, True, TEXT_WHITE),
-            (panel_x - self.fonts["small"].size(info2)[0] - 10, 32))
-
-        if self.paused:
-            ps = self.fonts["large"].render("PAUSED", True, TEXT_GOLD)
-            self.screen.blit(ps, (SCREEN_WIDTH // 2 - 40, 15))
-
-        # Render players.
-        self._render_players(table)
-
-        # Trick in center.
-        self._render_trick(table)
-
-        # Continue button — not used, always auto-play.
-        self._continue_btn_rect = None
-
-        # Mode button (top-right of table).
-        self._render_mode_btn(table)
-
-        # Reset button (top-left of table).
-        self._render_reset_btn(table)
-
-        # Right panel.
-        self._render_panel()
-
-        pygame.display.flip()
-
-    def _render_players(self, table):
-        """Render 4 players — same layout as Hearts."""
-        cx, cy = table.centerx, table.centery
-        hands = getattr(self, '_hands', {})
-
-        for pid in range(4):
-            hand = hands.get(pid, [])
-            color = PLAYER_COLORS[pid]
-            name_surf = self.fonts["medium"].render(PLAYER_NAMES[pid], True, color)
-
-            if pid == 0:  # Bottom
-                hand_y = table.bottom - CARD_HEIGHT - 50
-                self._render_hand_h(hand, cx, hand_y, table)
-                self.screen.blit(name_surf, (cx - name_surf.get_width()//2, hand_y + CARD_HEIGHT + 6))
-            elif pid == 2:  # Top
-                self.screen.blit(name_surf, (cx - name_surf.get_width()//2, table.top + 10))
-                self._render_hand_h(hand, cx, table.top + 28, table)
-            elif pid == 1:  # Left
-                self.screen.blit(name_surf, (table.left + 15, cy - 155))
-                self._render_hand_v(hand, table.left + 15, cy - 135)
-            elif pid == 3:  # Right
-                self.screen.blit(name_surf,
-                    (table.right - 15 - name_surf.get_width(), cy - 155))
-                self._render_hand_v(hand, table.right - CARD_MINI_W - 15, cy - 135)
-
-    def _render_trick(self, table):
-        """Render current trick cards in center."""
-        if not self.current_trick_cards:
-            return
-        cx, cy = table.centerx, table.centery
-        offsets = {0: (0, 44), 1: (-70, 0), 2: (0, -44), 3: (70, 0)}
-        for pid, card in self.current_trick_cards:
-            ox, oy = offsets[pid]
-            key = f"{card.rank.symbol}{card.suit.symbol}"
-            if key not in self._card_cache:
-                self._card_cache[key] = create_card_surface(
-                    card.rank.symbol, card.suit.symbol, CARD_WIDTH, CARD_HEIGHT)
-            self.screen.blit(self._card_cache[key],
-                (cx + ox - CARD_WIDTH//2, cy + oy - CARD_HEIGHT//2))
-
-        if self.last_winner >= 0 and len(self.current_trick_cards) == 4:
-            tw = self.fonts["small"].render(f"Taker: {PLAYER_NAMES[self.last_winner]}", True, TEXT_GOLD)
-            self.screen.blit(tw, (table.x + 120, table.y + 12))
-
-    def _render_continue_btn(self, table):
-        """Continue button — bottom center, same style as Hearts."""
-        btn = pygame.Rect(table.centerx - 55, table.bottom - 40, 110, 28)
-        self._continue_btn_rect = btn
-        hover = btn.collidepoint(pygame.mouse.get_pos())
-        bg = (90, 200, 90) if hover else (70, 170, 70)
-        pygame.draw.rect(self.screen, bg, btn, border_radius=6)
-        pygame.draw.rect(self.screen, (180, 255, 180), btn, width=1, border_radius=6)
-        t = self.fonts["medium"].render("Continue", True, (255, 255, 255))
-        self.screen.blit(t, t.get_rect(center=btn.center))
-
-    def _render_mode_btn(self, table):
-        """Stop/Resume — top-right header, aligned with right panel edge."""
-        btn_w = 70
-        btn_h = 24
-        btn_x = SCREEN_WIDTH - 10 - btn_w - 95  # Left of Reset button.
-        btn_y = (60 - btn_h) // 2
-        btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
-        self._mode_btn_rect = btn
-        hover = btn.collidepoint(pygame.mouse.get_pos())
-        label = "Resume" if self.paused else "Stop"
-        bg = (240, 240, 240) if not hover else (255, 255, 255)
-        pygame.draw.rect(self.screen, bg, btn, border_radius=5)
-        btn_font = pygame.font.SysFont("Segoe UI", 11)
-        t = btn_font.render(label, True, (180, 30, 30))
-        self.screen.blit(t, t.get_rect(center=btn.center))
-
-    def _render_reset_btn(self, table):
-        """RESET Brain — top-right header, flush with right panel edge."""
-        btn_w = 90
-        btn_h = 24
-        btn_x = SCREEN_WIDTH - 10 - btn_w  # Right edge aligned with panel.
-        btn_y = (60 - btn_h) // 2
-        btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
-        self._reset_btn_rect = btn
-        hover = btn.collidepoint(pygame.mouse.get_pos())
-        bg = (180, 30, 30) if not hover else (210, 50, 50)
-        pygame.draw.rect(self.screen, bg, btn, border_radius=5)
-        btn_font = pygame.font.SysFont("Segoe UI", 11, bold=True)
-        t = btn_font.render("RESET Brain", True, (255, 230, 50))
-        self.screen.blit(t, t.get_rect(center=btn.center))
-
-    def _render_panel(self):
-        """Render right panel — two boxes: Scoreboard + Discoveries (same as Hearts)."""
-        px = SCREEN_WIDTH - 290
-        panel_w = 280
-
-        # === Box 1: Scoreboard ===
-        score_h = 215
-        score_rect = pygame.Rect(px, 60, panel_w, score_h)
-        pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
-        pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
-
-        y = score_rect.top + 10
-        self.screen.blit(self.fonts["large"].render("Scoreboard", True, TEXT_WHITE), (px + 10, y))
-        y += 22
-
-        # Table header: Team | S1 | S2 | S3 | S4 | S5 | Total
-        col_name_w = 55
-        col_shota_w = 30
-        col_total_w = 38
-        header_x = px + 10
-
-        self.screen.blit(self.fonts["small"].render("Team", True, TEXT_DIM), (header_x, y))
-        for s in range(5):
-            sx = header_x + col_name_w + s * col_shota_w
-            self.screen.blit(self.fonts["small"].render(f"S{s+1}", True, TEXT_DIM), (sx, y))
-        total_x = header_x + col_name_w + 5 * col_shota_w
-        self.screen.blit(self.fonts["small"].render("Total", True, TEXT_DIM), (total_x, y))
-        y += 16
-
-        # Separator line.
-        pygame.draw.line(self.screen, (80, 80, 100),
-                         (px + 10, y), (px + panel_w - 10, y))
-        y += 4
-
-        # Team rows.
-        team_names = ["Team 1", "Team 2"]
-        team_colors = [(100, 200, 255), (255, 160, 100)]
-        for tid in range(2):
-            self.screen.blit(self.fonts["small"].render(team_names[tid], True, team_colors[tid]), (header_x, y))
-
-            for s in range(5):
-                sx = header_x + col_name_w + s * col_shota_w
-                if s < len(self.shota_scores):
-                    val = self.shota_scores[s].get(tid, 0)
-                    sc_color = (100, 255, 100) if val > 0 else (255, 100, 100) if val < 0 else TEXT_LIGHT
-                    self.screen.blit(self.fonts["small"].render(f"{val:+d}", True, sc_color), (sx, y))
-                else:
-                    self.screen.blit(self.fonts["small"].render("—", True, TEXT_DIM), (sx + 4, y))
-
-            total_val = self.team_scores[tid]
-            tc = (100, 255, 100) if total_val > 0 else (255, 100, 100) if total_val < 0 else TEXT_LIGHT
-            self.screen.blit(self.fonts["small"].render(f"{total_val:+d}", True, tc), (total_x, y))
-            y += 18
-
-        y += 8
-        # Stats below the table.
-        bg_episodes = getattr(self, '_bg_agent', None)
-        live_episodes = bg_episodes.episodes_trained if bg_episodes else self.discovery.episodes_trained
-        stats = [
-            f"Shotas learned: {live_episodes:,}",
-            f"Seeks: {self.seeks_achieved}",
-            f"Bids met: {self.bids_met}/{self.bids_met + self.bids_failed}",
-            f"Epsilon: {self.discovery.epsilon:.3f}  |  Stage: {self._opponent_stage}",
-        ]
-        for s in stats:
-            self.screen.blit(self.fonts["medium"].render(s, True, TEXT_LIGHT), (px + 10, y))
-            y += 18
-
-        # === Box 2: Discoveries ===
-        disc_top = 60 + score_h + 8
-        disc_h = SCREEN_HEIGHT - 80 - score_h - 8
-        disc_rect = pygame.Rect(px, disc_top, panel_w, disc_h)
-        pygame.draw.rect(self.screen, PANEL_DARK, disc_rect, border_radius=10)
-        pygame.draw.rect(self.screen, (70, 60, 20), disc_rect, width=1, border_radius=10)
-
-        self.screen.set_clip(pygame.Rect(px + 5, disc_top + 5, panel_w - 10, disc_h - 10))
-
-        y = disc_rect.top + 10
-        self.screen.blit(self.fonts["large"].render("Discoveries", True, TEXT_GOLD), (px + 10, y))
-        y += 22
-
-        if not self._milestones_list:
-            self.screen.blit(self.fonts["medium"].render("None yet...", True, TEXT_DIM), (px + 15, y))
-            self.screen.set_clip(None)
-        else:
-            disc_scroll = getattr(self, '_disc_scroll_offset', 0)
-            total = len(self._milestones_list)
-
-            # Estimate how many items fill the panel.
-            available_h = disc_rect.bottom - y - 15
-            items_fit = max(1, available_h // 80)  # ~80px per discovery with new formatting.
-            max_scroll = max(0, total - items_fit)
-            disc_scroll = max(0, min(disc_scroll, max_scroll))
-            self._disc_scroll_offset = disc_scroll
-
-            # Reversed: newest first. Render from scroll offset until panel is full.
-            reversed_list = list(reversed(self._milestones_list))
-            start_idx = disc_scroll
-
-            panel_text_w = panel_w - 30
-            for i in range(start_idx, total):
-                title_text, desc_text = reversed_list[i]
-                num = total - i
-                is_latest = (i == 0)
-
-                # Don't render if there's no room for title + at least one desc line.
-                if y + 22 + 16 > disc_rect.bottom - 15:
-                    break
-
-                title_color = (100, 255, 100) if is_latest else (255, 255, 255)
-                self.screen.blit(self.fonts["large"].render(
-                    f"{num}. {title_text}", True, title_color), (px + 10, y))
-                y += 22  # Space after title.
-
-                desc_font = self.fonts["medium"]
-                # Render each line separately (split on \n), then word-wrap within each.
-                for line_idx, line_part in enumerate(desc_text.split("\n")):
-                    # First line (description) in warm yellow, rest in light gray.
-                    if line_idx == 0:
-                        line_color = (255, 220, 130)  # Warm yellow for description.
-                    else:
-                        line_color = (170, 190, 210)  # Light blue-gray for stats/times.
-
-                    words = line_part.split()
-                    line = ""
-                    for w in words:
-                        test = line + " " + w if line else w
-                        if desc_font.size(test)[0] < panel_text_w:
-                            line = test
-                        else:
-                            if y > disc_rect.bottom - 20:
-                                break
-                            self.screen.blit(desc_font.render(line, True, line_color), (px + 20, y))
-                            y += 16
-                            line = w
-                    if line and y <= disc_rect.bottom - 20:
-                        self.screen.blit(desc_font.render(line, True, line_color), (px + 20, y))
-                        y += 16
-                    if y > disc_rect.bottom - 20:
-                        break
-                y += 10  # Breathing room between discoveries.
-
-                if y > disc_rect.bottom - 15:
-                    break
-
-        # Reset clip.
-        self.screen.set_clip(None)
-
-
-    def _render_insights_panel(self, panel_w: int):
-        """Render left panel with strategic insights derived from Q-table analysis."""
-        panel_rect = pygame.Rect(5, 60, panel_w - 10, SCREEN_HEIGHT - 80)
-        pygame.draw.rect(self.screen, PANEL_DARK, panel_rect, border_radius=10)
-        pygame.draw.rect(self.screen, (20, 70, 50), panel_rect, width=1, border_radius=10)
-
-        self.screen.set_clip(pygame.Rect(10, 65, panel_w - 20, SCREEN_HEIGHT - 90))
-
-        y = panel_rect.top + 10
-        title_surf = self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD)
-        self.screen.blit(title_surf, (15, y))
-        y += 22
-
-        # Generate insights periodically (cache to avoid recomputing every frame).
-        if not hasattr(self, '_cached_insights') or not self._cached_insights:
-            self._cached_insights = []
-            self._last_insight_episode = 0
-
-        # Refresh every 2000 episodes.
-        current_ep = self.discovery.episodes_trained
-        bg_agent = getattr(self, '_bg_agent', None)
-        if bg_agent:
-            current_ep = max(current_ep, bg_agent.episodes_trained)
-        if current_ep - getattr(self, '_last_insight_episode', 0) >= 2000 or not self._cached_insights:
-            self._cached_insights = self._generate_insights()
-            self._last_insight_episode = current_ep
-
-        if not self._cached_insights:
-            self.screen.blit(self.fonts["medium"].render("Training...", True, TEXT_DIM), (15, y))
-            self.screen.set_clip(None)
-            return
-
-        # Scrolling (same logic as discoveries).
-        total = len(self._cached_insights)
-        insight_scroll = getattr(self, '_insight_scroll_offset', 0)
-        available_h = panel_rect.bottom - y - 15
-        items_fit = max(1, available_h // 70)
-        max_scroll = max(0, total - items_fit)
-        insight_scroll = max(0, min(insight_scroll, max_scroll))
-        self._insight_scroll_offset = insight_scroll
-
-        # Reversed: newest first.
-        reversed_list = list(reversed(self._cached_insights))
-        start_idx = insight_scroll
-        text_w = panel_w - 35
-
-        for i in range(start_idx, total):
-            insight = reversed_list[i]
-            num = total - i
-            is_latest = (i == 0)
-
-            if y + 16 > panel_rect.bottom - 15:
-                break
-
-            # Remove bullet point if present.
-            text = insight.lstrip("• ").strip()
-
-            # Split into category and description.
-            if ":" in text:
-                cat_part = text.split(":")[0] + ":"
-                desc_part = text.split(":", 1)[1].strip()
-            else:
-                cat_part = ""
-                desc_part = text
-
-            # Render category in white bold, description in color.
-            desc_color = (255, 220, 130) if is_latest else (180, 220, 180)
-            cat_color = (255, 255, 255)
-            desc_font = self.fonts["medium"]
-            cat_font = pygame.font.SysFont("Segoe UI", 13, bold=True)
-
-            # Build the full line with number.
-            prefix = f"{num}. {cat_part} " if cat_part else f"{num}. "
-            full_text = prefix + desc_part
-
-            # Render with word wrap — category part white bold, rest colored.
-            prefix_w = cat_font.size(prefix)[0]
-            words = full_text.split()
-            line = ""
-            first_line = True
-            for w in words:
-                test = line + " " + w if line else w
-                if desc_font.size(test)[0] < text_w:
-                    line = test
-                else:
-                    if y > panel_rect.bottom - 20:
-                        break
-                    if first_line and cat_part:
-                        self.screen.blit(cat_font.render(prefix, True, cat_color), (15, y))
-                        rest = line[len(prefix):]
-                        if rest:
-                            self.screen.blit(desc_font.render(rest, True, desc_color), (15 + prefix_w, y))
-                        first_line = False
-                    else:
-                        self.screen.blit(desc_font.render(line, True, desc_color), (15, y))
-                    y += 16
-                    line = w
-            if line and y <= panel_rect.bottom - 20:
-                if first_line and cat_part:
-                    self.screen.blit(cat_font.render(prefix, True, cat_color), (15, y))
-                    rest = line[len(prefix):]
-                    if rest:
-                        self.screen.blit(desc_font.render(rest, True, desc_color), (15 + prefix_w, y))
-                else:
-                    self.screen.blit(desc_font.render(line, True, desc_color), (15, y))
-                y += 16
-            y += 8  # Gap between insights.
-
-            if y > panel_rect.bottom - 15:
-                break
-
-        self.screen.set_clip(None)
-
-    def _generate_insights(self) -> list:
-        """Analyze Q-tables and generate human-readable strategic insights with categories."""
-        insights = []
-        agent = self.discovery
-
-        if agent.episodes_trained < 5000:
-            return ["Still learning basics..."]
-
-        play_q = agent.play_q
-
-        # === 1. Action-based insights (what actions work in general) ===
-        action_avg = defaultdict(list)
-        for state, actions in list(play_q.items())[:3000]:
-            for action_key, q_val in actions.items():
-                if abs(q_val) > 0.1:
-                    action_avg[action_key].append(q_val)
-
-        for action_key, values in action_avg.items():
-            if len(values) < 10:
-                continue
-            avg = sum(values) / len(values)
-            if abs(avg) < 0.2:
-                continue
-            cat, desc = self._categorize_insight(action_key, avg)
-            if cat and desc:
-                insights.append(f"{cat}: {desc}")
-
-        # === 2. State-based insights (what contexts favor what actions) ===
-        # Analyze by game phase (encoded in state string).
-        phase_action_q = {"1": defaultdict(list), "2": defaultdict(list),
-                          "3": defaultdict(list), "4": defaultdict(list), "5": defaultdict(list)}
-        # Analyze by position (0-3 cards before us).
-        pos_action_q = {"0": defaultdict(list), "1": defaultdict(list),
-                        "2": defaultdict(list), "3": defaultdict(list)}
-
-        for state, actions in list(play_q.items())[:5000]:
-            if len(state) < 6:
-                continue
-            # State format: shape(4) + pos(1) + phase(1) + ...
-            pos = state[4] if len(state) > 4 else "0"
-            phase = state[5] if len(state) > 5 else "1"
-
-            for action_key, q_val in actions.items():
-                if abs(q_val) > 0.2:
-                    if phase in phase_action_q:
-                        phase_action_q[phase][action_key].append(q_val)
-                    if pos in pos_action_q:
-                        pos_action_q[pos][action_key].append(q_val)
-
-        # Phase insights.
-        for phase, label in [("1", "opening"), ("3", "mid-game"), ("5", "endgame")]:
-            actions = phase_action_q.get(phase, {})
-            if not actions:
-                continue
-            # Find best action in this phase.
-            best_action = ""
-            best_avg = 0
-            for a, vals in actions.items():
-                if len(vals) >= 5:
-                    avg = sum(vals) / len(vals)
-                    if avg > best_avg:
-                        best_avg = avg
-                        best_action = a
-            if best_action and best_avg > 0.3:
-                tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards (9-10)", "L": "low cards (5-8)", "X": "very low cards (2-4)"}.get(best_action[0], "cards")
-                trump_flag = "trump " if len(best_action) > 2 and best_action[2] == "T" else ""
-                if label == "opening":
-                    insights.append(f"OPENING: In the first few tricks, playing {trump_flag}{tier} tends to set up a strong position")
-                elif label == "mid-game":
-                    insights.append(f"TIMING: In the middle of the shota, {trump_flag}{tier} are the most effective plays")
-                elif label == "endgame":
-                    insights.append(f"ENDGAME: In the final tricks, {trump_flag}{tier} dominate — save them for this moment")
-
-        # Position insights.
-        for pos, label in [("0", "leading"), ("3", "last to play")]:
-            actions = pos_action_q.get(pos, {})
-            if not actions:
-                continue
-            best_action = ""
-            best_avg = 0
-            for a, vals in actions.items():
-                if len(vals) >= 5:
-                    avg = sum(vals) / len(vals)
-                    if avg > best_avg:
-                        best_avg = avg
-                        best_action = a
-            if best_action and best_avg > 0.3:
-                tier = {"A": "Ace", "K": "King", "Q": "Queen", "J": "Jack", "M": "9 or 10", "L": "low card", "X": "very low card"}.get(best_action[0], "card")
-                if label == "leading":
-                    insights.append(f"LEAD: When you lead the trick, starting with a {tier} works best")
-                elif label == "last to play":
-                    insights.append(f"POSITION: When you play last (4th), you see everything — play the minimum {tier} needed to win")
-
-        # === 3. Score-difference insights (ahead vs behind) ===
-        ahead_actions = defaultdict(list)
-        behind_actions = defaultdict(list)
-        for state, actions in list(play_q.items())[:3000]:
-            if len(state) < 7:
-                continue
-            score_flag = state[6] if len(state) > 6 else "T"
-            for action_key, q_val in actions.items():
-                if abs(q_val) > 0.2:
-                    if score_flag == "W":
-                        ahead_actions[action_key].append(q_val)
-                    elif score_flag == "B":
-                        behind_actions[action_key].append(q_val)
-
-        # Best when ahead.
-        for a, vals in ahead_actions.items():
-            if len(vals) >= 10:
-                avg = sum(vals) / len(vals)
-                if avg > 0.4:
-                    tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards", "L": "low cards", "X": "very low cards"}.get(a[0], "cards")
-                    is_trump = "trump " if len(a) > 2 and a[2] == "T" else ""
-                    insights.append(f"CONTROL: When ahead in score, playing {is_trump}{tier} maintains your lead safely")
-                    break
-
-        # Best when behind.
-        for a, vals in behind_actions.items():
-            if len(vals) >= 10:
-                avg = sum(vals) / len(vals)
-                if avg > 0.4:
-                    tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards", "L": "low cards", "X": "very low cards"}.get(a[0], "cards")
-                    is_trump = "trump " if len(a) > 2 and a[2] == "T" else ""
-                    insights.append(f"RECOVER: When behind in score, playing {is_trump}{tier} is the best way to catch up")
-                    break
-
-        # === 4. Trump-specific insights ===
-        trump_heavy_states = []
-        trump_light_states = []
-        for state, actions in list(play_q.items())[:3000]:
-            if len(state) < 10:
-                continue
-            # Trump count is encoded at positions 8-9 in state string.
-            try:
-                trump_count = int(state[8]) if state[8].isdigit() else 0
-            except (IndexError, ValueError):
-                continue
-            if trump_count >= 4:
-                for a, q in actions.items():
-                    if q > 0.3:
-                        trump_heavy_states.append((a, q))
-            elif trump_count <= 1:
-                for a, q in actions.items():
-                    if q > 0.3:
-                        trump_light_states.append((a, q))
-
-        if trump_heavy_states:
-            # What works when you have many trumps.
-            most_common = Counter(a for a, _ in trump_heavy_states).most_common(1)
-            if most_common:
-                a = most_common[0][0]
-                is_trump = "trumping" if len(a) > 2 and a[2] == "T" else "playing aggressively"
-                insights.append(f"TRUMP: When you hold many trumps (4+), {is_trump} dominates — you have the power to control every trick")
-
-        if trump_light_states:
-            most_common = Counter(a for a, _ in trump_light_states).most_common(1)
-            if most_common:
-                a = most_common[0][0]
-                tier = {"A": "Aces", "K": "Kings", "Q": "Queens", "J": "Jacks", "M": "mid cards", "L": "low cards", "X": "very low cards"}.get(a[0], "cards")
-                insights.append(f"ADAPT: When you have few trumps (0-1), rely on {tier} in side suits — you can't afford to waste what little trump you have")
-
-        # === 5. Bid insights ===
-        bid_q = agent.bid_q
-        bid_pass_values = []
-        bid_values_by_num = defaultdict(list)
-        for state, actions in list(bid_q.items())[:500]:
-            for action_key, q_val in actions.items():
-                if action_key == "PASS":
-                    bid_pass_values.append(q_val)
-                elif action_key.startswith("B"):
-                    bid_values_by_num[action_key].append(q_val)
-
-        if bid_pass_values and sum(bid_pass_values) / len(bid_pass_values) > 0.3:
-            insights.append("BID: When your hand is weak, passing is smarter than overbidding — let the opponents take the risk")
-
-        for action_key, values in sorted(bid_values_by_num.items(), key=lambda x: -sum(x[1])/len(x[1]) if x[1] else 0):
-            if len(values) >= 3:
-                avg = sum(values) / len(values)
-                if avg > 0.3:
-                    val = int(action_key[1:])
-                    if val == 7:
-                        insights.append("UNDERBID: Bidding 7 (the minimum) is the safest bet — easy to meet and hard to fail")
-                    elif val <= 8:
-                        insights.append(f"BID: Bidding {val} is a solid conservative choice — promise less, deliver more")
-                    elif val >= 10:
-                        insights.append(f"RISK: Bidding {val} requires a powerful hand — only do this with many trumps and high cards")
-                    break
-
-        # === 6. Performance-based strategy insights ===
-        if hasattr(self, '_auto_stats') and self._auto_stats:
-            stats = self._auto_stats
-            if len(stats.get("scores", [])) >= 20:
-                recent = list(stats["scores"])[-20:]
-                avg_score = sum(recent) / 20
-                if avg_score > 6:
-                    insights.append("DOMINATION: The agent has learned to consistently crush opponents — strong bidding combined with precise card play")
-                elif avg_score > 3:
-                    insights.append("ADAPT: The agent found a winning formula — bid carefully and play trumps at the right moment")
-
-            if stats.get("total_seeks", 0) >= 5:
-                insights.append("SEEK: Going for all 13 tricks is possible when you hold many high trumps — the agent actively pursues this when the hand is strong enough")
-
-        # === 7. Void-related insights from opponent voids ===
-        # Check states with high opp_voids (encoded as 'o' + digit near end of state).
-        void_exploit_values = []
-        for state, actions in list(play_q.items())[:2000]:
-            if 'o' in state:
-                o_idx = state.index('o')
-                if o_idx + 1 < len(state) and state[o_idx + 1].isdigit():
-                    opp_voids = int(state[o_idx + 1])
-                    if opp_voids >= 2:
-                        for a, q in actions.items():
-                            if q > 0.3 and len(a) > 2 and a[2] == "T":
-                                void_exploit_values.append(q)
-
-        if len(void_exploit_values) >= 5:
-            insights.append("EXPLOIT: When opponents are void in suits, they will trump your leads — switch to leading trump to neutralize their advantage")
-
-        # Deduplicate exact same text only.
-        seen = set()
-        unique = []
-        for ins in insights:
-            if ins not in seen:
-                seen.add(ins)
-                unique.append(ins)
-
-        return unique
-
-        # Deduplicate exact same text only (not by category).
-        seen = set()
-        unique = []
-        for ins in insights:
-            if ins not in seen:
-                seen.add(ins)
-                unique.append(ins)
-
-        return unique
-
-    def _categorize_insight(self, action_key: str, avg_q: float) -> tuple:
-        """Map an action encoding to a category + human-readable strategy tip."""
-        if len(action_key) < 4:
-            return ("", "")
-
-        tier = action_key[0]   # A/K/Q/J/M/L/X
-        follows = action_key[1] if len(action_key) > 1 else ""  # F/O
-        is_trump = action_key[2] if len(action_key) > 2 else ""  # T/N
-        is_long = action_key[3] if len(action_key) > 3 else ""  # L/S
-        creates_void = action_key[4] if len(action_key) > 4 else ""  # V/K
-
-        positive = avg_q > 0
-
-        # === POSITIVE STRATEGIES (things that work) ===
-        if positive:
-            # WHIP patterns (trumping when void).
-            if is_trump == "T" and follows == "O":
-                if tier == "A":
-                    return ("WHIP", "When void in the led suit, trump with your Ace — it's unbeatable and guarantees the trick")
-                if tier == "K":
-                    return ("WHIP", "When void, trump with King — only Ace can beat it, and it might already be played")
-                if tier == "Q":
-                    return ("WHIP", "When void, Queen of trump is a strong whip — beats everything except Ace and King")
-                if tier == "J":
-                    return ("WHIP", "When void, Jack of trump is a decent whip — wins unless opponents have higher trump")
-                if tier in ("M", "L", "X"):
-                    return ("WHIP", "When void in the led suit, play a small trump — you win cheaply and save your big trumps for later")
-
-            # VOID creation.
-            if creates_void == "V":
-                if is_trump == "N":
-                    return ("VOID", "Play your last card of a suit to create a void — next time that suit is led, you can trump it")
-                return ("VOID", "Getting rid of your last card in a suit opens up future trumping opportunities")
-
-            # ACE plays.
-            if tier == "A" and follows == "F":
-                if is_trump == "T":
-                    return ("FLUSH", "Leading Ace of trump forces everyone to follow with their trumps — you thin out their trump supply")
-                return ("CONTROL", "Play your Ace when following suit — it wins guaranteed and you take the lead for the next trick")
-
-            # KING plays.
-            if tier == "K" and follows == "F":
-                if is_trump == "T":
-                    return ("TRUMP", "King of trump following suit is extremely strong — only Ace beats it")
-                return ("PRESSURE", "Play King when following — it wins unless the Ace is still out there")
-
-            # QUEEN plays.
-            if tier == "Q" and follows == "F":
-                if is_trump == "T":
-                    return ("TRUMP", "Queen of trump is a solid follow — saves your King and Ace for later")
-                if is_long == "L":
-                    return ("BLEED", "Queen from your long suit forces out opponents' higher cards — setting up your remaining cards to win")
-                return ("BLOCK", "Queen following suit is competitive — it beats everything below it")
-
-            # JACK plays.
-            if tier == "J" and follows == "F":
-                if is_trump == "T":
-                    return ("SAVING", "Jack of trump following suit is conservative — keep your royals for more critical tricks")
-                return ("PROBE", "Jack following suit tests if opponents still have Queen, King, or Ace in that suit")
-
-            # MID cards (9-10).
-            if tier == "M" and follows == "F":
-                if is_trump == "T":
-                    return ("TIMING", "Mid-range trump (9 or 10) following suit is safe — might win without spending royals")
-                return ("PROBE", "Playing 9 or 10 when following suit tests the waters safely")
-
-            # LOW cards (5-8).
-            if tier == "L" and follows == "F":
-                if is_trump == "T":
-                    return ("SAVING", "Play low trump (5-8) when following trump — preserve your high trumps for when they really matter")
-                return ("DUCK", "When you can't beat what's on the table, play a mid-low card — save your face cards for tricks you can win")
-
-            # VERY LOW cards (2-4).
-            if tier == "X" and follows == "F":
-                return ("DUCK", "Playing your smallest card (2-4) when following is the safest possible move — zero waste, pure preservation")
-
-            # OFF-SUIT dumping.
-            if tier == "X" and follows == "O" and is_trump == "N":
-                return ("DUMP", "Throw your 2, 3, or 4 when void — these cards will never win anything, get rid of them first")
-            if tier == "L" and follows == "O" and is_trump == "N":
-                return ("DUMP", "When void in the led suit and not trumping, dump your lowest non-trump — minimize loss")
-
-            # LEAD from long suit.
-            if is_long == "L" and follows == "F":
-                if tier == "K":
-                    return ("BLEED", "Leading King from your longest suit depletes opponents' cards in that suit — dominance through length")
-                if tier == "Q":
-                    return ("BLEED", "Leading Queen from long suit forces responses — sets up lower cards to win later")
-                if tier == "M":
-                    return ("PROBE", "Lead a mid card from your long suit to test who still has cards in it — gather information safely")
-
-            # HIGH off-suit.
-            if tier == "K" and follows == "O" and is_trump == "N":
-                return ("SACRIFICE", "Playing King off-suit is a sacrifice — but it might help your partner win with a trump")
-            if tier == "Q" and follows == "O" and is_trump == "N":
-                return ("SACRIFICE", "Queen off-suit is expendable when you can't follow — better than wasting your Ace")
-
-        # === NEGATIVE STRATEGIES (things that don't work) ===
-        else:
-            if tier == "A" and follows == "O" and is_trump == "N":
-                return ("WASTE", "Don't play your Ace off-suit when you can't follow — it's your strongest card wasted on a trick you can't win")
-
-            if tier == "K" and follows == "O" and is_trump == "N":
-                return ("WASTE", "Playing King off-suit when void is wasteful — it could win a trick in its own suit later")
-
-            if tier == "Q" and follows == "O" and is_trump == "N":
-                return ("WASTE", "Queen off-suit when void is a wasted card — play something lower instead")
-
-            if tier == "Q" and follows == "F" and is_trump == "N":
-                return ("TRAP", "Playing Queen when following can be a trap — if King or Ace is behind you, your Queen is wasted and you lose a strong card")
-
-            if tier == "K" and follows == "F" and is_trump == "N":
-                return ("TRAP", "Be careful playing King when following — if the Ace hasn't appeared yet, you might lose your King for nothing")
-
-            if tier == "J" and follows == "O" and is_trump == "N":
-                return ("RISK", "Jack off-suit when void is marginal — it won't win and it's not worthless enough to dump freely")
-
-            if tier == "M" and follows == "O" and is_trump == "N":
-                return ("RISK", "Mid-range cards (9-10) off-suit rarely help — they can't win the trick and they're not truly expendable")
-
-            if tier == "A" and follows == "F" and is_trump == "N" and is_long == "S":
-                return ("TIMING", "Playing Ace from a short suit early can backfire — you lose control of that suit permanently")
-
-            if tier == "X" and follows == "F" and is_trump == "T":
-                return ("RISK", "Playing your lowest trump (2-4) when following trump barely contributes — opponents' mid trumps beat it easily")
-
-        return ("", "")
+        """Gather state and delegate to renderer."""
+        self._refresh_insights()
+
+        bg_agent = self._bg_agent
+        episodes = bg_agent.episodes_trained if bg_agent else self.discovery.episodes_trained
+
+        render_state = {
+            "paused": self.paused,
+            "game_num": self.game_num,
+            "shota_num": self.shota_num,
+            "speed": self.speed,
+            "team_scores": self.team_scores,
+            "shota_scores": self.shota_scores,
+            "hands": self._hands,
+            "current_trick_cards": self.current_trick_cards,
+            "last_winner": self.last_winner,
+            "compute_time": self._accumulated_compute + self._get_compute_time(),
+            "episodes": episodes,
+            "seeks_achieved": self.seeks_achieved,
+            "bids_met": self.bids_met,
+            "bids_failed": self.bids_failed,
+            "epsilon": self.discovery.epsilon,
+            "opponent_stage": self._opponent_stage,
+            "milestones_list": self._milestones_list,
+            "insights": self._cached_insights,
+            "disc_scroll": self._disc_scroll_offset,
+            "insight_scroll": self._insight_scroll_offset,
+        }
+
+        self._mode_btn_rect, self._reset_btn_rect = self.renderer.render_frame(render_state)
 
 
 def main():
     app = WistDiscoveryWatcher()
     app.run()
+
 
 if __name__ == "__main__":
     main()

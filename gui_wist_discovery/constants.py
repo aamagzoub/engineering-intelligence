@@ -1,5 +1,8 @@
 """Constants for Wist Discovery Watcher."""
 
+from intelligence.core.cards.suit import Suit
+from intelligence.core.cards.rank import Rank
+
 SCREEN_WIDTH = 1380
 SCREEN_HEIGHT = 800
 FPS = 60
@@ -39,3 +42,12 @@ PLAYER_COLORS = {
 
 TRICK_DELAY_MS = 1500
 SHOTA_DELAY_MS = 2000
+
+
+# Card ordering for sorting and display.
+SUIT_ORDER = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
+RANK_ORDER = {
+    Rank.TWO: 2, Rank.THREE: 3, Rank.FOUR: 4, Rank.FIVE: 5, Rank.SIX: 6,
+    Rank.SEVEN: 7, Rank.EIGHT: 8, Rank.NINE: 9, Rank.TEN: 10,
+    Rank.JACK: 11, Rank.QUEEN: 12, Rank.KING: 13, Rank.ACE: 14,
+}

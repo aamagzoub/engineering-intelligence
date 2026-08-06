@@ -21,6 +21,8 @@ pyinstaller --onefile --windowed --name "WistDiscovery" ^
     --add-data "gui_wist;gui_wist" ^
     --hidden-import "pygame" ^
     --hidden-import "agents.wist_discovery.discovery_agent" ^
+    --hidden-import "agents.wist_discovery.neural_net" ^
+    --hidden-import "agents.wist_discovery.mcts" ^
     --hidden-import "environments.wist" ^
     --hidden-import "environments.wist.environment" ^
     --hidden-import "environments.wist.round" ^
@@ -31,6 +33,12 @@ pyinstaller --onefile --windowed --name "WistDiscovery" ^
     --hidden-import "environments.wist.trick" ^
     --hidden-import "intelligence.core" ^
     --hidden-import "intelligence.core.cards" ^
+    --hidden-import "gui_wist_discovery.game_engine" ^
+    --hidden-import "gui_wist_discovery.training" ^
+    --hidden-import "gui_wist_discovery.milestones" ^
+    --hidden-import "gui_wist_discovery.insights" ^
+    --hidden-import "gui_wist_discovery.renderer" ^
+    --hidden-import "gui_wist_discovery.constants" ^
     gui_wist_discovery\main.py
 
 echo.
