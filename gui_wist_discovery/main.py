@@ -401,29 +401,30 @@ class WistDiscoveryWatcher:
     # ─── Background Training ────────────────────────────────────────────────────
 
     def _bg_train(self):
-        """Run background self-play training."""
-        agent = create_training_clone(self.discovery)
-        opp = create_opponent(self.discovery, self._opponent_stage,
-                              self._frozen_snapshot, self._best_snapshot)
-        self._bg_agent = agent
+        """Run continuous background self-play training."""
+        while self.running:
+            agent = create_training_clone(self.discovery)
+            opp = create_opponent(self.discovery, self._opponent_stage,
+                                  self._frozen_snapshot, self._best_snapshot)
+            self._bg_agent = agent
 
-        def milestone_cb(tt, bid, playing_team, bid_met, scores):
-            context = {
-                "team_tricks": tt, "scores": scores,
-                "playing_team": playing_team, "bid_met": bid_met,
-                "episodes": agent.episodes_trained,
-                "wist_win_history": self._wist_win_history,
-            }
-            auto_discover(self._auto_stats, context, self._trigger)
+            def milestone_cb(tt, bid, playing_team, bid_met, scores):
+                context = {
+                    "team_tricks": tt, "scores": scores,
+                    "playing_team": playing_team, "bid_met": bid_met,
+                    "episodes": agent.episodes_trained,
+                    "wist_win_history": self._wist_win_history,
+                }
+                auto_discover(self._auto_stats, context, self._trigger)
 
-        win_history = run_background_training(agent, opp, num_shotas=10000,
-                                              milestone_callback=milestone_cb)
-        self._wist_win_history.extend(win_history)
+            win_history = run_background_training(agent, opp, num_shotas=10000,
+                                                  milestone_callback=milestone_cb)
+            self._wist_win_history.extend(win_history)
 
-        # Sync back.
-        self.discovery.episodes_trained = agent.episodes_trained
-        self.discovery.total_updates = agent.total_updates
-        self.discovery.epsilon = agent.epsilon
+            # Sync back.
+            self.discovery.episodes_trained = agent.episodes_trained
+            self.discovery.total_updates = agent.total_updates
+            self.discovery.epsilon = agent.epsilon
 
         self._bg_active = False
         self._bg_agent = None
