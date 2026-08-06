@@ -210,11 +210,19 @@ class WistDiscoveryWatcher:
         self.last_action_time = pygame.time.get_ticks()
 
     def _play_one_trick(self):
-        """Play a single trick."""
+        """Play a single trick with MCTS look-ahead for visible games."""
         r = self._round
         lid = r.next_leading_player_id
         r.state.current_trick = Trick(leading_player_id=lid)
         play_order = [(lid + i) % 4 for i in range(4)]
+
+        # Set MCTS context for visible play (smarter decisions).
+        self.discovery._mcts_context = {
+            'round_state': r.state,
+            'players': self._players,
+            'trump_suit': r.state.trump_suit,
+            'num_simulations': 50,
+        }
 
         trick_cards = []
         for pid in play_order:
@@ -222,6 +230,9 @@ class WistDiscoveryWatcher:
             action = self._agents[pid].act(obs)
             self._env.apply_action(action)
             trick_cards.append((pid, action.card))
+
+        # Clear MCTS context after trick.
+        self.discovery._mcts_context = None
 
         completed = r.state.current_trick
         winner = trick_winner(completed, r.state.trump_suit)
