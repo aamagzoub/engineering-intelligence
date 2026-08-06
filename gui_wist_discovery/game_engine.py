@@ -28,6 +28,8 @@ def try_setup_shota(agents, shota_num, game_num, max_attempts=10):
     or (None, None, None, log_messages) if all attempts fail.
     """
     logs = []
+    discovery = agents[0]  # Main learning agent.
+
     for _ in range(max_attempts):
         players = create_standard_players()
         agents_list = [agents[0], agents[1], agents[0], agents[1]]
@@ -35,6 +37,7 @@ def try_setup_shota(agents, shota_num, game_num, max_attempts=10):
         rnd.deal()
 
         if rnd.has_card_based_dak():
+            discovery.reset_episode()
             logs.append("  Dak — re-dealing")
             continue
 
@@ -47,10 +50,12 @@ def try_setup_shota(agents, shota_num, game_num, max_attempts=10):
                 sahib_al_qabool_id=qabool_id, is_first_shota=is_first,
             )
         except (ValueError, Exception):
+            discovery.reset_episode()
             logs.append("  Bidding error — re-dealing")
             continue
 
         if result.is_dak:
+            discovery.reset_episode()
             logs.append("  Pass Dak — re-dealing")
             continue
 

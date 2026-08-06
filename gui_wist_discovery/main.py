@@ -176,7 +176,8 @@ class WistDiscoveryWatcher:
             self._log(msg)
 
         if players is None:
-            # All attempts failed.
+            # All attempts failed — reset agent episode memory.
+            self.discovery.reset_episode()
             self.shota_scores.append({0: 0, 1: 0})
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
@@ -408,11 +409,14 @@ class WistDiscoveryWatcher:
                                   self._frozen_snapshot, self._best_snapshot)
             self._bg_agent = agent
 
-            def milestone_cb(tt, bid, playing_team, bid_met, scores):
+            # Bind agent to avoid closure issues across loop iterations.
+            _agent = agent
+
+            def milestone_cb(tt, bid, playing_team, bid_met, scores, _a=_agent):
                 context = {
                     "team_tricks": tt, "scores": scores,
                     "playing_team": playing_team, "bid_met": bid_met,
-                    "episodes": agent.episodes_trained,
+                    "episodes": _a.episodes_trained,
                     "wist_win_history": self._wist_win_history,
                 }
                 auto_discover(self._auto_stats, context, self._trigger)
@@ -421,10 +425,22 @@ class WistDiscoveryWatcher:
                                                   milestone_callback=milestone_cb)
             self._wist_win_history.extend(win_history)
 
+            # Cap win history to avoid unbounded memory growth.
+            if len(self._wist_win_history) > 5000:
+                self._wist_win_history = self._wist_win_history[-5000:]
+
             # Sync back.
             self.discovery.episodes_trained = agent.episodes_trained
             self.discovery.total_updates = agent.total_updates
             self.discovery.epsilon = agent.epsilon
+
+            # Auto-save every batch to prevent data loss on crash.
+            try:
+                self.discovery.save(self.model_path)
+                save_milestones(self._milestones_achieved, self._milestones_list,
+                                self._accumulated_compute + self._get_compute_time())
+            except Exception:
+                pass
 
         self._bg_active = False
         self._bg_agent = None
