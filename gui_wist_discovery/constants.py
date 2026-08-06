@@ -1,6 +1,6 @@
 """Constants for Wist Discovery Watcher."""
 
-SCREEN_WIDTH = 1200
+SCREEN_WIDTH = 1380
 SCREEN_HEIGHT = 800
 FPS = 60
 TITLE = "Sudanese Wist -- Discovery Lab"

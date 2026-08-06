@@ -378,7 +378,6 @@ class WistDiscoveryWatcher:
                 opp.epsilon = agent.epsilon
             elif roll < 0.8 and self._frozen_snapshot:
                 # 30% frozen weak snapshot.
-                from collections import defaultdict
                 opp.play_q = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["play_q"])
                 opp.play_q2 = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["play_q2"])
                 opp.bid_q = defaultdict(lambda: defaultdict(float), self._frozen_snapshot["bid_q"])
@@ -390,23 +389,26 @@ class WistDiscoveryWatcher:
             return opp
 
         else:
-            # Stage 3: adversarial (frozen best).
+            # Stage 3: adversarial (60% frozen best + 20% current + 20% random/weak).
             opp = WistDiscoveryAgent(training=False)
-            if self._best_snapshot and random.random() < 0.7:
-                # 70% frozen best snapshot.
-                from collections import defaultdict
+            roll = random.random()
+            if self._best_snapshot and roll < 0.6:
+                # 60% frozen best snapshot.
                 opp.play_q = defaultdict(lambda: defaultdict(float), self._best_snapshot["play_q"])
                 opp.play_q2 = defaultdict(lambda: defaultdict(float), self._best_snapshot["play_q2"])
                 opp.bid_q = defaultdict(lambda: defaultdict(float), self._best_snapshot["bid_q"])
                 opp.bid_q2 = defaultdict(lambda: defaultdict(float), self._best_snapshot["bid_q2"])
                 opp.epsilon = 0.05
-            else:
-                # 30% current brain.
+            elif roll < 0.8:
+                # 20% current brain.
                 opp.play_q = agent.play_q
                 opp.play_q2 = agent.play_q2
                 opp.bid_q = agent.bid_q
                 opp.bid_q2 = agent.bid_q2
                 opp.epsilon = agent.epsilon
+            else:
+                # 20% random/weak — allows metrics to push past ceiling.
+                opp.epsilon = 0.8
             return opp
 
     def _bg_train(self):
@@ -852,9 +854,9 @@ class WistDiscoveryWatcher:
         if t0 == 13:
             stats["total_seeks"] += 1
 
-        # Don't trigger too often — minimum 500 episodes between auto-discoveries.
+        # Don't trigger too often — minimum 200 episodes between auto-discoveries.
         episodes = self.discovery.episodes_trained
-        if episodes - stats["last_discovery_episode"] < 500:
+        if episodes - stats["last_discovery_episode"] < 200:
             return
 
         # Need at least 20 data points.
@@ -870,8 +872,8 @@ class WistDiscoveryWatcher:
         win_rate = sum(1 for s in recent_20 if s > 0) / 20 * 100
         bid_acc = sum(recent_bids) / max(len(recent_bids), 1) * 100
 
-        # --- Score threshold crossings ---
-        score_thresholds = [2, 4, 6, 8, 10, 12, 15]
+        # --- Score threshold crossings (adjusted for correct bid ceiling rules) ---
+        score_thresholds = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12]
         for threshold in score_thresholds:
             key = f"avg_score_{threshold}"
             if key not in stats["thresholds_crossed"] and avg_score >= threshold:
@@ -882,8 +884,8 @@ class WistDiscoveryWatcher:
                     f"(actual: {avg_score:.1f})")
                 return
 
-        # --- Win rate threshold crossings ---
-        wr_thresholds = [50, 60, 70, 80, 90]
+        # --- Win rate threshold crossings (finer increments) ---
+        wr_thresholds = [45, 50, 55, 60, 65, 70, 75, 80, 85, 90]
         for threshold in wr_thresholds:
             key = f"win_rate_{threshold}"
             if key not in stats["thresholds_crossed"] and win_rate >= threshold:
@@ -894,8 +896,8 @@ class WistDiscoveryWatcher:
                     f"(actual: {win_rate:.0f}%)")
                 return
 
-        # --- Bid accuracy threshold crossings ---
-        bid_thresholds = [60, 70, 80, 90]
+        # --- Bid accuracy threshold crossings (finer increments) ---
+        bid_thresholds = [50, 55, 60, 65, 70, 75, 80, 85, 90]
         for threshold in bid_thresholds:
             key = f"bid_acc_{threshold}"
             if key not in stats["thresholds_crossed"] and bid_acc >= threshold:
@@ -906,8 +908,8 @@ class WistDiscoveryWatcher:
                     f"(actual: {bid_acc:.0f}%)")
                 return
 
-        # --- Average tricks threshold crossings ---
-        trick_thresholds = [7, 8, 9, 10, 11, 12]
+        # --- Average tricks threshold crossings (finer increments) ---
+        trick_thresholds = [6, 7, 8, 9, 10, 11, 12]
         for threshold in trick_thresholds:
             key = f"avg_tricks_{threshold}"
             if key not in stats["thresholds_crossed"] and avg_tricks >= threshold:
@@ -1048,9 +1050,18 @@ class WistDiscoveryWatcher:
                 if self._reset_btn_rect and self._reset_btn_rect.collidepoint(event.pos):
                     self._reset_brain()
             elif event.type == pygame.MOUSEWHEEL:
-                self._disc_scroll_offset = getattr(self, '_disc_scroll_offset', 0)
-                self._disc_scroll_offset -= event.y * 1
-                self._disc_scroll_offset = max(0, self._disc_scroll_offset)
+                mx, my = pygame.mouse.get_pos()
+                # Right panel (discoveries) — right side of screen.
+                right_panel_x = SCREEN_WIDTH - 290
+                if mx >= right_panel_x:
+                    self._disc_scroll_offset = getattr(self, '_disc_scroll_offset', 0)
+                    self._disc_scroll_offset -= event.y * 1
+                    self._disc_scroll_offset = max(0, self._disc_scroll_offset)
+                # Left panel (insights) — left 230px.
+                elif mx <= 230:
+                    self._insight_scroll_offset = getattr(self, '_insight_scroll_offset', 0)
+                    self._insight_scroll_offset -= event.y * 1
+                    self._insight_scroll_offset = max(0, self._insight_scroll_offset)
 
     def _on_continue(self):
         if self.state == "scoring":
@@ -1125,14 +1136,20 @@ class WistDiscoveryWatcher:
     def _render(self):
         self.screen.fill(BG_DARK)
 
-        # Table area.
-        table = pygame.Rect(20, 60, SCREEN_WIDTH - 320, SCREEN_HEIGHT - 80)
+        # Left panel for strategic insights.
+        left_panel_w = 230
+
+        # Table area (shifted right to make room for left panel).
+        table = pygame.Rect(left_panel_w + 10, 60, SCREEN_WIDTH - left_panel_w - 320, SCREEN_HEIGHT - 80)
         pygame.draw.rect(self.screen, TABLE_FELT, table, border_radius=12)
         pygame.draw.rect(self.screen, TABLE_BORDER, table, width=2, border_radius=12)
 
         # Title.
         t = self.fonts["title"].render(TITLE, True, TEXT_WHITE)
-        self.screen.blit(t, (25, 15))
+        self.screen.blit(t, (left_panel_w + 15, 15))
+
+        # Render left panel (strategic insights).
+        self._render_insights_panel(left_panel_w)
 
         # Timer — left-aligned above scoreboard, vertically centered in the header space.
         panel_x = SCREEN_WIDTH - 290
@@ -1233,35 +1250,34 @@ class WistDiscoveryWatcher:
         self.screen.blit(t, t.get_rect(center=btn.center))
 
     def _render_mode_btn(self, table):
-        """Stop/Resume toggle — top-right."""
-        btn = pygame.Rect(table.right - 115, table.top + 10, 105, 28)
+        """Stop/Resume — top-right header, aligned with right panel edge."""
+        btn_w = 70
+        btn_h = 24
+        btn_x = SCREEN_WIDTH - 10 - btn_w - 95  # Left of Reset button.
+        btn_y = (60 - btn_h) // 2
+        btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
         self._mode_btn_rect = btn
         hover = btn.collidepoint(pygame.mouse.get_pos())
-        if self.paused:
-            label = "Resume"
-            bg = (30, 140, 30) if not hover else (50, 180, 50)
-        else:
-            label = "Stop"
-            bg = (140, 40, 40) if not hover else (180, 60, 60)
-        pygame.draw.rect(self.screen, bg, btn, border_radius=6)
-        if hover:
-            pygame.draw.rect(self.screen, (200, 200, 200), btn, width=1, border_radius=6)
-        t = self.fonts["small"].render(label, True, (255, 255, 255))
+        label = "Resume" if self.paused else "Stop"
+        bg = (240, 240, 240) if not hover else (255, 255, 255)
+        pygame.draw.rect(self.screen, bg, btn, border_radius=5)
+        btn_font = pygame.font.SysFont("Segoe UI", 11)
+        t = btn_font.render(label, True, (180, 30, 30))
         self.screen.blit(t, t.get_rect(center=btn.center))
-        status = "Stopped" if self.paused else "Running"
-        mode_t = self.fonts["small"].render(status, True, TEXT_GOLD)
-        self.screen.blit(mode_t, mode_t.get_rect(centerx=btn.centerx, y=btn.bottom + 3))
 
     def _render_reset_btn(self, table):
-        """Reset Brain — top-left, same as Hearts."""
-        btn = pygame.Rect(table.left + 10, table.top + 10, 110, 28)
+        """RESET Brain — top-right header, flush with right panel edge."""
+        btn_w = 90
+        btn_h = 24
+        btn_x = SCREEN_WIDTH - 10 - btn_w  # Right edge aligned with panel.
+        btn_y = (60 - btn_h) // 2
+        btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
         self._reset_btn_rect = btn
         hover = btn.collidepoint(pygame.mouse.get_pos())
-        bg = (140, 40, 40) if hover else (100, 30, 30)
-        pygame.draw.rect(self.screen, bg, btn, border_radius=6)
-        if hover:
-            pygame.draw.rect(self.screen, (200, 200, 200), btn, width=1, border_radius=6)
-        t = self.fonts["small"].render("Reset Brain", True, (255, 255, 255))
+        bg = (180, 30, 30) if not hover else (210, 50, 50)
+        pygame.draw.rect(self.screen, bg, btn, border_radius=5)
+        btn_font = pygame.font.SysFont("Segoe UI", 11, bold=True)
+        t = btn_font.render("RESET Brain", True, (255, 230, 50))
         self.screen.blit(t, t.get_rect(center=btn.center))
 
     def _render_panel(self):
@@ -1411,6 +1427,280 @@ class WistDiscoveryWatcher:
 
         # Reset clip.
         self.screen.set_clip(None)
+
+
+    def _render_insights_panel(self, panel_w: int):
+        """Render left panel with strategic insights derived from Q-table analysis."""
+        panel_rect = pygame.Rect(5, 60, panel_w - 10, SCREEN_HEIGHT - 80)
+        pygame.draw.rect(self.screen, PANEL_DARK, panel_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (20, 70, 50), panel_rect, width=1, border_radius=10)
+
+        self.screen.set_clip(pygame.Rect(10, 65, panel_w - 20, SCREEN_HEIGHT - 90))
+
+        y = panel_rect.top + 10
+        title_surf = self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD)
+        self.screen.blit(title_surf, (15, y))
+        y += 22
+
+        # Generate insights periodically (cache to avoid recomputing every frame).
+        if not hasattr(self, '_cached_insights') or not self._cached_insights:
+            self._cached_insights = []
+            self._last_insight_episode = 0
+
+        # Refresh every 2000 episodes.
+        current_ep = self.discovery.episodes_trained
+        bg_agent = getattr(self, '_bg_agent', None)
+        if bg_agent:
+            current_ep = max(current_ep, bg_agent.episodes_trained)
+        if current_ep - getattr(self, '_last_insight_episode', 0) >= 2000 or not self._cached_insights:
+            self._cached_insights = self._generate_insights()
+            self._last_insight_episode = current_ep
+
+        if not self._cached_insights:
+            self.screen.blit(self.fonts["medium"].render("Training...", True, TEXT_DIM), (15, y))
+            self.screen.set_clip(None)
+            return
+
+        # Scrolling (same logic as discoveries).
+        total = len(self._cached_insights)
+        insight_scroll = getattr(self, '_insight_scroll_offset', 0)
+        available_h = panel_rect.bottom - y - 15
+        items_fit = max(1, available_h // 70)
+        max_scroll = max(0, total - items_fit)
+        insight_scroll = max(0, min(insight_scroll, max_scroll))
+        self._insight_scroll_offset = insight_scroll
+
+        # Reversed: newest first.
+        reversed_list = list(reversed(self._cached_insights))
+        start_idx = insight_scroll
+        text_w = panel_w - 35
+
+        for i in range(start_idx, total):
+            insight = reversed_list[i]
+            num = total - i
+            is_latest = (i == 0)
+
+            if y + 16 > panel_rect.bottom - 15:
+                break
+
+            # Remove bullet point if present.
+            text = insight.lstrip("• ").strip()
+
+            # Split into category and description.
+            if ":" in text:
+                cat_part = text.split(":")[0] + ":"
+                desc_part = text.split(":", 1)[1].strip()
+            else:
+                cat_part = ""
+                desc_part = text
+
+            # Render category in white bold, description in color.
+            desc_color = (255, 220, 130) if is_latest else (180, 220, 180)
+            cat_color = (255, 255, 255)
+            desc_font = self.fonts["medium"]
+            cat_font = pygame.font.SysFont("Segoe UI", 13, bold=True)
+
+            # Build the full line with number.
+            prefix = f"{num}. {cat_part} " if cat_part else f"{num}. "
+            full_text = prefix + desc_part
+
+            # Render with word wrap — category part white bold, rest colored.
+            prefix_w = cat_font.size(prefix)[0]
+            words = full_text.split()
+            line = ""
+            first_line = True
+            for w in words:
+                test = line + " " + w if line else w
+                if desc_font.size(test)[0] < text_w:
+                    line = test
+                else:
+                    if y > panel_rect.bottom - 20:
+                        break
+                    if first_line and cat_part:
+                        self.screen.blit(cat_font.render(prefix, True, cat_color), (15, y))
+                        rest = line[len(prefix):]
+                        if rest:
+                            self.screen.blit(desc_font.render(rest, True, desc_color), (15 + prefix_w, y))
+                        first_line = False
+                    else:
+                        self.screen.blit(desc_font.render(line, True, desc_color), (15, y))
+                    y += 16
+                    line = w
+            if line and y <= panel_rect.bottom - 20:
+                if first_line and cat_part:
+                    self.screen.blit(cat_font.render(prefix, True, cat_color), (15, y))
+                    rest = line[len(prefix):]
+                    if rest:
+                        self.screen.blit(desc_font.render(rest, True, desc_color), (15 + prefix_w, y))
+                else:
+                    self.screen.blit(desc_font.render(line, True, desc_color), (15, y))
+                y += 16
+            y += 8  # Gap between insights.
+
+            if y > panel_rect.bottom - 15:
+                break
+
+        self.screen.set_clip(None)
+
+    def _generate_insights(self) -> list:
+        """Analyze Q-tables and generate human-readable strategic insights with categories."""
+        insights = []
+        agent = self.discovery
+
+        if agent.episodes_trained < 5000:
+            return ["Still learning basics..."]
+
+        play_q = agent.play_q
+
+        # Analyze play Q-table for strong patterns.
+        action_avg = defaultdict(list)
+        for state, actions in list(play_q.items())[:3000]:
+            for action_key, q_val in actions.items():
+                if abs(q_val) > 0.1:
+                    action_avg[action_key].append(q_val)
+
+        # Build insights from action patterns.
+        for action_key, values in action_avg.items():
+            if len(values) < 10:
+                continue
+            avg = sum(values) / len(values)
+            if abs(avg) < 0.2:
+                continue
+
+            cat, desc = self._categorize_insight(action_key, avg)
+            if cat and desc:
+                insights.append(f"{cat}: {desc}")
+
+        # Bid insights.
+        bid_q = agent.bid_q
+        for state, actions in list(bid_q.items())[:500]:
+            for action_key, q_val in actions.items():
+                if action_key == "PASS" and q_val > 0.4:
+                    insights.append("BID: When your hand is weak, passing is smarter than overbidding — let the opponents take the risk")
+                    break
+                if action_key.startswith("B") and q_val > 0.4:
+                    val = int(action_key[1:])
+                    if val == 7:
+                        insights.append("UNDERBID: Bidding 7 (the minimum) is the safest bet — easy to meet and hard to fail")
+                    elif val <= 8:
+                        insights.append(f"BID: Bidding {val} is a solid conservative choice — promise less, deliver more")
+                    elif val >= 10:
+                        insights.append(f"RISK: Bidding {val} requires a powerful hand — only do this with many trumps and high cards")
+                    break
+
+        # Performance-based strategy insights.
+        if hasattr(self, '_auto_stats') and self._auto_stats:
+            stats = self._auto_stats
+            if len(stats.get("scores", [])) >= 20:
+                recent = list(stats["scores"])[-20:]
+                avg_score = sum(recent) / 20
+                if avg_score > 6:
+                    insights.append("DOMINATION: The agent has learned to consistently crush opponents — strong bidding combined with precise card play")
+                elif avg_score > 3:
+                    insights.append("ADAPT: The agent found a winning formula — bid carefully and play trumps at the right moment")
+
+            if stats.get("total_seeks", 0) >= 5:
+                insights.append("SEEK: Going for all 13 tricks is possible when you hold many high trumps — the agent actively pursues this when the hand is strong enough")
+
+        # Deduplicate exact same text only (not by category).
+        seen = set()
+        unique = []
+        for ins in insights:
+            if ins not in seen:
+                seen.add(ins)
+                unique.append(ins)
+
+        return unique
+
+    def _categorize_insight(self, action_key: str, avg_q: float) -> tuple:
+        """Map an action encoding to a category + human-readable strategy tip."""
+        if len(action_key) < 4:
+            return ("", "")
+
+        tier = action_key[0]   # A/H/M/L
+        follows = action_key[1] if len(action_key) > 1 else ""  # F/O
+        is_trump = action_key[2] if len(action_key) > 2 else ""  # T/N
+        is_long = action_key[3] if len(action_key) > 3 else ""  # L/S
+        creates_void = action_key[4] if len(action_key) > 4 else ""  # V/K
+
+        positive = avg_q > 0
+
+        # === POSITIVE STRATEGIES (things that work) ===
+        if positive:
+            # WHIP patterns.
+            if is_trump == "T" and follows == "O":
+                if tier == "A":
+                    return ("WHIP", "When void in the led suit, trump with your Ace — it's unbeatable and guarantees the trick")
+                if tier == "H":
+                    return ("WHIP", "When void in the led suit, use a high trump to steal the trick from opponents")
+                if tier == "L":
+                    return ("WHIP", "When void in the led suit, play a small trump — you win cheaply and save your big trumps for later")
+                return ("WHIP", "Trumping when you have no cards of the led suit is a reliable way to steal tricks")
+
+            # VOID creation.
+            if creates_void == "V":
+                if is_trump == "N":
+                    return ("VOID", "Play your last card of a suit to create a void — next time that suit is led, you can trump it")
+                return ("VOID", "Getting rid of your last card in a suit opens up future trumping opportunities")
+
+            # ACE plays.
+            if tier == "A" and follows == "F":
+                if is_trump == "T":
+                    return ("FLUSH", "Leading Ace of trump forces everyone to follow with their trumps — you thin out their trump supply")
+                return ("CONTROL", "Play your Ace when following suit — it wins guaranteed and you take the lead for the next trick")
+
+            # HIGH card following suit.
+            if tier == "H" and follows == "F":
+                if is_trump == "T":
+                    return ("TRUMP", "Playing a high trump when following suit secures the trick — opponents can't beat it without a higher trump")
+                if is_long == "L":
+                    return ("PRESSURE", "Play high from your longest suit — it forces opponents to use their best cards or lose the trick")
+                return ("BLOCK", "Play a high card when following suit to contest the trick — don't let opponents win cheaply")
+
+            # LOW card following suit.
+            if tier == "L" and follows == "F":
+                if is_trump == "T":
+                    return ("SAVING", "Play low trump when you must follow trump — save your King and Ace for tricks that matter more")
+                return ("DUCK", "When you can't beat what's on the table, play your lowest card — save high cards for tricks you can actually win")
+
+            # MID card following.
+            if tier == "M" and follows == "F":
+                if is_trump == "T":
+                    return ("TIMING", "Mid-range trump following suit is a safe play — it might win without spending your best card")
+                return ("PROBE", "A mid-range card following suit tests the waters — see what opponents are willing to spend")
+
+            # OFF-SUIT low (dumping).
+            if tier == "L" and follows == "O" and is_trump == "N":
+                return ("DUMP", "When void in the led suit and choosing not to trump, throw your lowest worthless card — clean up your hand")
+
+            # LEAD from long suit.
+            if is_long == "L" and tier == "H":
+                return ("BLEED", "Lead high from your longest suit — opponents will run out of that suit faster than you, giving you control")
+            if is_long == "L" and tier == "M":
+                return ("PROBE", "Lead a mid card from your long suit to test who still has cards in it — gather information safely")
+
+            # HIGH off-suit.
+            if tier == "H" and follows == "O" and is_trump == "N":
+                return ("SACRIFICE", "Sometimes playing a high card off-suit sets up your partner — they might trump and win")
+
+        # === NEGATIVE STRATEGIES (things that don't work) ===
+        else:
+            if tier == "A" and follows == "O" and is_trump == "N":
+                return ("WASTE", "Don't play your Ace off-suit when you can't follow — it's your strongest card wasted on a trick you can't win")
+
+            if tier == "H" and follows == "O" and is_trump == "N":
+                return ("WASTE", "Playing King or Queen off-suit when void is wasteful — those cards could win tricks in their own suit later")
+
+            if tier == "H" and follows == "F" and is_trump == "N":
+                return ("TRAP", "Be careful playing high when following — if someone behind you has the Ace or can trump, your King is wasted")
+
+            if tier == "M" and follows == "O" and is_trump == "N":
+                return ("RISK", "Mid-range off-suit cards rarely help — they can't win the trick and they don't save anything valuable")
+
+            if tier == "A" and follows == "F" and is_trump == "N" and is_long == "S":
+                return ("TIMING", "Playing Ace from a short suit early can backfire — you might need that suit control later in the game")
+
+        return ("", "")
 
 
 def main():

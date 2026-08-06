@@ -77,12 +77,19 @@ Wist exercises the hardest class of decision problems:
 
 ### AI Approach
 
-The Wist agent uses **Double Q-Learning with TD(λ) eligibility traces**:
-- Learns from every trick (not just end-of-round)
-- Tracks all 52 cards played for informed decisions
-- Models opponent void/trump patterns
-- Prioritized experience replay for rare but important events
-- Trained through curriculum learning: 15,000+ games progressing from random to strategic opponents
+The Wist agent uses an **Advanced RL Architecture** (domain-agnostic, transferable):
+- Double Q-Learning with eligibility traces (TD(λ))
+- Per-card neural network evaluation (CardEvaluator — no information loss)
+- Prioritized experience replay with TD-error weighting
+- Full 13-trick sequence memory
+- Card counting (tracks suits played globally)
+- Opponent void modeling
+- 3-stage opponent curriculum (self-play → mixed → adversarial)
+- Meta-learning with automatic hyperparameter adjustment
+- Curiosity bonus for novel state exploration
+- Target network for stable training
+- Batch neural training for stable gradients
+- Reward normalization for domain-agnostic transfer
 
 ### Discovery Agent — What It Knows vs. Discovers
 

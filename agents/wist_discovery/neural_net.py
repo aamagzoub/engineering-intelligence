@@ -19,73 +19,103 @@ class CardEvaluator:
     """
     Neural network that evaluates a single card in context.
     
-    Input: state features (24) + card features (8) = 32 dimensions.
-    Output: single Q-value (how good is this card in this state).
-    
-    To choose a card: run all legal cards through this network,
-    pick the one with highest Q-value.
+    3 hidden layers × 128 neurons. Larger capacity for complex patterns.
+    Supports batch training for stable gradients.
     """
 
-    def __init__(self, input_size: int = 32, hidden_size: int = 64,
+    def __init__(self, input_size: int = 84, hidden_size: int = 128,
                  learning_rate: float = 0.001):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.lr = learning_rate
 
-        # Xavier initialization — 2 hidden layers for better representation.
-        scale1 = np.sqrt(2.0 / input_size)
-        scale2 = np.sqrt(2.0 / hidden_size)
-        scale3 = np.sqrt(2.0 / hidden_size)
+        # Xavier initialization — 3 hidden layers.
+        s1 = np.sqrt(2.0 / input_size)
+        s2 = np.sqrt(2.0 / hidden_size)
+        s3 = np.sqrt(2.0 / hidden_size)
+        s4 = np.sqrt(2.0 / hidden_size)
 
-        self.w1 = np.random.randn(input_size, hidden_size) * scale1
+        self.w1 = np.random.randn(input_size, hidden_size) * s1
         self.b1 = np.zeros(hidden_size)
-        self.w2 = np.random.randn(hidden_size, hidden_size) * scale2
+        self.w2 = np.random.randn(hidden_size, hidden_size) * s2
         self.b2 = np.zeros(hidden_size)
-        self.w3 = np.random.randn(hidden_size, 1) * scale3
-        self.b3 = np.zeros(1)
+        self.w3 = np.random.randn(hidden_size, hidden_size) * s3
+        self.b3 = np.zeros(hidden_size)
+        self.w4 = np.random.randn(hidden_size, 1) * s4
+        self.b4 = np.zeros(1)
+
+        # Batch training buffer.
+        self._batch_x: list = []
+        self._batch_y: list = []
+        self._batch_size = 32
 
     def predict(self, x: np.ndarray) -> float:
         """Forward pass — returns single Q-value."""
         h1 = np.maximum(0, x @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
-        return float((h2 @ self.w3 + self.b3)[0])
+        h3 = np.maximum(0, h2 @ self.w3 + self.b3)
+        return float((h3 @ self.w4 + self.b4)[0])
 
     def predict_batch(self, batch: np.ndarray) -> np.ndarray:
-        """Evaluate multiple (state+card) feature vectors at once."""
+        """Evaluate multiple feature vectors at once."""
         h1 = np.maximum(0, batch @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
-        return (h2 @ self.w3 + self.b3).flatten()
+        h3 = np.maximum(0, h2 @ self.w3 + self.b3)
+        return (h3 @ self.w4 + self.b4).flatten()
 
     def update(self, x: np.ndarray, target_value: float):
-        """Single-sample SGD update."""
-        # Forward.
-        h1 = np.maximum(0, x @ self.w1 + self.b1)
+        """Accumulate sample for batch update. Flushes when batch is full."""
+        self._batch_x.append(x.copy())
+        self._batch_y.append(target_value)
+        if len(self._batch_x) >= self._batch_size:
+            self._flush_batch()
+
+    def _flush_batch(self):
+        """Train on accumulated batch — more stable gradients."""
+        if not self._batch_x:
+            return
+
+        batch_x = np.array(self._batch_x)
+        batch_y = np.array(self._batch_y)
+        n = len(batch_x)
+
+        # Forward pass (batch).
+        h1 = np.maximum(0, batch_x @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
-        q = float((h2 @ self.w3 + self.b3)[0])
+        h3 = np.maximum(0, h2 @ self.w3 + self.b3)
+        predictions = (h3 @ self.w4 + self.b4).flatten()
 
         # Error.
-        error = target_value - q
-        d_out = np.array([-2 * error])
+        errors = batch_y - predictions  # (n,)
 
-        # Backprop through layer 3.
-        d_w3 = np.outer(h2, d_out)
-        d_b3 = d_out
-        d_h2 = (d_out @ self.w3.T).flatten()
-        d_h2[h2 <= 0] = 0  # ReLU grad.
+        # Backprop (averaged over batch).
+        d_out = (-2.0 / n) * errors.reshape(-1, 1)  # (n, 1)
 
-        # Backprop through layer 2.
-        d_w2 = np.outer(h1, d_h2)
-        d_b2 = d_h2
+        # Layer 4.
+        d_w4 = h3.T @ d_out  # (hidden, 1)
+        d_b4 = d_out.sum(axis=0)
+        d_h3 = d_out @ self.w4.T  # (n, hidden)
+        d_h3[h3 <= 0] = 0
+
+        # Layer 3.
+        d_w3 = h2.T @ d_h3
+        d_b3 = d_h3.sum(axis=0)
+        d_h2 = d_h3 @ self.w3.T
+        d_h2[h2 <= 0] = 0
+
+        # Layer 2.
+        d_w2 = h1.T @ d_h2
+        d_b2 = d_h2.sum(axis=0)
         d_h1 = d_h2 @ self.w2.T
         d_h1[h1 <= 0] = 0
 
-        # Backprop through layer 1.
-        d_w1 = np.outer(x, d_h1)
-        d_b1 = d_h1
+        # Layer 1.
+        d_w1 = batch_x.T @ d_h1
+        d_b1 = d_h1.sum(axis=0)
 
-        # Gradient clipping to prevent exploding gradients.
-        max_norm = 1.0
-        for grad in [d_w1, d_w2, d_w3]:
+        # Gradient clipping.
+        max_norm = 5.0
+        for grad in [d_w1, d_w2, d_w3, d_w4]:
             norm = np.linalg.norm(grad)
             if norm > max_norm:
                 grad *= max_norm / norm
@@ -97,6 +127,25 @@ class CardEvaluator:
         self.b2 -= self.lr * d_b2
         self.w3 -= self.lr * d_w3
         self.b3 -= self.lr * d_b3
+        self.w4 -= self.lr * d_w4
+        self.b4 -= self.lr * d_b4
+
+        # Clear batch.
+        self._batch_x.clear()
+        self._batch_y.clear()
+
+    def copy(self) -> "CardEvaluator":
+        """Create a frozen copy (for target network)."""
+        clone = CardEvaluator(self.input_size, self.hidden_size, self.lr)
+        clone.w1 = self.w1.copy()
+        clone.b1 = self.b1.copy()
+        clone.w2 = self.w2.copy()
+        clone.b2 = self.b2.copy()
+        clone.w3 = self.w3.copy()
+        clone.b3 = self.b3.copy()
+        clone.w4 = self.w4.copy()
+        clone.b4 = self.b4.copy()
+        return clone
 
         return error ** 2
 
@@ -105,6 +154,7 @@ class CardEvaluator:
             "w1": self.w1.tolist(), "b1": self.b1.tolist(),
             "w2": self.w2.tolist(), "b2": self.b2.tolist(),
             "w3": self.w3.tolist(), "b3": self.b3.tolist(),
+            "w4": self.w4.tolist(), "b4": self.b4.tolist(),
             "input_size": self.input_size,
             "hidden_size": self.hidden_size, "lr": self.lr,
         }
@@ -120,6 +170,8 @@ class CardEvaluator:
         net.b2 = np.array(data["b2"])
         net.w3 = np.array(data["w3"])
         net.b3 = np.array(data["b3"])
+        net.w4 = np.array(data["w4"])
+        net.b4 = np.array(data["b4"])
         return net
 
 
@@ -277,15 +329,16 @@ def card_features(card, obs, playable_cards, rank_val_func, suit_idx_map) -> np.
     return features
 
 
-def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=None) -> np.ndarray:
+def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=None,
+                   suits_played: dict = None) -> np.ndarray:
     """
-    Extract 24 numeric state features from the observation.
+    Extract 28 numeric state features from the observation.
     
-    Combined with 8 card features = 32 total input to CardEvaluator.
+    Combined with 8 card features + 52 memory = 88 total input to CardEvaluator.
     """
     hand = obs.hand
     n_cards = len(hand)
-    features = np.zeros(24)
+    features = np.zeros(28)
 
     if rank_val_func is None:
         return features
@@ -356,7 +409,18 @@ def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=Non
     # 19. Must lead trump.
     features[18] = 1.0 if obs.must_lead_trump else 0.0
 
-    # 19-23. Reserved / padding for future features.
+    # 20-23. Cards played per suit (card counting — normalized by 13).
+    if suits_played:
+        for suit_idx in range(4):
+            features[19 + suit_idx] = suits_played.get(suit_idx, 0) / 13.0
+
+    # 24-27. Cards remaining per suit in the game (13 - played - in_hand).
+    if suits_played and suit_idx_map:
+        for suit, idx in suit_idx_map.items():
+            in_hand = sum(1 for c in hand if c.suit == suit)
+            played = suits_played.get(idx, 0)
+            remaining = max(0, 13 - played - in_hand)
+            features[23 + idx] = remaining / 13.0
 
     return features
 
