@@ -22,6 +22,7 @@ def generate_insights(agent) -> list:
     Analyze Q-tables and generate human-readable strategic insights.
 
     Returns a list of insight strings with category prefixes.
+    Generates progressively more insights as the agent learns more states.
     """
     if agent.episodes_trained < 5000:
         return ["Still learning basics..."]
@@ -30,16 +31,19 @@ def generate_insights(agent) -> list:
     play_q = agent.play_q
     bid_q = agent.bid_q
 
-    # Limit iteration for performance.
-    play_items = list(play_q.items())[:5000]
+    # Scale analysis depth with training progress.
+    q_size = len(play_q)
+    sample_size = min(q_size, 10000)
+    play_items = list(play_q.items())[:sample_size]
 
-    insights.extend(_action_insights(play_items[:3000]))
+    insights.extend(_action_insights(play_items))
     insights.extend(_phase_and_position_insights(play_items))
-    insights.extend(_score_diff_insights(play_items[:3000]))
-    insights.extend(_trump_insights(play_items[:3000]))
+    insights.extend(_score_diff_insights(play_items))
+    insights.extend(_trump_insights(play_items))
     insights.extend(_bid_insights(bid_q))
-    insights.extend(_performance_insights(agent))
-    insights.extend(_void_insights(play_items[:2000]))
+    insights.extend(_void_insights(play_items))
+    insights.extend(_combination_insights(play_items))
+    insights.extend(_evolution_insights(play_items))
 
     # Deduplicate.
     seen = set()
@@ -86,30 +90,38 @@ def _phase_and_position_insights(play_items) -> list:
                 phase_action_q[phase][action_key].append(q_val)
                 pos_action_q[pos][action_key].append(q_val)
 
-    # Phase insights.
-    phase_labels = {"1": "opening", "3": "mid-game", "5": "endgame"}
+    # Phase insights — top actions per phase.
+    phase_labels = {"1": "opening", "2": "early-mid", "3": "mid-game", "4": "late-mid", "5": "endgame"}
     for phase, label in phase_labels.items():
-        best_action, best_avg = _best_action(phase_action_q.get(phase, {}))
-        if best_action and best_avg > 0.3:
-            tier = TIER_NAMES_PLURAL.get(best_action[0], "cards")
-            trump_flag = "trump " if len(best_action) > 2 and best_action[2] == "T" else ""
-            templates = {
-                "opening": f"OPENING: In the first few tricks, playing {trump_flag}{tier} tends to set up a strong position",
-                "mid-game": f"TIMING: In the middle of the shota, {trump_flag}{tier} are the most effective plays",
-                "endgame": f"ENDGAME: In the final tricks, {trump_flag}{tier} dominate — save them for this moment",
-            }
-            insights.append(templates[label])
-
-    # Position insights.
-    pos_labels = {"0": "leading", "3": "last to play"}
-    for pos, label in pos_labels.items():
-        best_action, best_avg = _best_action(pos_action_q.get(pos, {}))
-        if best_action and best_avg > 0.3:
-            tier = TIER_NAMES_SINGULAR.get(best_action[0], "card")
-            if label == "leading":
-                insights.append(f"LEAD: When you lead the trick, starting with a {tier} works best")
+        actions_dict = phase_action_q.get(phase, {})
+        top_actions = _top_n_actions(actions_dict, n=3)
+        for rank_idx, (action, avg) in enumerate(top_actions):
+            tier = TIER_NAMES_PLURAL.get(action[0], "cards")
+            trump_flag = "trump " if len(action) > 2 and action[2] == "T" else ""
+            follows = "following" if len(action) > 1 and action[1] == "F" else "off-suit"
+            if rank_idx == 0:
+                insights.append(f"PHASE ({label}): Best play is {trump_flag}{tier} ({follows}) — Q={avg:.2f}")
             else:
-                insights.append(f"POSITION: When you play last (4th), you see everything — play the minimum {tier} needed to win")
+                insights.append(f"PHASE ({label}): Also strong: {trump_flag}{tier} ({follows}) — Q={avg:.2f}")
+
+    # Worst actions per phase (things to avoid).
+    for phase, label in phase_labels.items():
+        actions_dict = phase_action_q.get(phase, {})
+        worst_actions = _worst_n_actions(actions_dict, n=2)
+        for action, avg in worst_actions:
+            tier = TIER_NAMES_PLURAL.get(action[0], "cards")
+            trump_flag = "trump " if len(action) > 2 and action[2] == "T" else ""
+            follows = "following" if len(action) > 1 and action[1] == "F" else "off-suit"
+            insights.append(f"AVOID ({label}): Don't play {trump_flag}{tier} ({follows}) — Q={avg:.2f}")
+
+    # Position insights — all 4 positions.
+    pos_labels = {"0": "leading (1st)", "1": "2nd to play", "2": "3rd to play", "3": "last (4th)"}
+    for pos, label in pos_labels.items():
+        top_actions = _top_n_actions(pos_action_q.get(pos, {}), n=2)
+        for action, avg in top_actions:
+            tier = TIER_NAMES_SINGULAR.get(action[0], "card")
+            trump_flag = "trump " if len(action) > 2 and action[2] == "T" else ""
+            insights.append(f"POSITION ({label}): Play {trump_flag}{tier} — Q={avg:.2f}")
 
     return insights
 
@@ -119,6 +131,7 @@ def _score_diff_insights(play_items) -> list:
     insights = []
     ahead_actions = defaultdict(list)
     behind_actions = defaultdict(list)
+    tied_actions = defaultdict(list)
 
     for state, actions in play_items:
         if len(state) < 7:
@@ -130,24 +143,31 @@ def _score_diff_insights(play_items) -> list:
                     ahead_actions[action_key].append(q_val)
                 elif score_flag == "B":
                     behind_actions[action_key].append(q_val)
+                elif score_flag == "A":
+                    ahead_actions[action_key].append(q_val)
+                elif score_flag == "T":
+                    tied_actions[action_key].append(q_val)
 
-    for a, vals in ahead_actions.items():
-        if len(vals) >= 10:
-            avg = sum(vals) / len(vals)
-            if avg > 0.4:
-                tier = TIER_NAMES_PLURAL.get(a[0], "cards")
-                trump = "trump " if len(a) > 2 and a[2] == "T" else ""
-                insights.append(f"CONTROL: When ahead in score, playing {trump}{tier} maintains your lead safely")
-                break
+    # Top actions when ahead.
+    top_ahead = _top_n_from_action_dict(ahead_actions, n=3)
+    for a, avg in top_ahead:
+        tier = TIER_NAMES_PLURAL.get(a[0], "cards")
+        trump = "trump " if len(a) > 2 and a[2] == "T" else ""
+        insights.append(f"WHEN AHEAD: Playing {trump}{tier} maintains your lead — Q={avg:.2f}")
 
-    for a, vals in behind_actions.items():
-        if len(vals) >= 10:
-            avg = sum(vals) / len(vals)
-            if avg > 0.4:
-                tier = TIER_NAMES_PLURAL.get(a[0], "cards")
-                trump = "trump " if len(a) > 2 and a[2] == "T" else ""
-                insights.append(f"RECOVER: When behind in score, playing {trump}{tier} is the best way to catch up")
-                break
+    # Top actions when behind.
+    top_behind = _top_n_from_action_dict(behind_actions, n=3)
+    for a, avg in top_behind:
+        tier = TIER_NAMES_PLURAL.get(a[0], "cards")
+        trump = "trump " if len(a) > 2 and a[2] == "T" else ""
+        insights.append(f"WHEN BEHIND: Playing {trump}{tier} is the best way to catch up — Q={avg:.2f}")
+
+    # Top actions when tied.
+    top_tied = _top_n_from_action_dict(tied_actions, n=2)
+    for a, avg in top_tied:
+        tier = TIER_NAMES_PLURAL.get(a[0], "cards")
+        trump = "trump " if len(a) > 2 and a[2] == "T" else ""
+        insights.append(f"WHEN TIED: Playing {trump}{tier} tips the balance — Q={avg:.2f}")
 
     return insights
 
@@ -225,10 +245,96 @@ def _bid_insights(bid_q) -> list:
 
 
 def _performance_insights(agent) -> list:
-    """Insights from performance statistics."""
+    """Insights from performance statistics — placeholder for future use."""
+    return []
+
+
+def _combination_insights(play_items) -> list:
+    """
+    Cross-dimensional insights — combine phase × position × trump to find
+    specific situational strategies.
+    """
     insights = []
-    # These would come from auto_stats if available; keep minimal here.
-    return insights
+
+    # Group by (phase, position, trump_context).
+    situation_q = defaultdict(lambda: defaultdict(list))
+
+    for state, actions in play_items:
+        if len(state) < 10:
+            continue
+        pos = state[4] if len(state) > 4 else "0"
+        phase = state[5] if len(state) > 5 else "1"
+        trump_str = state[7] if len(state) > 7 else "0"
+
+        # Build situation key.
+        phase_name = {"1": "early", "2": "early", "3": "mid", "4": "late", "5": "final"}.get(phase, "mid")
+        pos_name = {"0": "lead", "1": "2nd", "2": "3rd", "3": "4th"}.get(pos, "?")
+        trump_heavy = "many-trump" if trump_str in ("4", "5", "6", "7") else "few-trump"
+
+        sit_key = f"{phase_name}/{pos_name}/{trump_heavy}"
+
+        for action_key, q_val in actions.items():
+            if abs(q_val) > 0.3:
+                situation_q[sit_key][action_key].append(q_val)
+
+    # Find the most decisive situations (high Q variance = strong preference).
+    for sit_key, actions in situation_q.items():
+        top = _top_n_actions(actions, n=1)
+        if not top:
+            continue
+        action, avg = top[0]
+        if avg < 0.5:
+            continue
+        tier = TIER_NAMES_PLURAL.get(action[0], "cards")
+        trump_flag = "trump " if len(action) > 2 and action[2] == "T" else ""
+        follows = "suit" if len(action) > 1 and action[1] == "F" else "off-suit"
+        insights.append(f"SITUATION ({sit_key}): Play {trump_flag}{tier} ({follows}) — Q={avg:.2f}")
+
+    # Cap to avoid overwhelming.
+    return insights[:20]
+
+
+def _evolution_insights(play_items) -> list:
+    """
+    Contrast insights — find where the agent's strategy differs sharply
+    between contexts (e.g., same card but very different Q in different positions).
+    """
+    insights = []
+
+    # Find actions that are great in one position but bad in another.
+    pos_action_avgs = defaultdict(lambda: defaultdict(list))
+    for state, actions in play_items:
+        if len(state) < 6:
+            continue
+        pos = state[4]
+        for action_key, q_val in actions.items():
+            pos_action_avgs[action_key][pos].append(q_val)
+
+    for action_key, pos_dict in pos_action_avgs.items():
+        pos_avgs = {}
+        for pos, vals in pos_dict.items():
+            if len(vals) >= 10:
+                pos_avgs[pos] = sum(vals) / len(vals)
+        if len(pos_avgs) < 2:
+            continue
+
+        max_pos = max(pos_avgs, key=pos_avgs.get)
+        min_pos = min(pos_avgs, key=pos_avgs.get)
+        spread = pos_avgs[max_pos] - pos_avgs[min_pos]
+
+        if spread > 0.5:
+            tier = TIER_NAMES_PLURAL.get(action_key[0], "cards")
+            trump_flag = "trump " if len(action_key) > 2 and action_key[2] == "T" else ""
+            pos_names = {"0": "leading", "1": "2nd", "2": "3rd", "3": "last"}
+            good_pos = pos_names.get(max_pos, max_pos)
+            bad_pos = pos_names.get(min_pos, min_pos)
+            insights.append(
+                f"CONTEXT: {trump_flag}{tier} works well when {good_pos} "
+                f"(Q={pos_avgs[max_pos]:.2f}) but poorly when {bad_pos} "
+                f"(Q={pos_avgs[min_pos]:.2f})"
+            )
+
+    return insights[:15]
 
 
 def _void_insights(play_items) -> list:
@@ -268,6 +374,42 @@ def _best_action(actions_dict):
                 best_avg = avg
                 best_action = a
     return best_action, best_avg
+
+
+def _top_n_actions(actions_dict, n=3):
+    """Return top N actions by average Q-value (min 5 samples each)."""
+    averages = []
+    for a, vals in actions_dict.items():
+        if len(vals) >= 5:
+            avg = sum(vals) / len(vals)
+            if avg > 0.2:
+                averages.append((a, avg))
+    averages.sort(key=lambda x: -x[1])
+    return averages[:n]
+
+
+def _worst_n_actions(actions_dict, n=2):
+    """Return N worst actions by average Q-value (min 5 samples, negative)."""
+    averages = []
+    for a, vals in actions_dict.items():
+        if len(vals) >= 5:
+            avg = sum(vals) / len(vals)
+            if avg < -0.2:
+                averages.append((a, avg))
+    averages.sort(key=lambda x: x[1])
+    return averages[:n]
+
+
+def _top_n_from_action_dict(action_dict, n=3):
+    """Like _top_n_actions but from a dict of action_key → [q_values]."""
+    averages = []
+    for a, vals in action_dict.items():
+        if len(vals) >= 10:
+            avg = sum(vals) / len(vals)
+            if avg > 0.3:
+                averages.append((a, avg))
+    averages.sort(key=lambda x: -x[1])
+    return averages[:n]
 
 
 def categorize_insight(action_key: str, avg_q: float) -> tuple:
