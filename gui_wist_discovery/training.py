@@ -133,7 +133,7 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
         team_scores = [0, 0]
         shota_count = 0
 
-        for _ in range(5):  # 5 shotas per game.
+        for shota_idx in range(5):  # 5 shotas per game.
             players = create_standard_players()
             agents_list = [agent, opp, agent, opp]
             rnd = Round(players)
@@ -143,9 +143,12 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
                 agent.reset_episode()
                 continue
 
+            # Rotate Qabool like in a real game.
+            qabool_id = shota_idx % 4
             tasmiya = TasmiyaEngine()
             try:
-                res = tasmiya.run(players=players, agents=agents_list, sahib_al_qabool_id=0)
+                res = tasmiya.run(players=players, agents=agents_list,
+                                  sahib_al_qabool_id=qabool_id)
             except (ValueError, Exception):
                 agent.reset_episode()
                 continue

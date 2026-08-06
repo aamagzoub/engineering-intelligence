@@ -21,6 +21,7 @@ class Renderer:
         self.screen = screen
         self.fonts = fonts
         self._card_cache = {}
+        self._mini_card_cache = {}
         self._card_back = create_card_back(CARD_WIDTH, CARD_HEIGHT)
         # Button-specific font (created once, not per frame).
         self._btn_font = pygame.font.SysFont("Segoe UI", 11)
@@ -145,8 +146,12 @@ class Renderer:
         if not hand:
             return
         for i, card in enumerate(hand):
-            surf = pygame.transform.smoothscale(self.get_card_surface(card), (CARD_MINI_W, CARD_MINI_H))
-            self.screen.blit(surf, (x, start_y + i * 16))
+            key = f"{card.rank.symbol}{card.suit.symbol}_mini"
+            if key not in self._mini_card_cache:
+                self._mini_card_cache[key] = pygame.transform.smoothscale(
+                    self.get_card_surface(card), (CARD_MINI_W, CARD_MINI_H)
+                )
+            self.screen.blit(self._mini_card_cache[key], (x, start_y + i * 16))
 
     def _render_trick(self, table, trick_cards, last_winner):
         """Render current trick cards in center of table."""
