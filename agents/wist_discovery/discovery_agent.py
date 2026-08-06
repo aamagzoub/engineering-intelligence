@@ -811,23 +811,52 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def save(self, path: str) -> None:
-        data = {
-            "play_q": {k: dict(v) for k, v in self.play_q.items()},
-            "play_q2": {k: dict(v) for k, v in self.play_q2.items()},
-            "bid_q": {k: dict(v) for k, v in self.bid_q.items()},
-            "bid_q2": {k: dict(v) for k, v in self.bid_q2.items()},
-            "episodes_trained": self.episodes_trained,
-            "total_updates": self.total_updates,
-            "epsilon": self.epsilon,
-            "alpha": self.alpha,
-            "gamma": self.gamma,
-            "lambda_trace": self.lambda_trace,
-            "reward_norm": self._reward_normalizer.to_dict(),
-            "elo": self._elo_tracker.to_dict(),
-            "use_neural": self._use_neural,
-            "play_net": self._play_net.to_dict(),
-            "bid_net": self._bid_net.to_dict(),
-        }
+        try:
+            data = {
+                "play_q": {k: dict(v) for k, v in list(self.play_q.items())},
+                "play_q2": {k: dict(v) for k, v in list(self.play_q2.items())},
+                "bid_q": {k: dict(v) for k, v in list(self.bid_q.items())},
+                "bid_q2": {k: dict(v) for k, v in list(self.bid_q2.items())},
+                "episodes_trained": self.episodes_trained,
+                "total_updates": self.total_updates,
+                "epsilon": self.epsilon,
+                "alpha": self.alpha,
+                "gamma": self.gamma,
+                "lambda_trace": self.lambda_trace,
+                "reward_norm": self._reward_normalizer.to_dict(),
+                "elo": self._elo_tracker.to_dict(),
+                "use_neural": self._use_neural,
+                "play_net": self._play_net.to_dict(),
+                "bid_net": self._bid_net.to_dict(),
+            }
+        except RuntimeError:
+            # Dict changed during iteration (background thread). Retry with snapshot.
+            data = {
+                "play_q": {},
+                "play_q2": {},
+                "bid_q": {},
+                "bid_q2": {},
+                "episodes_trained": self.episodes_trained,
+                "total_updates": self.total_updates,
+                "epsilon": self.epsilon,
+                "alpha": self.alpha,
+                "gamma": self.gamma,
+                "lambda_trace": self.lambda_trace,
+                "reward_norm": self._reward_normalizer.to_dict(),
+                "elo": self._elo_tracker.to_dict(),
+                "use_neural": self._use_neural,
+                "play_net": self._play_net.to_dict(),
+                "bid_net": self._bid_net.to_dict(),
+            }
+            # Try once more with list() snapshots.
+            try:
+                data["play_q"] = {k: dict(v) for k, v in list(self.play_q.items())}
+                data["play_q2"] = {k: dict(v) for k, v in list(self.play_q2.items())}
+                data["bid_q"] = {k: dict(v) for k, v in list(self.bid_q.items())}
+                data["bid_q2"] = {k: dict(v) for k, v in list(self.bid_q2.items())}
+            except RuntimeError:
+                pass  # Save with whatever we got.
+
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(data, f)
