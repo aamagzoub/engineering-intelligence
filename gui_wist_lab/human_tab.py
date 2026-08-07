@@ -47,6 +47,7 @@ class HumanTab:
         self.root = root
         self.game_running = False
         self._loaded_learning_agent = None
+        self._ai_model_path = None
         self._bid_btn_frame = None
         self._confirm_frame = None
         self._trick_played = {}
@@ -614,7 +615,9 @@ class HumanTab:
         self._log("⏹ Game stopped.")
 
     def _load_ai_model(self):
-        """Load a trained learning model JSON for the AI opponents."""
+        """Load a trained learning model JSON for the AI opponents.
+        Loads in TRAINING mode with zero exploration so the AI learns
+        from human games while still playing its best moves."""
         from tkinter import filedialog
         from agents.wist_learning.learning_agent import LearningAgent
         import os
@@ -645,10 +648,18 @@ class HumanTab:
         )
         if path:
             try:
-                self._loaded_learning_agent = LearningAgent.load(path, training=False)
+                # Load with training=True so AI learns from human games.
+                self._loaded_learning_agent = LearningAgent.load(path, training=True)
+                # Zero exploration — always play best move, no random moves.
+                self._loaded_learning_agent.epsilon = 0.0
+                # Lower learning rate — human games nudge gently, don't overwrite self-play.
+                self._loaded_learning_agent.alpha = 0.03
+                # Store model path for auto-saving after games.
+                self._ai_model_path = path
                 self._ai_model_label.config(
-                    text=f"AI: Learning ({self._loaded_learning_agent.q_table_size} entries)",
+                    text=f"AI: Learning+Training ({self._loaded_learning_agent.q_table_size} entries)",
                     fg="#66bb6a")
+                self._log(f"  AI loaded (learns from your games): {os.path.basename(path)}")
             except Exception as e:
                 self._ai_model_label.config(text=f"Error: {e}", fg="#ff6666")
 
@@ -1221,6 +1232,16 @@ class HumanTab:
         self.team_tricks[team] += 1
         self._update_info(t1_won=str(self.team_tricks[0]), t2_won=str(self.team_tricks[1]))
 
+        # --- AI trick learning ---
+        try:
+            agent = self._loaded_learning_agent
+            if agent and agent.training and hasattr(agent, 'reward_trick'):
+                # AI is on team 1 (players 1, 3). Did AI's team win this trick?
+                ai_won = (team == 1)
+                agent.reward_trick(won=ai_won)
+        except Exception:
+            pass
+
         who = DISPLAY_NAMES[winner]
         self._set_status(f"Trick {self.trick_number} — {who} won! (T1:{self.team_tricks[0]} T2:{self.team_tricks[1]})")
         self._log(f"  T{self.trick_number}: {who} won | {self.team_tricks[0]}–{self.team_tricks[1]}")
@@ -1296,6 +1317,30 @@ class HumanTab:
         self._log(f"  Tricks: T1={self.team_tricks[0]} T2={self.team_tricks[1]}")
         self._log(f"  Score: {self.game_scores[0]}–{self.game_scores[1]}")
 
+        # --- AI Learning from human games ---
+        try:
+            agent = self._loaded_learning_agent
+            if agent and agent.training:
+                # AI is on team 2 (players 1 and 3).
+                ai_team = 1
+                ai_tricks = self.team_tricks[ai_team]
+                human_tricks = self.team_tricks[0]
+                ai_won_shota = ai_tricks > human_tricks
+                ai_was_shooter = (self.playing_team_id == ai_team)
+                ai_bid_met = (ai_was_shooter and ai_tricks >= self.bid_value)
+                seek = (ai_tricks == 13 or human_tricks == 13)
+
+                agent.reward_shota(
+                    team_won_shota=ai_won_shota,
+                    bid_met=ai_bid_met,
+                    my_tricks=ai_tricks,
+                    opp_tricks=human_tricks,
+                    was_shooter=ai_was_shooter,
+                    seek=seek,
+                )
+        except Exception:
+            pass  # Never let learning errors break the game.
+
         # Check if game is over.
         game_over = (self.shota_number >= 5 or
                      self.game_scores[0] >= 25 or self.game_scores[1] >= 25)
@@ -1324,6 +1369,15 @@ class HumanTab:
                 self._log("━━━ GAME OVER ━━━")
                 self._log(f"  Winner: {'Team 1 (YOU)' if self.game_scores[0] > self.game_scores[1] else 'Team 2'}")
                 self.game_running = False
+
+                # --- Save AI model after learning from human game ---
+                try:
+                    agent = self._loaded_learning_agent
+                    if agent and agent.training and hasattr(self, '_ai_model_path'):
+                        agent.save(self._ai_model_path)
+                        self._log(f"  AI model updated and saved (learned from this game)")
+                except Exception:
+                    pass
 
                 # --- Player Evaluation ---
                 try:
