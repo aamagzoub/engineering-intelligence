@@ -42,9 +42,17 @@ def generate_insights(agent) -> list:
     insights.extend(_void_play(play_items))
     insights.extend(_situational_contrasts(play_items))
 
-    # Deduplicate.
-    seen = set()
-    return [i for i in insights if not (i in seen or seen.add(i))]
+    # Deduplicate by core concept — keep only the first insight per topic.
+    seen_concepts = set()
+    unique = []
+    for insight in insights:
+        # Extract concept key: first 6 words (captures the core idea).
+        words = insight.split()
+        concept = " ".join(words[:6]).lower().rstrip(".,—-")
+        if concept not in seen_concepts:
+            seen_concepts.add(concept)
+            unique.append(insight)
+    return unique
 
 
 # ─── Strategy Extractors ────────────────────────────────────────────────────────
