@@ -65,41 +65,115 @@ def generate_insights(agent) -> list:
 
 def _detect_evolution(play_items, bid_q, episodes) -> list:
     """
-    Compare current strategy fingerprint to previous snapshots.
-    When the agent changes its mind about something, generate an insight.
+    Compare current strategy to previous snapshots.
+    Detect macro-level behavioral shifts and describe them as strategic principles.
 
-    This produces new insights indefinitely as long as training continues.
+    This produces new insights indefinitely as the strategy evolves.
     """
-    # Build current fingerprint: best action per (phase, position) context.
     current_fp = _build_fingerprint(play_items, bid_q)
 
     # Load previous snapshots.
     snapshots = _load_snapshots()
 
-    # Only snapshot every 10k episodes.
+    # Snapshot every 10k episodes.
     last_ep = snapshots[-1]["episodes"] if snapshots else 0
     if episodes - last_ep >= 10000:
         snapshots.append({"episodes": episodes, "fingerprint": current_fp})
-        # Keep last 50 snapshots.
         if len(snapshots) > 50:
             snapshots = snapshots[-50:]
         _save_snapshots(snapshots)
 
-    # Compare current to recent snapshots to find shifts.
     insights = []
     if len(snapshots) < 2:
         return insights
 
-    # Compare to the snapshot from ~20k episodes ago (or the oldest available).
-    compare_idx = max(0, len(snapshots) - 3)  # ~20-30k episodes back.
+    # Compare current to an older snapshot.
+    compare_idx = max(0, len(snapshots) - 3)
     old_fp = snapshots[compare_idx]["fingerprint"]
-    old_ep = snapshots[compare_idx]["episodes"]
 
-    shifts = _find_strategy_shifts(old_fp, current_fp)
-    for shift in shifts:
-        insight = _describe_shift(shift, old_ep, episodes)
-        if insight:
-            insights.append(insight)
+    # Detect macro-level shifts (not individual card changes).
+    insights.extend(_macro_shifts(old_fp, current_fp))
+
+    return insights
+
+
+def _macro_shifts(old_fp: dict, new_fp: dict) -> list:
+    """Detect high-level behavioral changes and phrase as strategic principles."""
+    insights = []
+
+    # Count how the overall strategy shifted across all contexts.
+    aggression_change = 0  # Positive = became more aggressive.
+    trump_change = 0       # Positive = using more trump.
+    patience_change = 0    # Positive = saving more high cards.
+    void_change = 0        # Positive = creating more voids.
+    pass_change = 0        # Positive = passing more in bids.
+
+    for ctx in new_fp:
+        if ctx not in old_fp or ctx == "bid_best":
+            continue
+        old_a = old_fp[ctx]["action"]
+        new_a = new_fp[ctx]["action"]
+        if old_a == new_a:
+            continue
+
+        # Classify the shift direction.
+        old_tier = old_a[0] if old_a else ""
+        new_tier = new_a[0] if new_a else ""
+        old_trump = old_a[2] == "T" if len(old_a) > 2 else False
+        new_trump = new_a[2] == "T" if len(new_a) > 2 else False
+        new_void = new_a[4] == "V" if len(new_a) > 4 else False
+        old_void = old_a[4] == "V" if len(old_a) > 4 else False
+
+        tier_rank = {"A": 5, "K": 4, "Q": 3, "J": 2, "M": 1, "L": 0, "X": -1}
+        old_rank = tier_rank.get(old_tier, 0)
+        new_rank = tier_rank.get(new_tier, 0)
+
+        if new_rank > old_rank:
+            aggression_change += 1
+        elif new_rank < old_rank:
+            patience_change += 1
+
+        if new_trump and not old_trump:
+            trump_change += 1
+        elif old_trump and not new_trump:
+            trump_change -= 1
+
+        if new_void and not old_void:
+            void_change += 1
+
+    # Bid shift.
+    if "bid_best" in old_fp and "bid_best" in new_fp:
+        old_bid = old_fp["bid_best"]["action"]
+        new_bid = new_fp["bid_best"]["action"]
+        if old_bid != new_bid:
+            if new_bid == "PASS" and old_bid != "PASS":
+                pass_change += 3
+            elif old_bid == "PASS" and new_bid != "PASS":
+                pass_change -= 3
+            elif new_bid.startswith("B") and old_bid.startswith("B"):
+                try:
+                    if int(new_bid[1:]) < int(old_bid[1:]):
+                        pass_change += 1  # More conservative.
+                    else:
+                        pass_change -= 1  # More aggressive.
+                except ValueError:
+                    pass
+
+    # Generate principles from macro shifts (only if significant).
+    if aggression_change >= 3:
+        insights.append("Play your high cards with more confidence — hesitation lets opponents set up against you")
+    if patience_change >= 3:
+        insights.append("Hold your strongest cards longer — patience turns good cards into winning cards")
+    if trump_change >= 3:
+        insights.append("Use trump more freely — controlling the game through trump power is stronger than saving them forever")
+    if trump_change <= -3:
+        insights.append("Save your trumps for the right moment — wasting them early leaves you defenseless later")
+    if void_change >= 2:
+        insights.append("Focus on creating voids early — the ability to trump any suit is worth more than keeping a balanced hand")
+    if pass_change >= 2:
+        insights.append("Passing is underrated — a bad bid costs your team far more than a missed scoring opportunity")
+    if pass_change <= -2:
+        insights.append("Be bolder in bidding — if your hand supports it, committing wins more than playing it safe")
 
     return insights
 
@@ -148,90 +222,6 @@ def _build_fingerprint(play_items, bid_q) -> dict:
     fp["bid_best"] = {"action": best_bid, "avg_q": round(best_bid_q, 3)}
 
     return fp
-
-
-def _find_strategy_shifts(old_fp: dict, new_fp: dict) -> list:
-    """Find contexts where the best action changed between snapshots."""
-    shifts = []
-    for ctx in new_fp:
-        if ctx not in old_fp:
-            continue
-        old_action = old_fp[ctx]["action"]
-        new_action = new_fp[ctx]["action"]
-        if old_action != new_action:
-            shifts.append({
-                "context": ctx,
-                "old_action": old_action,
-                "new_action": new_action,
-                "old_q": old_fp[ctx]["avg_q"],
-                "new_q": new_fp[ctx]["avg_q"],
-            })
-    return shifts
-
-
-def _describe_shift(shift: dict, old_ep: int, new_ep: int) -> str:
-    """Turn a strategy shift into a natural-language tip."""
-    ctx = shift["context"]
-    old_a = shift["old_action"]
-    new_a = shift["new_action"]
-
-    # Decode context.
-    phase_map = {"1": "opening", "2": "early", "3": "mid-game", "4": "late", "5": "final tricks"}
-    pos_map = {"0": "leading", "1": "2nd to play", "2": "3rd to play", "3": "playing last"}
-
-    phase = phase_map.get(ctx[1], "") if len(ctx) > 1 else ""
-    pos = pos_map.get(ctx[3], "") if len(ctx) > 3 else ""
-
-    if not phase or not pos:
-        # Bid shift.
-        if ctx == "bid_best":
-            old_desc = _bid_action_name(old_a)
-            new_desc = _bid_action_name(new_a)
-            return f"Strategy evolved — stopped {old_desc} and now prefers {new_desc}. Adapt your bidding accordingly."
-        return ""
-
-    old_desc = _action_name(old_a)
-    new_desc = _action_name(new_a)
-
-    if not old_desc or not new_desc or old_desc == new_desc:
-        return ""
-
-    return f"In {phase} when {pos} — switch from {old_desc} to {new_desc}. The agent found this works better after {(new_ep - old_ep) // 1000}k more games."
-
-
-def _action_name(key: str) -> str:
-    """Convert action key to readable name."""
-    if len(key) < 3:
-        return ""
-    tier_names = {"A": "playing Aces", "K": "playing Kings", "Q": "playing Queens",
-                  "J": "playing Jacks", "M": "mid cards (9-10)", "L": "low cards (5-8)",
-                  "X": "your smallest cards"}
-    tier = tier_names.get(key[0], "")
-    if not tier:
-        return ""
-
-    is_trump = key[2] == "T"
-    follows = key[1]
-
-    if is_trump and follows == "O":
-        return f"trumping with {tier.replace('playing ', '')}"
-    if is_trump:
-        return f"trump {tier}"
-    if follows == "O":
-        return f"dumping {tier.replace('playing ', '')}"
-    return tier
-
-
-def _bid_action_name(key: str) -> str:
-    """Convert bid action key to readable name."""
-    if key == "PASS":
-        return "passing"
-    if key.startswith("B"):
-        try:
-            return f"bidding {int(key[1:])}"
-        except ValueError:
-            pass
-    return key
 
 
 def _load_snapshots() -> list:
