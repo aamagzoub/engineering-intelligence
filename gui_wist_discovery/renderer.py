@@ -266,7 +266,7 @@ class Renderer:
         disc_top = 60 + score_h + 8
         disc_h = SCREEN_HEIGHT - 80 - score_h - 8
         disc_rect = pygame.Rect(px, disc_top, panel_w, disc_h)
-        pygame.draw.rect(self.screen, PANEL_DARK, disc_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (0, 0, 0), disc_rect, border_radius=10)
         pygame.draw.rect(self.screen, (70, 60, 20), disc_rect, width=1, border_radius=10)
 
         self.screen.set_clip(pygame.Rect(px + 5, disc_top + 5, panel_w - 10, disc_h - 10))
@@ -328,7 +328,7 @@ class Renderer:
     def _render_insights_panel(self, panel_w, state):
         """Render left panel with strategic insights."""
         panel_rect = pygame.Rect(5, 60, panel_w - 10, SCREEN_HEIGHT - 80)
-        pygame.draw.rect(self.screen, PANEL_DARK, panel_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (0, 0, 0), panel_rect, border_radius=10)
         pygame.draw.rect(self.screen, (20, 70, 50), panel_rect, width=1, border_radius=10)
 
         self.screen.set_clip(pygame.Rect(10, 65, panel_w - 20, SCREEN_HEIGHT - 90))
