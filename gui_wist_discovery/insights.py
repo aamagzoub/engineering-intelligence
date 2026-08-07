@@ -161,19 +161,19 @@ def _macro_shifts(old_fp: dict, new_fp: dict) -> list:
 
     # Generate principles from macro shifts (only if significant).
     if aggression_change >= 3:
-        insights.append("Play your high cards with more confidence — hesitation lets opponents set up against you")
+        insights.append("Start playing your high cards sooner — waiting too long lets opponents set up their trumps")
     if patience_change >= 3:
-        insights.append("Hold your strongest cards longer — patience turns good cards into winning cards")
+        insights.append("Don't play your Kings and Queens in the first few tricks — they win more when you save them for later")
     if trump_change >= 3:
-        insights.append("Use trump more freely — controlling the game through trump power is stronger than saving them forever")
+        insights.append("Use trump cards more often — they control the game better than holding them back")
     if trump_change <= -3:
-        insights.append("Save your trumps for the right moment — wasting them early leaves you defenseless later")
+        insights.append("Stop spending trumps early — you'll need them later when opponents try to steal tricks")
     if void_change >= 2:
-        insights.append("Focus on creating voids early — the ability to trump any suit is worth more than keeping a balanced hand")
+        insights.append("Get rid of short suits early — once you're void, you can trump that suit every time it comes up")
     if pass_change >= 2:
-        insights.append("Passing is underrated — a bad bid costs your team far more than a missed scoring opportunity")
+        insights.append("Pass more often when your hand is weak — letting opponents overbid and fail is free points")
     if pass_change <= -2:
-        insights.append("Be bolder in bidding — if your hand supports it, committing wins more than playing it safe")
+        insights.append("Bid more when you have a decent hand — playing it too safe means missing easy points")
 
     return insights
 
@@ -275,14 +275,14 @@ def _counter_intuitive_plays(play_items) -> list:
 
         # Low cards that secretly win.
         if tier == "X" and follows == "F" and is_trump == "N" and avg > 0.3:
-            insights.append("Play your smallest card when you can't win — saving your high cards for tricks you CAN take is more valuable than contesting everything")
+            insights.append("Play your smallest card when you can't win — don't waste good cards on lost tricks")
 
         if tier == "L" and follows == "O" and is_trump == "N" and avg > 0.2:
             insights.append("Dump your weak off-suit cards when void — they'll never win anything, so get rid of them now while you can")
 
         # Small trump that overperforms.
         if tier in ("L", "X") and follows == "O" and is_trump == "T" and avg > 0.4:
-            insights.append("Even your lowest trump beats any non-trump card — a 2 of trump when void is more powerful than a King off-suit")
+            insights.append("Even a 2 of trump beats any off-suit King — when you're void, your worst trump is stronger than their best card")
 
     return insights
 
@@ -317,7 +317,7 @@ def _hidden_power_moves(play_items) -> list:
     if len(long_suit_low_q) >= 10:
         avg = sum(long_suit_low_q) / len(long_suit_low_q)
         if avg > 0.3:
-            insights.append("Lead low cards from your longest suit — once opponents run out of that suit, your remaining cards become winners automatically")
+            insights.append("Lead low from your longest suit — opponents will run out of that suit and your remaining cards win for free")
 
     return insights
 
@@ -548,9 +548,9 @@ def _void_tactics(play_items) -> list:
                     whip_success += 1
 
     if void_create_total >= 20 and void_create_positive / max(void_create_total, 1) > 0.6:
-        insights.append("Actively create voids in the first few tricks — sacrifice a low card from a short suit now to gain unlimited trumping power in that suit later")
+        insights.append("Actively empty a short suit in the first tricks — once void, you can trump it every time")
 
     if whip_total >= 20 and whip_success / max(whip_total, 1) > 0.5:
-        insights.append("Once you're void in a suit, every time it's led is a free trick for you — plan your voids early, exploit them all game")
+        insights.append("Once void in a suit, every time it's led is a free trick — set up your voids early")
 
     return insights
