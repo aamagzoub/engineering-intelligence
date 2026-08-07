@@ -2595,9 +2595,7 @@ class GameScreen:
         self.screen.blit(hide_surf, hide_surf.get_rect(center=toggle_rect.center))
 
         # Title.
-        box_title = "Expert-Model Rec." if self._ai_model_path else "Rule-Based Rec."
-        if not rec_visible:
-            box_title = "Recommendations Hidden"
+        box_title = "Recommendation"
         self.screen.blit(header_font.render(box_title, True, TEXT_GREEN if rec_visible else TEXT_DIM),
                          (panel_x + pad + 6, y + 5))
 
@@ -2626,8 +2624,7 @@ class GameScreen:
                     self.screen.blit(ls, (content_x, text_y))
                     text_y += 16
         elif not rec_visible:
-            hint_surf = label_font.render("Click SHOW to reveal", True, TEXT_DIM)
-            self.screen.blit(hint_surf, (panel_x + pad + 6, y + 28))
+            pass  # Box stays empty when hidden.
 
         y += ai_box_h + 8
 
@@ -2808,9 +2805,9 @@ class GameScreen:
         # Fanned victory cards behind the text.
         fan_cards = [("A", "♠"), ("K", "♥"), ("Q", "♣"), ("J", "♦"), ("A", "♥")]
         fan_cx = cx
-        fan_y = cy - 60
+        fan_y = cy - 80
         for i, (r, s) in enumerate(fan_cards):
-            angle = (i - 2) * 12  # -24, -12, 0, 12, 24 degrees.
+            angle = (i - 2) * 12
             card_surf = create_card_surface(r, s, CARD_LARGE_W, CARD_LARGE_H)
             rotated = pygame.transform.rotate(card_surf, -angle)
             rot_rect = rotated.get_rect(center=(fan_cx + (i - 2) * 40, fan_y))
@@ -2820,84 +2817,48 @@ class GameScreen:
         # Title.
         trophy_font = pygame.font.SysFont("Segoe UI", 42, bold=True)
         trophy = trophy_font.render("GAME OVER", True, TEXT_GOLD)
-        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 120))
+        self.screen.blit(trophy, trophy.get_rect(centerx=cx, y=cy - 140))
 
         # Winner.
         win_font = pygame.font.SysFont("Segoe UI", 28, bold=True)
         win = win_font.render(winner_text, True, color)
-        self.screen.blit(win, win.get_rect(centerx=cx, y=cy - 60))
+        self.screen.blit(win, win.get_rect(centerx=cx, y=cy - 80))
 
-        # Score.
+        # Scores — T1 and T2 on separate lines.
         score_font = pygame.font.SysFont("Segoe UI", 18)
-        score = score_font.render(
-            f"T1 ({DISPLAY_NAMES[2]} + {DISPLAY_NAMES[0]}): {self.game_scores[0]}  |  "
-            f"T2 ({DISPLAY_NAMES[1]} + {DISPLAY_NAMES[3]}): {self.game_scores[1]}",
-            True, TEXT_LIGHT)
-        self.screen.blit(score, score.get_rect(centerx=cx, y=cy + 5))
-
-        # Stats summary.
-        stats = getattr(self, '_game_stats', {})
-        stat_font = pygame.font.SysFont("Segoe UI", 14)
-        stat_line = (f"Shotas: {stats.get('shotas_played', self.shota_number)}  |  "
-                     f"Daks: {self._dak_count}  |  "
-                     f"Seeks: {stats.get('seeks', 0)}  |  "
-                     f"Bids Met: {stats.get('bids_met', 0)}")
-        self.screen.blit(stat_font.render(stat_line, True, TEXT_LIGHT),
-                         stat_font.render(stat_line, True, TEXT_LIGHT)
-                         .get_rect(centerx=cx, y=cy + 40))
-
-        hint = self.fonts["medium"].render(
-            "Press SPACE for new game  |  ESC for menu", True, TEXT_LIGHT)
-        self.screen.blit(hint, hint.get_rect(centerx=cx, y=cy + 80))
+        t1_text = f"T1 ({DISPLAY_NAMES[2]} + {DISPLAY_NAMES[0]}): {self.game_scores[0]}"
+        t2_text = f"T2 ({DISPLAY_NAMES[1]} + {DISPLAY_NAMES[3]}): {self.game_scores[1]}"
+        self.screen.blit(score_font.render(t1_text, True, TEXT_WHITE),
+                         score_font.render(t1_text, True, TEXT_WHITE).get_rect(centerx=cx, y=cy - 25))
+        self.screen.blit(score_font.render(t2_text, True, TEXT_WHITE),
+                         score_font.render(t2_text, True, TEXT_WHITE).get_rect(centerx=cx, y=cy + 2))
 
         # Player evaluation section.
         game_eval = getattr(self, '_game_evaluation', None)
+        eval_y = cy + 40
         if game_eval:
-            eval_y = cy + 110
-            # Agreement score — white, clear.
             pct = game_eval["agreement_pct"]
             rating = game_eval["rating"]
-            eval_font = pygame.font.SysFont("Segoe UI", 16, bold=True)
-            eval_text = f"AI Agreement: {pct:.0f}%  —  Rating: {rating}"
-            self.screen.blit(eval_font.render(eval_text, True, TEXT_WHITE),
-                             eval_font.render(eval_text, True, TEXT_WHITE)
+
+            # "Your Score: XX%" on its own line.
+            eval_font = pygame.font.SysFont("Segoe UI", 18, bold=True)
+            score_text = f"Your Score: {pct:.0f}%"
+            self.screen.blit(eval_font.render(score_text, True, TEXT_WHITE),
+                             eval_font.render(score_text, True, TEXT_WHITE)
                              .get_rect(centerx=cx, y=eval_y))
-            eval_y += 24
+            eval_y += 28
 
-            # Trend (compare to previous games).
-            eval_history = getattr(self, '_eval_history', [])
-            if len(eval_history) >= 2:
-                prev_pct = eval_history[-2]["agreement_pct"]
-                delta = pct - prev_pct
-                if delta > 0:
-                    trend_text = f"↑ +{delta:.0f}% from last game — improving!"
-                elif delta < 0:
-                    trend_text = f"↓ {delta:.0f}% from last game"
-                else:
-                    trend_text = "→ Same as last game"
-                trend_font = pygame.font.SysFont("Segoe UI", 13)
-                self.screen.blit(trend_font.render(trend_text, True, TEXT_WHITE),
-                                 trend_font.render(trend_text, True, TEXT_WHITE)
-                                 .get_rect(centerx=cx, y=eval_y))
-                eval_y += 20
+            # "Rating: X" on separate line.
+            rating_text = f"Rating: {rating}"
+            self.screen.blit(eval_font.render(rating_text, True, TEXT_WHITE),
+                             eval_font.render(rating_text, True, TEXT_WHITE)
+                             .get_rect(centerx=cx, y=eval_y))
+            eval_y += 28
 
-            # Strategy feedback — white, readable.
-            fb_font = pygame.font.SysFont("Segoe UI", 13)
-            feedback = game_eval.get("feedback", "")
-            if feedback:
-                fb_surf = fb_font.render(feedback, True, TEXT_WHITE)
-                self.screen.blit(fb_surf, fb_surf.get_rect(centerx=cx, y=eval_y))
-                eval_y += 20
-
-            # Lessons learned — white.
-            lessons = game_eval.get("lessons", [])
-            if lessons:
-                eval_y += 4
-                lesson_font = pygame.font.SysFont("Segoe UI", 12)
-                for lesson in lessons[:3]:
-                    ls = lesson_font.render(f"• {lesson}", True, TEXT_WHITE)
-                    self.screen.blit(ls, ls.get_rect(centerx=cx, y=eval_y))
-                    eval_y += 17
+        # Controls hint.
+        hint = self.fonts["medium"].render(
+            "Press SPACE for new game  |  ESC for menu", True, TEXT_WHITE)
+        self.screen.blit(hint, hint.get_rect(centerx=cx, y=eval_y + 10))
 
         self._render_game_log()
 
