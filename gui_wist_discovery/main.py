@@ -332,10 +332,10 @@ class WistDiscoveryWatcher:
 
         # Parse title and description.
         if ":" in msg:
-            title = msg.split(":")[0].strip()
+            title = msg.split(":")[0].strip().title()
             base_desc = msg.split(":", 1)[1].strip()
         else:
-            title = key.upper()
+            title = key.replace("_", " ").title()
             base_desc = msg
 
         # Compute time info.
