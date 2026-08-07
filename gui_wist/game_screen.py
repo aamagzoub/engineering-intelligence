@@ -1920,10 +1920,7 @@ class GameScreen:
         # Recommendation toggle button.
         toggle_rect = getattr(self, '_rec_toggle_rect', None)
         if toggle_rect and toggle_rect.collidepoint(pos):
-            if not getattr(self, '_rec_hidden_permanently', False):
-                self._rec_visible = not self._rec_visible
-                if not self._rec_visible:
-                    self._rec_hidden_permanently = True  # Once hidden, stays hidden all game.
+            self._rec_visible = not self._rec_visible
             return
 
         # Restart and Exit buttons ALWAYS work regardless of phase.
@@ -2573,33 +2570,39 @@ class GameScreen:
         pygame.draw.rect(self.screen, (22, 40, 22), ai_box_rect, border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
 
-        # Toggle button — clearly visible "Hide" / "Hidden" in top-right of box.
+        # Toggle button — "HIDE" / "SHOW" in top-right of box.
         rec_visible = getattr(self, '_rec_visible', True)
         rec_hidden_perm = getattr(self, '_rec_hidden_permanently', False)
-        toggle_w = 44
+        toggle_w = 48
         toggle_h = 20
         toggle_rect = pygame.Rect(ai_box_rect.right - toggle_w - 6, y + 4, toggle_w, toggle_h)
         self._rec_toggle_rect = toggle_rect
         hover_toggle = toggle_rect.collidepoint(pygame.mouse.get_pos())
 
-        if not rec_hidden_perm:
+        if rec_visible:
             toggle_bg = (60, 30, 30) if hover_toggle else (40, 20, 20)
-            pygame.draw.rect(self.screen, toggle_bg, toggle_rect, border_radius=4)
-            pygame.draw.rect(self.screen, (120, 60, 60) if hover_toggle else (80, 40, 40),
-                             toggle_rect, width=1, border_radius=4)
-            hide_font = pygame.font.SysFont("Segoe UI", 10, bold=True)
-            hide_surf = hide_font.render("HIDE", True, (255, 120, 120))
-            self.screen.blit(hide_surf, hide_surf.get_rect(center=toggle_rect.center))
+            toggle_label = "HIDE"
+            toggle_text_color = (255, 120, 120)
+        else:
+            toggle_bg = (20, 60, 30) if hover_toggle else (20, 40, 20)
+            toggle_label = "SHOW"
+            toggle_text_color = (120, 255, 120)
+
+        pygame.draw.rect(self.screen, toggle_bg, toggle_rect, border_radius=4)
+        pygame.draw.rect(self.screen, (80, 80, 80), toggle_rect, width=1, border_radius=4)
+        hide_font = pygame.font.SysFont("Segoe UI", 10, bold=True)
+        hide_surf = hide_font.render(toggle_label, True, toggle_text_color)
+        self.screen.blit(hide_surf, hide_surf.get_rect(center=toggle_rect.center))
 
         # Title.
         box_title = "Expert-Model Rec." if self._ai_model_path else "Rule-Based Rec."
-        if rec_hidden_perm:
+        if not rec_visible:
             box_title = "Recommendations Hidden"
         self.screen.blit(header_font.render(box_title, True, TEXT_GREEN if rec_visible else TEXT_DIM),
                          (panel_x + pad + 6, y + 5))
 
-        # Content — only show if visible and not permanently hidden.
-        if rec_visible and not rec_hidden_perm:
+        # Content — only show if visible.
+        if rec_visible:
             content_x = panel_x + pad + 6
             content_w = panel_w - pad * 2 - 12
             rec_text = self._ai_recommendation if self._ai_recommendation else ""
@@ -2622,8 +2625,8 @@ class GameScreen:
                     ls = label_font.render(line, True, TEXT_LIGHT)
                     self.screen.blit(ls, (content_x, text_y))
                     text_y += 16
-        elif rec_hidden_perm:
-            hint_surf = label_font.render("Hidden for this game", True, TEXT_DIM)
+        elif not rec_visible:
+            hint_surf = label_font.render("Click SHOW to reveal", True, TEXT_DIM)
             self.screen.blit(hint_surf, (panel_x + pad + 6, y + 28))
 
         y += ai_box_h + 8
@@ -2631,8 +2634,7 @@ class GameScreen:
         # Recommended card — to the right of user's hand, vertically centered with cards.
         rec_card = getattr(self, '_ai_rec_card', None)
         rec_visible = getattr(self, '_rec_visible', True)
-        rec_hidden_perm = getattr(self, '_rec_hidden_permanently', False)
-        if rec_card and rec_visible and not rec_hidden_perm:
+        if rec_card and rec_visible:
             r, s = rec_card
             rc_w, rc_h = 50, 72
             # Position: right of the user's hand area, vertically centered.
@@ -2852,16 +2854,15 @@ class GameScreen:
         game_eval = getattr(self, '_game_evaluation', None)
         if game_eval:
             eval_y = cy + 110
-            # Agreement score.
+            # Agreement score — white, clear.
             pct = game_eval["agreement_pct"]
             rating = game_eval["rating"]
-            pct_color = HIGHLIGHT_GREEN if pct >= 60 else TEXT_GOLD if pct >= 40 else BUTTON_RED
-            eval_font = pygame.font.SysFont("Segoe UI", 15, bold=True)
-            eval_text = f"AI Agreement: {pct:.0f}% — Rating: {rating}"
-            self.screen.blit(eval_font.render(eval_text, True, pct_color),
-                             eval_font.render(eval_text, True, pct_color)
+            eval_font = pygame.font.SysFont("Segoe UI", 16, bold=True)
+            eval_text = f"AI Agreement: {pct:.0f}%  —  Rating: {rating}"
+            self.screen.blit(eval_font.render(eval_text, True, TEXT_WHITE),
+                             eval_font.render(eval_text, True, TEXT_WHITE)
                              .get_rect(centerx=cx, y=eval_y))
-            eval_y += 22
+            eval_y += 24
 
             # Trend (compare to previous games).
             eval_history = getattr(self, '_eval_history', [])
@@ -2870,36 +2871,33 @@ class GameScreen:
                 delta = pct - prev_pct
                 if delta > 0:
                     trend_text = f"↑ +{delta:.0f}% from last game — improving!"
-                    trend_color = HIGHLIGHT_GREEN
                 elif delta < 0:
-                    trend_text = f"↓ {delta:.0f}% from last game — AI is tougher?"
-                    trend_color = BUTTON_RED
+                    trend_text = f"↓ {delta:.0f}% from last game"
                 else:
                     trend_text = "→ Same as last game"
-                    trend_color = TEXT_LIGHT
-                trend_font = pygame.font.SysFont("Segoe UI", 12)
-                self.screen.blit(trend_font.render(trend_text, True, trend_color),
-                                 trend_font.render(trend_text, True, trend_color)
+                trend_font = pygame.font.SysFont("Segoe UI", 13)
+                self.screen.blit(trend_font.render(trend_text, True, TEXT_WHITE),
+                                 trend_font.render(trend_text, True, TEXT_WHITE)
                                  .get_rect(centerx=cx, y=eval_y))
-                eval_y += 18
+                eval_y += 20
 
-            # Strategy feedback.
-            fb_font = pygame.font.SysFont("Segoe UI", 12)
+            # Strategy feedback — white, readable.
+            fb_font = pygame.font.SysFont("Segoe UI", 13)
             feedback = game_eval.get("feedback", "")
             if feedback:
-                fb_surf = fb_font.render(feedback, True, TEXT_LIGHT)
+                fb_surf = fb_font.render(feedback, True, TEXT_WHITE)
                 self.screen.blit(fb_surf, fb_surf.get_rect(centerx=cx, y=eval_y))
-                eval_y += 18
+                eval_y += 20
 
-            # Lessons learned.
+            # Lessons learned — white.
             lessons = game_eval.get("lessons", [])
             if lessons:
                 eval_y += 4
-                lesson_font = pygame.font.SysFont("Segoe UI", 11)
+                lesson_font = pygame.font.SysFont("Segoe UI", 12)
                 for lesson in lessons[:3]:
-                    ls = lesson_font.render(f"• {lesson}", True, TEXT_DIM)
+                    ls = lesson_font.render(f"• {lesson}", True, TEXT_WHITE)
                     self.screen.blit(ls, ls.get_rect(centerx=cx, y=eval_y))
-                    eval_y += 15
+                    eval_y += 17
 
         self._render_game_log()
 
