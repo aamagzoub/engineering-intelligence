@@ -898,16 +898,17 @@ class HumanTab:
         self._human_bid(self._human_bid_value)
 
     def _human_dak(self):
-        """Handle Dak — all passed and qabool declares redeal."""
+        """Handle Dak — all passed and qabool declares redeal of current shota."""
         self._safe_destroy(self._bid_btn_frame)
         self._bid_btn_frame = None
         self._clear_active_highlight()
         self._show_human_hand(clickable=False)
 
-        self._set_status("Dak! Re-dealing...")
+        self._set_status("Dak! Re-dealing this shota...")
         self._log("  ⚡ DAK! All passed — re-dealing.")
-        self.game_running = False
-        self._schedule(1500, self._start_game)
+        # Don't reset game_running or game scores — just restart the current shota.
+        self.shota_number -= 1  # Will be incremented again by _start_new_shota.
+        self._schedule(1500, self._start_new_shota)
 
     def _human_bid(self, value):
         """Handle human's bid decision."""
@@ -939,10 +940,10 @@ class HumanTab:
             # Qabool just decided.
             all_passed = self._bidding_engine.highest_bid is None
             if all_passed and value is None:
-                self._set_status("Dak! Re-dealing...")
+                self._set_status("Dak! Re-dealing this shota...")
                 self._log("  ⚡ DAK! All passed.")
-                self.game_running = False
-                self._schedule(1500, self._start_game)
+                self.shota_number -= 1
+                self._schedule(1500, self._start_new_shota)
                 return
             self._schedule(600, self._finalize_bidding)
         else:
@@ -984,10 +985,10 @@ class HumanTab:
             self._bid_history.append((qid, None))
             all_passed = self._bidding_engine.highest_bid is None
             if all_passed:
-                self._set_status("All passed — Dak!")
+                self._set_status("All passed — Dak! Re-dealing...")
                 self._log("  ⚡ DAK! All passed — re-dealing.")
-                self.game_running = False
-                self._schedule(1500, self._start_game)
+                self.shota_number -= 1
+                self._schedule(1500, self._start_new_shota)
                 return
             self._player_status[qid].config(text="Accepts", fg=COLORS["text_muted"])
             self._player_bid_labels[qid].config(text="Accepts", fg=COLORS["text_dim"])
@@ -999,10 +1000,10 @@ class HumanTab:
         """Finalize bidding and start play."""
         winning_bid = self._bidding_engine.highest_bid
         if winning_bid is None:
-            self._set_status("Dak!")
+            self._set_status("Dak! Re-dealing...")
             self._log("  ⚡ DAK!")
-            self.game_running = False
-            self._schedule(1500, self._start_game)
+            self.shota_number -= 1
+            self._schedule(1500, self._start_new_shota)
             return
 
         self.shooter_id = winning_bid.player_id
