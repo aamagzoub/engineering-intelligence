@@ -366,6 +366,10 @@ class WistDiscoveryWatcher:
         self._milestones_list.append((f"{title} (#{episodes})", desc))
         self._log(f"  ** DISCOVERED: {title} **")
 
+        # If user is scrolled down, bump scroll so new item at top doesn't shift view.
+        if self._disc_scroll_offset > 0:
+            self._disc_scroll_offset += 1
+
     # ─── Curriculum ─────────────────────────────────────────────────────────────
 
     def _check_stage_transition(self):
@@ -453,8 +457,13 @@ class WistDiscoveryWatcher:
         if self._bg_agent:
             current_ep = max(current_ep, self._bg_agent.episodes_trained)
         if current_ep - self._last_insight_episode >= 2000 or not self._cached_insights:
+            old_count = len(self._cached_insights)
             self._cached_insights = generate_insights(self.discovery)
             self._last_insight_episode = current_ep
+            # If user is scrolled and new insights appeared, bump scroll to stay stable.
+            new_count = len(self._cached_insights)
+            if self._insight_scroll_offset > 0 and new_count > old_count:
+                self._insight_scroll_offset += (new_count - old_count)
 
     # ─── Helpers ────────────────────────────────────────────────────────────────
 

@@ -283,17 +283,19 @@ class Renderer:
             total = len(milestones)
             panel_text_w = panel_w - 30
 
-            # Newest on top. Scroll offset is stable — items don't shift.
+            # Newest on top. Scroll = how many items from the top to skip.
+            # When user scrolls down, they see older items.
+            # New items at top don't shift the view because main.py
+            # increments disc_scroll when new milestones arrive.
             for i in range(disc_scroll, total):
-                # Newest first: index from end.
-                idx = total - 1 - i
+                idx = total - 1 - i  # Newest first.
                 title_text, desc_text = milestones[idx]
                 num = idx + 1
 
                 if y + 38 > disc_rect.bottom - 15:
                     break
 
-                is_latest = (i == 0)
+                is_latest = (i == 0 and disc_scroll == 0)
                 title_color = (100, 255, 100) if is_latest else (255, 255, 255)
 
                 title_str = f"{num}. {title_text}"
@@ -301,7 +303,7 @@ class Renderer:
 
                 desc_font = self.fonts["medium"]
                 for line_idx, line_part in enumerate(desc_text.split("\n")):
-                    line_color = (255, 220, 130) if line_idx == 0 else (170, 190, 210)
+                    line_color = (255, 255, 255) if line_idx == 0 else (200, 210, 220)
                     y = self._wrap_text(desc_font, line_part, px + 20, y, panel_text_w, line_color, disc_rect.bottom - 20)
                     if y > disc_rect.bottom - 20:
                         break
@@ -335,20 +337,19 @@ class Renderer:
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
         text_w = panel_w - 35
-        font = self.fonts["medium"]  # Regular font, no bold.
+        font = self.fonts["large"]  # 15px for readability.
 
-        # Newest on top.
+        # Newest on top. Same stable scroll logic as milestones.
         for i in range(insight_scroll, total):
-            if y + 16 > panel_rect.bottom - 15:
+            if y + 18 > panel_rect.bottom - 15:
                 break
 
-            idx = total - 1 - i
+            idx = total - 1 - i  # Newest first.
             text = insights[idx].lstrip("• ").strip()
             num = idx + 1
-            is_latest = (i == 0)
+            is_latest = (i == 0 and insight_scroll == 0)
 
-            # Split at " — " into title and description.
-            # Render as: "N. Title. description" on same line, title white, desc green.
+            # Split at " — " into title and description on same line.
             if " — " in text:
                 title_part = text.split(" — ")[0]
                 body_part = text.split(" — ", 1)[1]
@@ -359,16 +360,15 @@ class Renderer:
                 title_part = text
                 body_part = ""
 
-            # Combine: "N. Title. body" — single wrapped line, two colors.
             if body_part:
                 full_text = f"{num}. {title_part}. {body_part}"
             else:
                 full_text = f"{num}. {title_part}"
 
-            # Use green for latest, lighter green for others.
-            color = (130, 255, 130) if is_latest else (180, 220, 180)
+            # White text, latest entry slightly brighter.
+            color = (255, 255, 255) if is_latest else (230, 240, 230)
             y = self._wrap_text(font, full_text, 15, y, text_w, color, panel_rect.bottom - 20)
-            y += 6  # Gap.
+            y += 8  # Gap.
 
             if y > panel_rect.bottom - 15:
                 break
