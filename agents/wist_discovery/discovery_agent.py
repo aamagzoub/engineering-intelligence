@@ -58,8 +58,15 @@ STATE_FEATURE_SIZE = 32  # Fixed feature vector size for neural net.
 # State & Action Encoding
 # =============================================================================
 
-def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
-    """Rich state encoding — observable features only."""
+def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
+                       partner_bid: int = 0, my_tricks: int = 0, opp_tricks: int = 0) -> str:
+    """Rich state encoding — observable features only.
+
+    Enhanced with:
+    - Exact trick counts (not just phase)
+    - Partner's bid value (observable fact)
+    - Trick score difference (exact, not bucketed)
+    """
     hand = obs.hand
     n_cards = len(hand)
     suits = [0, 0, 0, 0]
@@ -101,7 +108,12 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0) -> str:
     ts = f"{min(trump_count, 7)}{min(trump_highs, 4)}"
     voids = sum(1 for s in suits if s == 0)
 
-    return f"{shape}{pos}{phase}{td}{min(highs, 5)}{ts}v{voids}a{min(aces, 4)}o{min(opp_voids, 6)}"
+    # Enhanced features: exact trick counts and partner bid.
+    mt = min(my_tricks, 13)
+    ot = min(opp_tricks, 13)
+    pb = min(partner_bid, 13)
+
+    return f"{shape}{pos}{phase}{td}{min(highs, 5)}{ts}v{voids}a{min(aces, 4)}o{min(opp_voids, 6)}t{mt:x}{ot:x}b{pb:x}"
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
@@ -333,8 +345,8 @@ class WistDiscoveryAgent(Agent):
         self.bid_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
         # === Neural Network Function Approximator (Enhancement #9) ===
-        # CardEvaluator: per-card evaluation (state 28 + card 8 + memory 52 = 88 features → 1 Q-value).
-        self._play_net = CardEvaluator(input_size=88, hidden_size=128, learning_rate=0.0003)
+        # CardEvaluator: per-card evaluation (state 28 + card 8 + memory 78 = 114 features → 1 Q-value).
+        self._play_net = CardEvaluator(input_size=114, hidden_size=128, learning_rate=0.0003)
         self._target_net = self._play_net.copy()  # Target network (frozen, updated every 500 episodes).
         self._target_update_interval = 500
         self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
@@ -396,6 +408,22 @@ class WistDiscoveryAgent(Agent):
         # === Stats ===
         self.episodes_trained: int = 0
         self.total_updates: int = 0
+
+        # === Enhanced observations (partner bid, trick counts) ===
+        self._partner_bid: int = 0  # Observable: what did partner bid?
+        self._my_tricks: int = 0    # Observable: tricks won by my team so far.
+        self._opp_tricks: int = 0   # Observable: tricks won by opponents so far.
+
+        # === Per-state adaptive alpha (#5) ===
+        self._state_update_counts: dict[str, int] = defaultdict(int)
+
+        # === N-step return buffer (#2) ===
+        self._nstep_buffer: list[tuple[str, str, float]] = []  # (state, action, intermediate_value)
+        self._nstep_n: int = 3  # Look 3 steps ahead for returns.
+
+        # === MCTS training integration (#1, #14) ===
+        self._mcts_context: dict = None  # Set externally when MCTS is available.
+        self._mcts_value_weight: float = 0.3  # How much MCTS value influences training.
 
     # =========================================================================
     # Action Selection
@@ -535,7 +563,8 @@ class WistDiscoveryAgent(Agent):
             # Curiosity-driven exploration: prefer unvisited states.
             if random.random() < 0.3:
                 # Pick action that leads to least-visited state.
-                state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs))
+                state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
+                                              self._partner_bid, self._my_tricks, self._opp_tricks)
                 min_visits = float("inf")
                 curiosity_card = random.choice(playable)
                 for c in playable:
@@ -552,7 +581,8 @@ class WistDiscoveryAgent(Agent):
             card = self._best_card(obs, playable)
 
         if self.training:
-            state = _encode_play_state(obs, self._get_opponent_voids_count(obs))
+            state = _encode_play_state(obs, self._get_opponent_voids_count(obs),
+                                       self._partner_bid, self._my_tricks, self._opp_tricks)
             action_key = _encode_play_action(card, obs)
             self._play_episode.append((state, action_key))
             self._play_traces[state][action_key] += 1.0
@@ -569,17 +599,42 @@ class WistDiscoveryAgent(Agent):
         return PlayCardAction(player_id=obs.player_id, card=card)
 
     def _best_card(self, obs: WistObservation, playable: list) -> object:
-        """Combined Q-table + per-card neural net + optional MCTS for card selection."""
+        """Combined Q-table + per-card neural net + optional MCTS for card selection.
+
+        MCTS integration (#1, #14): When MCTS is available, use it for card selection
+        AND feed its value estimates back as training targets for the neural net.
+        """
         # MCTS: if context is available, use simulation-based look-ahead.
         if getattr(self, '_mcts_context', None) and len(playable) > 1:
-            from agents.wist_discovery.mcts import mcts_choose_card
+            from agents.wist_discovery.mcts import mcts_choose_card, mcts_evaluate_actions
             ctx = self._mcts_context
+            num_sims = ctx.get('num_simulations', 80)
+
+            # Get MCTS action values for training (#1).
+            try:
+                mcts_values = mcts_evaluate_actions(
+                    obs, playable, ctx.get('round_state'), ctx.get('players'),
+                    ctx.get('trump_suit'), num_simulations=num_sims
+                )
+                # Use MCTS values as soft training targets for Q-table.
+                if self.training and mcts_values:
+                    state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
+                                                  self._partner_bid, self._my_tricks, self._opp_tricks)
+                    mcts_alpha = self._mcts_value_weight * 0.01
+                    for card, mcts_val in mcts_values.items():
+                        action_key = _encode_play_action(card, obs)
+                        current = self.play_q[state_str][action_key]
+                        self.play_q[state_str][action_key] += mcts_alpha * (mcts_val - current)
+            except (ImportError, Exception):
+                pass
+
             return mcts_choose_card(
                 obs, playable, ctx.get('round_state'), ctx.get('players'),
-                ctx.get('trump_suit'), num_simulations=ctx.get('num_simulations', 80)
+                ctx.get('trump_suit'), num_simulations=num_sims
             )
 
-        state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs))
+        state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
+                                      self._partner_bid, self._my_tricks, self._opp_tricks)
         q1 = self.play_q[state_str]
         q2 = self.play_q2[state_str]
 
@@ -626,17 +681,25 @@ class WistDiscoveryAgent(Agent):
 
     def trick_reward(self, won: bool) -> None:
         """Record trick outcome in sequence memory. No Q-update — the agent must
-        discover that tricks matter from the end-of-shota score alone."""
+        discover that tricks matter from the end-of-shota score alone.
+
+        Enhanced memory: records position of winner, winning card tier, and
+        suit depletion count for richer neural net features.
+        """
         if not self.training or not self._play_episode:
             return
 
         # Record this trick in memory buffer (observable fact, not reward).
         state, action = self._play_episode[-1]
-        rank_norm = 1.0 if action.startswith("A") else (0.7 if action.startswith("K") else (0.4 if action.startswith("M") else 0.1))
+        rank_norm = 1.0 if action.startswith("A") else (0.7 if action.startswith("K") else (0.5 if action.startswith("Q") else (0.3 if action.startswith("M") else 0.1)))
         was_trump = 1.0 if "T" in action else 0.0
         followed = 1.0 if "F" in action else 0.0
         won_f = 1.0 if won else 0.0
-        self._trick_memory.append((rank_norm, was_trump, followed, won_f))
+        created_void = 1.0 if action.endswith("V") else 0.0
+        # Position in trick (from state).
+        pos_norm = int(state[4]) / 3.0 if len(state) > 4 and state[4].isdigit() else 0.0
+
+        self._trick_memory.append((rank_norm, was_trump, followed, won_f, created_void, pos_norm))
         if len(self._trick_memory) > self._memory_size:
             self._trick_memory = self._trick_memory[-self._memory_size:]
 
@@ -656,33 +719,57 @@ class WistDiscoveryAgent(Agent):
         # === Reward Normalization ===
         self._reward_normalizer.normalize(score)
 
-        # === Adaptive learning rate ===
+        # === Adaptive learning rate (per-state) ===
         base_alpha = max(0.05, self.alpha * (1.0 / (1.0 + self.episodes_trained / 1000)))
 
-        # === Play phase with eligibility traces + Double Q ===
+        # === Play phase with eligibility traces + Double Q + N-step returns ===
         play_alpha = base_alpha * self._play_alpha_scale
         if random.random() < 0.5:
             play_q_update, play_q_eval = self.play_q, self.play_q2
         else:
             play_q_update, play_q_eval = self.play_q2, self.play_q
 
+        # N-step returns: compute returns from windows of N steps.
+        episode_len = len(self._play_episode)
+        nstep_returns = [0.0] * episode_len
+        # First compute single-step (standard): propagate reward backward.
         reward_signal = score
+        for idx in range(episode_len - 1, -1, -1):
+            nstep_returns[idx] = reward_signal
+            reward_signal *= self.gamma
+
+        # N-step enhancement: blend forward returns for first (episode_len - N) steps.
+        n = self._nstep_n
+        for idx in range(episode_len - n):
+            # N-step return = gamma^n * V(state+n) + discounted intermediates.
+            # Since we don't have intermediate rewards, n-step just looks further ahead.
+            future_state, future_action = self._play_episode[idx + n]
+            future_q = play_q_eval[future_state].get(future_action, 0.0)
+            nstep_return = (self.gamma ** n) * future_q + nstep_returns[idx] * (1.0 - self.gamma ** n)
+            # Blend: 70% standard backward return, 30% n-step forward return.
+            nstep_returns[idx] = 0.7 * nstep_returns[idx] + 0.3 * nstep_return
+
         nn_features_reversed = list(reversed(self._nn_play_features)) if self._nn_play_features else []
         for idx, (state, action) in enumerate(reversed(self._play_episode)):
+            # Per-state adaptive alpha: states visited many times learn slower.
+            self._state_update_counts[state] += 1
+            visit_count = self._state_update_counts[state]
+            adaptive_alpha = play_alpha / (1.0 + visit_count / 500.0)
+
             trace = self._play_traces[state].get(action, 1.0)
             current_q = play_q_update[state][action]
-            td_error = reward_signal - current_q
-            update = play_alpha * trace * td_error
+            target = nstep_returns[episode_len - 1 - idx]
+            td_error = target - current_q
+            update = adaptive_alpha * trace * td_error
             play_q_update[state][action] += update
-            reward_signal *= self.gamma
             self.total_updates += 1
 
             # Prioritized replay.
-            self._replay_buffer.add(state, action, reward_signal, "play", td_error)
+            self._replay_buffer.add(state, action, target, "play", td_error)
 
             # Train CardEvaluator neural net.
             if self._use_neural and idx < len(nn_features_reversed):
-                self._play_net.update(nn_features_reversed[idx], reward_signal)
+                self._play_net.update(nn_features_reversed[idx], target)
 
         # === Bid phase ===
         bid_alpha = base_alpha * self._bid_alpha_scale
@@ -799,14 +886,19 @@ class WistDiscoveryAgent(Agent):
         return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
 
     def _get_memory_features(self) -> np.ndarray:
-        """Get sequence memory as a fixed 52-dim feature vector (13 tricks × 4 features)."""
-        features = np.zeros(52)
-        for i, (rank_n, trump, follow, won) in enumerate(self._trick_memory[:13]):
-            base = i * 4
-            features[base] = rank_n
-            features[base + 1] = trump
-            features[base + 2] = follow
-            features[base + 3] = won
+        """Get sequence memory as a fixed 78-dim feature vector (13 tricks × 6 features).
+
+        Enhanced: includes void creation and position information per trick.
+        """
+        features = np.zeros(78)
+        for i, entry in enumerate(self._trick_memory[:13]):
+            base = i * 6
+            features[base] = entry[0]      # rank_norm
+            features[base + 1] = entry[1]  # was_trump
+            features[base + 2] = entry[2]  # followed suit
+            features[base + 3] = entry[3]  # won trick
+            features[base + 4] = entry[4] if len(entry) > 4 else 0.0  # created void
+            features[base + 5] = entry[5] if len(entry) > 5 else 0.0  # position norm
         return features
 
     # =========================================================================
@@ -822,6 +914,8 @@ class WistDiscoveryAgent(Agent):
         self._bid_traces.clear()
         self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
         self._suits_played = {0: 0, 1: 0, 2: 0, 3: 0}
+        self._my_tricks = 0
+        self._opp_tricks = 0
 
     # =========================================================================
     # Persistence

@@ -41,26 +41,62 @@ def mcts_choose_card(obs, playable_cards, round_state, players, trump_suit,
     if len(playable_cards) == 1:
         return playable_cards[0]
 
+    card_scores = _mcts_score_cards(obs, playable_cards, round_state, players,
+                                    trump_suit, num_simulations)
+
+    # Pick card with best average trick wins.
+    best_card = max(playable_cards, key=lambda c: card_scores.get(id(c), 0))
+    return best_card
+
+
+def mcts_evaluate_actions(obs, playable_cards, round_state, players, trump_suit,
+                          num_simulations: int = 80) -> dict:
+    """
+    Evaluate all playable cards using MCTS and return a score per card.
+
+    Used for training: provides MCTS-derived value estimates as training targets.
+
+    Returns:
+        dict mapping card object → normalized score (0 to 1 range).
+    """
+    if len(playable_cards) <= 1:
+        return {}
+
+    card_scores = _mcts_score_cards(obs, playable_cards, round_state, players,
+                                    trump_suit, num_simulations)
+
+    # Normalize to 0-1 range for use as training targets.
+    values = list(card_scores.values())
+    if not values:
+        return {}
+    min_v = min(values)
+    max_v = max(values)
+    spread = max_v - min_v if max_v > min_v else 1.0
+
+    result = {}
+    for card in playable_cards:
+        raw = card_scores.get(id(card), 0)
+        result[card] = (raw - min_v) / spread
+    return result
+
+
+def _mcts_score_cards(obs, playable_cards, round_state, players, trump_suit,
+                      num_simulations) -> dict:
+    """Core MCTS scoring: simulate each card and return {id(card): avg_wins}."""
     player_id = obs.player_id
     my_team = 0 if player_id in (0, 2) else 1
 
-    # For each legal card, simulate and count wins.
     card_scores = {}
-
     for card in playable_cards:
         total_wins = 0
-
         for _ in range(num_simulations):
             wins = _simulate_from_card(
                 card, player_id, my_team, obs, round_state, players, trump_suit
             )
             total_wins += wins
-
         card_scores[id(card)] = total_wins / num_simulations
 
-    # Pick card with best average trick wins.
-    best_card = max(playable_cards, key=lambda c: card_scores.get(id(c), 0))
-    return best_card
+    return card_scores
 
 
 def _simulate_from_card(card, player_id, my_team, obs, round_state, players, trump_suit) -> int:

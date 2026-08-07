@@ -106,32 +106,82 @@ def create_training_clone(discovery):
     agent._bid_net = discovery._bid_net
     agent._replay_buffer = discovery._replay_buffer
     agent._state_visit_counts = discovery._state_visit_counts
+    agent._state_update_counts = discovery._state_update_counts
     agent._reward_normalizer = discovery._reward_normalizer
     agent.episodes_trained = discovery.episodes_trained
     agent.total_updates = discovery.total_updates
     return agent
 
 
-def run_background_training(agent, opp, num_shotas=10000, milestone_callback=None):
+# ─── Population Diversity (#3) ──────────────────────────────────────────────────
+
+
+def create_diverse_opponent(agent, stage, frozen_snapshot=None, best_snapshot=None):
+    """
+    Create an opponent from a diverse population.
+
+    Each call randomly selects an opponent style:
+    - Conservative (low epsilon, plays safe)
+    - Aggressive (medium epsilon, takes risks)
+    - Wild (high epsilon, unpredictable)
+    - Historical (frozen snapshot — past self)
+    - Mirror (current self with noise)
+
+    This prevents the agent from overfitting to one opponent style.
+    """
+    opp = create_opponent(agent, stage, frozen_snapshot, best_snapshot)
+
+    # Additional diversity: randomly perturb the opponent's style.
+    style = random.choice(["conservative", "aggressive", "wild", "mirror", "standard"])
+
+    if style == "conservative":
+        opp.epsilon = max(0.01, opp.epsilon * 0.3)
+    elif style == "aggressive":
+        opp.epsilon = min(0.5, opp.epsilon * 2.0)
+    elif style == "wild":
+        opp.epsilon = random.uniform(0.3, 0.8)
+    elif style == "mirror":
+        # Small noise — plays almost like current agent but not quite.
+        opp.epsilon = opp.epsilon + random.uniform(-0.05, 0.1)
+    # "standard" = unchanged from curriculum stage.
+
+    return opp
+
+
+def run_background_training(agent, opp, num_shotas=10000, milestone_callback=None,
+                            stage=1, frozen_snapshot=None, best_snapshot=None):
     """
     Run silent self-play training in background.
 
+    Enhanced with population diversity: rotates opponents every few games
+    to expose the agent to different play styles.
+
     Args:
         agent: Training agent (shares Q-tables with main).
-        opp: Opponent agent.
+        opp: Initial opponent agent.
         num_shotas: Total shotas to train.
-        milestone_callback: Optional fn(team_tricks, bid, playing_team, bid_met, scores)
-            called after each shota for milestone detection.
+        milestone_callback: Optional fn(team_tricks, bid, playing_team, bid_met, scores).
+        stage: Curriculum stage for diverse opponent creation.
+        frozen_snapshot: Frozen Q-tables for stage 2+.
+        best_snapshot: Best-ever Q-tables for stage 3.
 
     Returns:
         win_history: list of bools (game won or not).
     """
     win_history = []
     shotas_done = 0
+    games_since_swap = 0
+    SWAP_INTERVAL = 5  # Swap opponent style every 5 games.
 
     while shotas_done < num_shotas:
         team_scores = [0, 0]
         shota_count = 0
+
+        # Rotate opponent every few games for diversity.
+        games_since_swap += 1
+        if games_since_swap >= SWAP_INTERVAL:
+            opp = create_diverse_opponent(agent, stage, frozen_snapshot, best_snapshot)
+            games_since_swap = 0
 
         for shota_idx in range(5):  # 5 shotas per game.
             players = create_standard_players()
