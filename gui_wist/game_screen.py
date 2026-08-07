@@ -2573,20 +2573,23 @@ class GameScreen:
         pygame.draw.rect(self.screen, (22, 40, 22), ai_box_rect, border_radius=8)
         pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
 
-        # Toggle button (eye icon) — top-right of the box.
+        # Toggle button — clearly visible "Hide" / "Hidden" in top-right of box.
         rec_visible = getattr(self, '_rec_visible', True)
         rec_hidden_perm = getattr(self, '_rec_hidden_permanently', False)
-        toggle_rect = pygame.Rect(ai_box_rect.right - 30, y + 3, 24, 18)
+        toggle_w = 44
+        toggle_h = 20
+        toggle_rect = pygame.Rect(ai_box_rect.right - toggle_w - 6, y + 4, toggle_w, toggle_h)
         self._rec_toggle_rect = toggle_rect
         hover_toggle = toggle_rect.collidepoint(pygame.mouse.get_pos())
+
         if not rec_hidden_perm:
-            eye_color = TEXT_GREEN if rec_visible else TEXT_DIM
-            eye_label = "👁" if rec_visible else "—"
-            toggle_bg = (30, 60, 30) if hover_toggle else (22, 40, 22)
+            toggle_bg = (60, 30, 30) if hover_toggle else (40, 20, 20)
             pygame.draw.rect(self.screen, toggle_bg, toggle_rect, border_radius=4)
-            eye_font = pygame.font.SysFont("Segoe UI", 11)
-            eye_surf = eye_font.render(eye_label, True, eye_color)
-            self.screen.blit(eye_surf, eye_surf.get_rect(center=toggle_rect.center))
+            pygame.draw.rect(self.screen, (120, 60, 60) if hover_toggle else (80, 40, 40),
+                             toggle_rect, width=1, border_radius=4)
+            hide_font = pygame.font.SysFont("Segoe UI", 10, bold=True)
+            hide_surf = hide_font.render("HIDE", True, (255, 120, 120))
+            self.screen.blit(hide_surf, hide_surf.get_rect(center=toggle_rect.center))
 
         # Title.
         box_title = "Expert-Model Rec." if self._ai_model_path else "Rule-Based Rec."
