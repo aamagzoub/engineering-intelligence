@@ -326,7 +326,7 @@ class Renderer:
 
         y = panel_rect.top + 10
         self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
-        y += 24
+        y += 26
 
         insights = state.get("insights", [])
         if not insights:
@@ -337,38 +337,34 @@ class Renderer:
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
         text_w = panel_w - 35
-        font = self.fonts["large"]  # 15px for readability.
+        body_font = self.fonts["medium"]  # 12px regular — not bold.
+        num_font = self.fonts["large"]    # 15px bold — for the number only.
 
-        # Newest on top. Same stable scroll logic as milestones.
+        # Newest on top.
         for i in range(insight_scroll, total):
-            if y + 18 > panel_rect.bottom - 15:
+            if y + 20 > panel_rect.bottom - 15:
                 break
 
-            idx = total - 1 - i  # Newest first.
+            idx = total - 1 - i
             text = insights[idx].lstrip("• ").strip()
             num = idx + 1
             is_latest = (i == 0 and insight_scroll == 0)
 
-            # Split at " — " into title and description on same line.
-            if " — " in text:
-                title_part = text.split(" — ")[0]
-                body_part = text.split(" — ", 1)[1]
-            elif " - " in text:
-                title_part = text.split(" - ")[0]
-                body_part = text.split(" - ", 1)[1]
-            else:
-                title_part = text
-                body_part = ""
+            # Render number in bold, rest in regular font.
+            num_str = f"{num}. "
+            num_w = num_font.size(num_str)[0]
+            num_color = TEXT_GOLD if is_latest else (200, 200, 200)
+            self.screen.blit(num_font.render(num_str, True, num_color), (15, y))
 
-            if body_part:
-                full_text = f"{num}. {title_part}. {body_part}"
-            else:
-                full_text = f"{num}. {title_part}"
+            # Body text — regular font, white, wrapped.
+            color = (255, 255, 255) if is_latest else (220, 230, 220)
+            y = self._wrap_text(body_font, text, 15 + num_w, y, text_w - num_w, color, panel_rect.bottom - 20)
+            y += 6  # Breathing room.
 
-            # White text, latest entry slightly brighter.
-            color = (255, 255, 255) if is_latest else (230, 240, 230)
-            y = self._wrap_text(font, full_text, 15, y, text_w, color, panel_rect.bottom - 20)
-            y += 8  # Gap.
+            # Horizontal separator line.
+            if y + 10 < panel_rect.bottom - 15:
+                pygame.draw.line(self.screen, (40, 70, 40), (20, y), (panel_w - 30, y), 1)
+                y += 8
 
             if y > panel_rect.bottom - 15:
                 break
