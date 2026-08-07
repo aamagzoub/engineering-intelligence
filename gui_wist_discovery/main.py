@@ -308,7 +308,18 @@ class WistDiscoveryWatcher:
             "bid_history": self._bid_history,
             "score_at_shota3": self._score_at_shota3,
             "episodes": self.discovery.episodes_trained,
+            "prev_shota_tricks_0": getattr(self, "_prev_shota_tricks_0", 0),
+            "defense_streak": getattr(self, "_defense_streak", 0),
         }
+
+        # Track previous shota tricks for back-to-back seek detection.
+        self._prev_shota_tricks_0 = team_tricks[0]
+
+        # Track defense streak (opponents failing their bid consecutively).
+        if playing_team == 1 and not bid_met:
+            self._defense_streak = getattr(self, "_defense_streak", 0) + 1
+        elif playing_team == 1 and bid_met:
+            self._defense_streak = 0
 
         check_milestones(context, self._trigger)
 

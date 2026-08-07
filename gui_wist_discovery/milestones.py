@@ -181,6 +181,10 @@ def check_milestones(context, trigger_fn):
     bids_met_streak = context.get("bids_met_streak", 0)
     if bids_met_streak >= 3:
         trigger_fn("reliable_bidder", "RELIABLE BIDDER: Met bid in 3+ consecutive shotas -- accurate hand assessment.")
+    if bids_met_streak >= 50:
+        trigger_fn("bid_streak_50", "BID MACHINE: Met bid in 50 consecutive shotas -- near-perfect hand reading.")
+    if bids_met_streak >= 100:
+        trigger_fn("bid_streak_100", "FLAWLESS BIDDER: Met bid in 100 consecutive shotas -- the AI never misjudges its hand anymore.")
 
     if len(bid_history) >= 2 and playing_team == 0:
         prev_bid = bid_history[-2]
@@ -203,6 +207,46 @@ def check_milestones(context, trigger_fn):
     if seeks_achieved >= 3:
         trigger_fn("seek_hunter", "SEEK HUNTER: Achieved 3+ seeks total -- the AI actively pursues the all-13-tricks strategy when possible.")
 
+    # === ADVANCED WIN STREAKS ===
+    if len(win_history) >= 50 and all(win_history[-50:]):
+        trigger_fn("streak_50", "FIFTY IN A ROW: Won 50 games without a single loss -- opponents are completely outclassed.")
+    if len(win_history) >= 100 and all(win_history[-100:]):
+        trigger_fn("streak_100", "CENTURY STREAK: Won 100 games in a row -- total strategic dominance.")
+    if len(win_history) >= 200 and all(win_history[-200:]):
+        trigger_fn("streak_200", "TWO HUNDRED UNBEATEN: Won 200 consecutive games -- the AI is playing a different game entirely.")
+    if len(win_history) >= 500 and all(win_history[-500:]):
+        trigger_fn("streak_500", "HALF THOUSAND: Won 500 games in a row -- perfection sustained over an extraordinary run.")
+    if len(win_history) >= 1000 and all(win_history[-1000:]):
+        trigger_fn("streak_1000", "THOUSAND WINS: Won 1000 consecutive games -- opponents have zero chance.")
+
+    # === PERFECT GAME ===
+    if shota_num == 5 and bids_met_streak >= 5 and playing_team == 0 and bid_met:
+        # Check if ALL 5 shotas in this game had bids met.
+        trigger_fn("perfect_game", "PERFECT GAME: Met the bid in all 5 shotas of a game -- flawless execution from start to finish.")
+
+    # === DOMINANCE ===
+    if shota_num == 5 and team_scores[1] == 0 and team_scores[0] > 0:
+        trigger_fn("shutout", "SHUTOUT: Opponents scored 0 across the entire game -- complete suppression.")
+    if len(win_history) >= 100 and all(win_history[-100:]):
+        trigger_fn("hundred_no_loss", "HUNDRED NO LOSS: Won 100 games without dropping a single one.")
+
+    # === TRICK MASTERY (per-shota) ===
+    if t0 >= 12:
+        trigger_fn("trick_12", "NEAR PERFECTION: Won 12 tricks in a single shota -- only one trick escaped.")
+    if t0 == 13 and context.get("prev_shota_tricks_0", 0) == 13:
+        trigger_fn("back_to_back_seek", "BACK-TO-BACK SEEK: Won all 13 tricks in two consecutive shotas -- terrifying dominance.")
+
+    # === RARE EVENTS ===
+    if playing_team == 0 and bid == 7 and t0 == 13:
+        trigger_fn("overbid_7_seek", "BID 7 GOT 13: Bid only 7 but won all 13 tricks -- massive hidden strength in the hand.")
+    if playing_team == 1 and t1 == 13:
+        trigger_fn("opp_seek_survived", "SURVIVED A SEEK: Opponents won all 13 tricks -- but the AI lives to fight another shota.")
+    if playing_team == 1 and not bid_met:
+        # Track consecutive defense successes.
+        defense_streak = context.get("defense_streak", 0)
+        if defense_streak >= 20:
+            trigger_fn("defense_wall_20", "IRON DEFENSE: Opponents failed their bid 20 times in a row -- nobody can get past this wall.")
+
 
 # ─── Auto-Discovery (Statistical Threshold Crossings) ───────────────────────────
 
@@ -210,9 +254,9 @@ def check_milestones(context, trigger_fn):
 def create_auto_stats():
     """Create a fresh auto-stats tracking dict."""
     return {
-        "scores": deque(maxlen=100),
-        "tricks": deque(maxlen=100),
-        "bids_met": deque(maxlen=50),
+        "scores": deque(maxlen=200),
+        "tricks": deque(maxlen=200),
+        "bids_met": deque(maxlen=200),
         "win_streaks": 0,
         "total_seeks": 0,
         "last_discovery_episode": 0,
@@ -263,7 +307,7 @@ def auto_discover(auto_stats, context, trigger_fn):
     crossed = stats["thresholds_crossed"]
 
     # Score thresholds.
-    for threshold in [1, 2, 3, 4, 5, 6, 7, 8, 10, 12]:
+    for threshold in [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 18, 20]:
         key = f"avg_score_{threshold}"
         if key not in crossed and avg_score >= threshold:
             crossed.add(key)
@@ -273,7 +317,7 @@ def auto_discover(auto_stats, context, trigger_fn):
             return
 
     # Win rate thresholds.
-    for threshold in [45, 50, 55, 60, 65, 70, 75, 80, 85, 90]:
+    for threshold in [45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 98]:
         key = f"win_rate_{threshold}"
         if key not in crossed and win_rate >= threshold:
             crossed.add(key)
@@ -283,7 +327,7 @@ def auto_discover(auto_stats, context, trigger_fn):
             return
 
     # Bid accuracy thresholds.
-    for threshold in [50, 55, 60, 65, 70, 75, 80, 85, 90]:
+    for threshold in [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 98]:
         key = f"bid_acc_{threshold}"
         if key not in crossed and bid_acc >= threshold:
             crossed.add(key)
@@ -303,7 +347,7 @@ def auto_discover(auto_stats, context, trigger_fn):
             return
 
     # Seek milestones.
-    for threshold in [5, 10, 20, 50, 100]:
+    for threshold in [5, 10, 20, 50, 100, 200, 500, 1000, 5000]:
         key = f"seeks_{threshold}"
         if key not in crossed and stats["total_seeks"] >= threshold:
             crossed.add(key)
@@ -319,7 +363,7 @@ def auto_discover(auto_stats, context, trigger_fn):
         else:
             stats["win_streaks"] = 0
 
-        for threshold in [7, 10, 15, 20, 30]:
+        for threshold in [7, 10, 15, 20, 30, 50, 100, 200, 500, 1000]:
             key = f"streak_{threshold}"
             if key not in crossed and stats["win_streaks"] >= threshold:
                 crossed.add(key)
@@ -344,4 +388,57 @@ def auto_discover(auto_stats, context, trigger_fn):
                 trigger_fn(f"auto_improve_{threshold}",
                            f"BREAKTHROUGH: Average score jumped +{improvement:.1f} "
                            f"(from {old_avg:.1f} to {new_avg:.1f}) -- strategy evolved significantly")
+                return
+
+    # Seek rate (over recent games).
+    if stats["total_seeks"] > 0 and len(stats["scores"]) >= 50:
+        recent_count = len(stats["scores"])
+        seek_rate = stats["total_seeks"] / max(recent_count, 1) * 100
+        for threshold in [5, 10]:
+            key = f"seek_rate_{threshold}"
+            if key not in crossed and seek_rate >= threshold:
+                crossed.add(key)
+                stats["last_discovery_episode"] = episodes
+                trigger_fn(f"auto_seek_rate_{threshold}",
+                           f"SEEK RATE: Achieving seeks in {threshold}%+ of shotas -- the AI hunts for all-13 opportunities aggressively")
+                return
+
+    # Longer window checks (100 shotas).
+    if len(stats["scores"]) >= 100:
+        last_100_scores = list(stats["scores"])[-100:]
+        last_100_tricks = list(stats["tricks"])[-100:]
+        last_100_bids = list(stats["bids_met"])[-100:]
+
+        avg_tricks_100 = sum(last_100_tricks) / 100
+        bid_acc_100 = sum(last_100_bids) / 100 * 100
+
+        # Trick mastery over 100 shotas.
+        for threshold in [11, 12]:
+            key = f"tricks_100_{threshold}"
+            if key not in crossed and avg_tricks_100 >= threshold:
+                crossed.add(key)
+                stats["last_discovery_episode"] = episodes
+                trigger_fn(f"auto_tricks100_{threshold}",
+                           f"TRICK DOMINANCE: Averaging {threshold}+ tricks over 100 shotas (actual: {avg_tricks_100:.1f}) -- sustained excellence")
+                return
+
+        # Bid accuracy over 100 shotas.
+        for threshold in [95, 98]:
+            key = f"bid_100_{threshold}"
+            if key not in crossed and bid_acc_100 >= threshold:
+                crossed.add(key)
+                stats["last_discovery_episode"] = episodes
+                trigger_fn(f"auto_bid100_{threshold}",
+                           f"BID PERFECTION: Bid accuracy at {threshold}%+ over 100 shotas -- the AI reads its hand with almost zero error")
+                return
+
+        # Win rate over 1000 games (use scores > 0 as proxy for wins in a shota context).
+        win_rate_100 = sum(1 for s in last_100_scores if s > 0) / 100 * 100
+        for threshold in [95, 98]:
+            key = f"wr_100_{threshold}"
+            if key not in crossed and win_rate_100 >= threshold:
+                crossed.add(key)
+                stats["last_discovery_episode"] = episodes
+                trigger_fn(f"auto_wr100_{threshold}",
+                           f"NEAR PERFECTION: Win rate at {threshold}%+ over 100 shotas -- losses are almost non-existent")
                 return

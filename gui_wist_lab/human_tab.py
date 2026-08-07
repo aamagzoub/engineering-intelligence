@@ -617,18 +617,29 @@ class HumanTab:
         """Load a trained learning model JSON for the AI opponents."""
         from tkinter import filedialog
         from agents.wist_learning.learning_agent import LearningAgent
-
-        # Default browse to the wist_discovery agent folder.
         import os
-        default_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "agents", "wist_discovery"
-        )
-        if not os.path.isdir(default_dir):
-            default_dir = ""
+        import sys
+
+        # Try multiple strategies to find the agents/wist_discovery folder.
+        default_dir = ""
+        candidates = [
+            # Hardcoded project path.
+            r"C:\Users\emagabu\workspace\Telecom-Native-Intelligence\agents\wist_discovery",
+            # Relative to exe location.
+            os.path.join(os.path.dirname(sys.executable), "agents", "wist_discovery"),
+            # Relative to working directory.
+            os.path.join(os.getcwd(), "agents", "wist_discovery"),
+            # Relative to this file (works in dev, not in exe).
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "agents", "wist_discovery"),
+        ]
+        for candidate in candidates:
+            if os.path.isdir(candidate):
+                default_dir = candidate
+                break
 
         path = filedialog.askopenfilename(
-            initialdir=default_dir,
+            initialdir=default_dir if default_dir else None,
             filetypes=[("JSON files", "*.json")],
             title="Load Learning Agent for AI opponents",
         )
