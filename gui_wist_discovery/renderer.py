@@ -262,7 +262,7 @@ class Renderer:
             self.screen.blit(self.fonts["medium"].render(line, True, TEXT_LIGHT), (px + 10, y))
             y += 18
 
-        # Discoveries box.
+        # Milestones box.
         disc_top = 60 + score_h + 8
         disc_h = SCREEN_HEIGHT - 80 - score_h - 8
         disc_rect = pygame.Rect(px, disc_top, panel_w, disc_h)
@@ -272,7 +272,7 @@ class Renderer:
         self.screen.set_clip(pygame.Rect(px + 5, disc_top + 5, panel_w - 10, disc_h - 10))
 
         y = disc_rect.top + 10
-        self.screen.blit(self.fonts["large"].render("Discoveries", True, TEXT_GOLD), (px + 10, y))
+        self.screen.blit(self.fonts["large"].render("Milestones", True, TEXT_GOLD), (px + 10, y))
         y += 22
 
         milestones = state["milestones_list"]
@@ -281,25 +281,28 @@ class Renderer:
         else:
             disc_scroll = state.get("disc_scroll", 0)
             total = len(milestones)
-            available_h = disc_rect.bottom - y - 15
-            items_fit = max(1, available_h // 80)
-            max_scroll = max(0, total - items_fit)
-            disc_scroll = max(0, min(disc_scroll, max_scroll))
-
-            reversed_list = list(reversed(milestones))
             panel_text_w = panel_w - 30
 
+            # Stable scroll: items stay in chronological order (oldest at top).
+            # Scroll offset moves the viewport down. New items appear at the bottom
+            # and do NOT shift existing items.
+            content_start_y = y
+            available_h = disc_rect.bottom - content_start_y - 15
+
+            # Render from scroll offset (index into the list, not reversed).
             for i in range(disc_scroll, total):
-                title_text, desc_text = reversed_list[i]
-                num = total - i
-                is_latest = (i == 0)
+                title_text, desc_text = milestones[i]
+                num = i + 1
 
                 if y + 38 > disc_rect.bottom - 15:
                     break
 
+                is_latest = (i == total - 1)
                 title_color = (100, 255, 100) if is_latest else (255, 255, 255)
-                self.screen.blit(self.fonts["large"].render(f"{num}. {title_text}", True, title_color), (px + 10, y))
-                y += 22
+
+                # Wrap title if too long.
+                title_str = f"{num}. {title_text}"
+                y = self._wrap_text(self.fonts["large"], title_str, px + 10, y, panel_text_w, title_color, disc_rect.bottom - 20)
 
                 desc_font = self.fonts["medium"]
                 for line_idx, line_part in enumerate(desc_text.split("\n")):
@@ -336,68 +339,26 @@ class Renderer:
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
-        available_h = panel_rect.bottom - y - 15
-        items_fit = max(1, available_h // 70)
-        max_scroll = max(0, total - items_fit)
-        insight_scroll = max(0, min(insight_scroll, max_scroll))
-
-        reversed_list = list(reversed(insights))
         text_w = panel_w - 35
+        desc_font = self.fonts["medium"]
 
+        # Stable scroll: items in order (oldest at top), scroll moves viewport.
+        # New items appear at the bottom without shifting existing ones.
         for i in range(insight_scroll, total):
             if y + 16 > panel_rect.bottom - 15:
                 break
 
-            text = reversed_list[i].lstrip("• ").strip()
-            num = total - i
-            is_latest = (i == 0)
+            text = insights[i].lstrip("• ").strip()
+            num = i + 1
+            is_latest = (i == total - 1)
 
-            if ":" in text:
-                cat_part = text.split(":")[0] + ":"
-                desc_part = text.split(":", 1)[1].strip()
-            else:
-                cat_part = ""
-                desc_part = text
+            # Color: latest in gold, others in green.
+            color = (255, 220, 130) if is_latest else (180, 220, 180)
 
-            desc_color = (255, 220, 130) if is_latest else (180, 220, 180)
-            prefix = f"{num}. {cat_part} " if cat_part else f"{num}. "
-            full_text = prefix + desc_part
-
-            prefix_w = self._cat_font.size(prefix)[0]
-            desc_font = self.fonts["medium"]
-
-            # Word-wrap with colored prefix.
-            words = full_text.split()
-            line = ""
-            first_line = True
-            for w in words:
-                test = line + " " + w if line else w
-                if desc_font.size(test)[0] < text_w:
-                    line = test
-                else:
-                    if y > panel_rect.bottom - 20:
-                        break
-                    if first_line and cat_part:
-                        self.screen.blit(self._cat_font.render(prefix, True, (255, 255, 255)), (15, y))
-                        rest = line[len(prefix):]
-                        if rest:
-                            self.screen.blit(desc_font.render(rest, True, desc_color), (15 + prefix_w, y))
-                        first_line = False
-                    else:
-                        self.screen.blit(desc_font.render(line, True, desc_color), (15, y))
-                    y += 16
-                    line = w
-
-            if line and y <= panel_rect.bottom - 20:
-                if first_line and cat_part:
-                    self.screen.blit(self._cat_font.render(prefix, True, (255, 255, 255)), (15, y))
-                    rest = line[len(prefix):]
-                    if rest:
-                        self.screen.blit(desc_font.render(rest, True, desc_color), (15 + prefix_w, y))
-                else:
-                    self.screen.blit(desc_font.render(line, True, desc_color), (15, y))
-                y += 16
-            y += 8
+            # Render as "{num}. {text}" with full word wrap.
+            full_text = f"{num}. {text}"
+            y = self._wrap_text(desc_font, full_text, 15, y, text_w, color, panel_rect.bottom - 20)
+            y += 6  # Gap between insights.
 
             if y > panel_rect.bottom - 15:
                 break
