@@ -586,6 +586,13 @@ class WistDiscoveryAgent(Agent):
             q_table_val = (q1.get(key, 0.0) + q2.get(key, 0.0)) / 2
             nn_val = nn_values.get(id(card), 0.0)
             combined = self._combined_q(q_table_val, q_table_val, nn_val)
+
+            # Tiebreaker: when Q-values are effectively equal, use per-card
+            # neural net score (unique per card). If no neural net, use rank as
+            # a stable tiebreaker so the choice is deterministic.
+            tiebreaker = nn_val * 0.001 if nn_val else RANK_VAL[card.rank] * 0.0001
+            combined += tiebreaker
+
             if combined > best_q:
                 best_q = combined
                 best_card = card

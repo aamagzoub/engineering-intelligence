@@ -464,7 +464,9 @@ class GameScreen:
 
                     # Decide which agent to use.
                     if self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "discovery":
-                        # Discovery agent — set MCTS context for look-ahead, then call act().
+                        # Discovery agent — disable exploration for clean recommendation.
+                        saved_epsilon = self._ai_advisor.epsilon
+                        self._ai_advisor.epsilon = 0.0
                         self._ai_advisor._mcts_context = {
                             'round_state': getattr(self, 'round', None) and self.round.state,
                             'players': self.players,
@@ -473,6 +475,7 @@ class GameScreen:
                         }
                         action = self._ai_advisor.act(obs)
                         self._ai_advisor._mcts_context = None
+                        self._ai_advisor.epsilon = saved_epsilon
                     elif self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "learning":
                         from agents.wist_learning.learning_agent import encode_play_state
                         state = encode_play_state(obs, set())
@@ -1313,6 +1316,7 @@ class GameScreen:
         self._trick_played = {}
         self._trick_winner_id = None
         self._trick_winner_timer = 0
+        self._rec_locked_for_turn = False  # Unlock recommendation for new trick.
 
         leader = self.round.next_leading_player_id
         self.round.state.current_trick = Trick(leading_player_id=leader)
@@ -1445,9 +1449,13 @@ class GameScreen:
         if self._message_timer > 0:
             self._message_timer -= 1
 
-        # AI recommendation (query every 30 frames).
+        # AI recommendation — query ONCE per human turn, then lock result.
         if self._pulse_frame % 30 == 0:
-            self._get_ai_recommendation()
+            if not getattr(self, '_rec_locked_for_turn', False):
+                self._get_ai_recommendation()
+                # Lock after getting a valid recommendation.
+                if getattr(self, '_ai_rec_card', None):
+                    self._rec_locked_for_turn = True
 
         # Feature 10: Pulse animation.
         self._pulse_frame = (self._pulse_frame + 1) % 60
@@ -2218,6 +2226,7 @@ class GameScreen:
         # Clear recommendation after playing.
         self._ai_rec_card = None
         self._ai_recommendation = ""
+        self._rec_locked_for_turn = False  # Unlock for next turn.
 
         # Track player vs AI evaluation.
         self._track_move_evaluation(card)
