@@ -301,16 +301,12 @@ class Renderer:
                 num_color = TEXT_GOLD if is_latest else (200, 200, 200)
                 self.screen.blit(num_font.render(num_str, True, num_color), (px + 10, y))
 
-                # Title in regular font, white.
-                title_color = (255, 255, 255) if is_latest else (220, 230, 220)
-                y = self._wrap_text(body_font, title_text, px + 10 + num_w, y, panel_text_w - num_w, title_color, disc_rect.bottom - 20)
-
-                # Description lines in regular font, lighter.
-                for line_idx, line_part in enumerate(desc_text.split("\n")):
-                    line_color = (200, 210, 220)
-                    y = self._wrap_text(body_font, line_part, px + 20, y, panel_text_w, line_color, disc_rect.bottom - 20)
-                    if y > disc_rect.bottom - 20:
-                        break
+                # Title: description — all in one paragraph separated by ":"
+                # Flatten multi-line desc into single line.
+                desc_flat = " ".join(line.strip() for line in desc_text.split("\n") if line.strip())
+                full_text = f"{title_text}: {desc_flat}" if desc_flat else title_text
+                color = (255, 255, 255) if is_latest else (220, 230, 220)
+                y = self._wrap_text(body_font, full_text, px + 10 + num_w, y, panel_text_w - num_w, color, disc_rect.bottom - 20)
                 y += 6
 
                 # Horizontal separator.
