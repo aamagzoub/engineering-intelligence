@@ -282,7 +282,8 @@ class Renderer:
             disc_scroll = state.get("disc_scroll", 0)
             total = len(milestones)
             panel_text_w = panel_w - 30
-            body_font = self.fonts["medium"]  # Same font for number and text.
+            num_font = self.fonts["large"]    # Bold for number.
+            body_font = self.fonts["medium"]  # Regular for text (same as insights).
 
             for i in range(disc_scroll, total):
                 idx = total - 1 - i  # Newest first.
@@ -294,11 +295,18 @@ class Renderer:
 
                 is_latest = (i == 0 and disc_scroll == 0)
 
-                # Flatten into one paragraph: "N. Title: description"
+                # Number in bold gold/white.
+                num_str = f"{num}. "
+                num_w = num_font.size(num_str)[0]
+                num_color = TEXT_GOLD if is_latest else (200, 200, 200)
+                self.screen.blit(num_font.render(num_str, True, num_color), (px + 10, y))
+
+                # Title: description — all in one paragraph separated by ":"
+                # Flatten multi-line desc into single line.
                 desc_flat = " ".join(line.strip() for line in desc_text.split("\n") if line.strip())
-                full_text = f"{num}. {title_text}: {desc_flat}" if desc_flat else f"{num}. {title_text}"
+                full_text = f"{title_text}: {desc_flat}" if desc_flat else title_text
                 color = (255, 255, 255) if is_latest else (220, 230, 220)
-                y = self._wrap_text(body_font, full_text, px + 10, y, panel_text_w, color, disc_rect.bottom - 20)
+                y = self._wrap_text(body_font, full_text, px + 10 + num_w, y, panel_text_w - num_w, color, disc_rect.bottom - 20)
                 y += 6
 
                 # Horizontal separator.
@@ -334,7 +342,8 @@ class Renderer:
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
         text_w = panel_w - 35
-        body_font = self.fonts["medium"]  # Same font for number and text.
+        body_font = self.fonts["medium"]  # 12px regular — not bold.
+        num_font = self.fonts["large"]    # 15px bold — for the number only.
 
         # Newest on top.
         for i in range(insight_scroll, total):
@@ -346,11 +355,16 @@ class Renderer:
             num = idx + 1
             is_latest = (i == 0 and insight_scroll == 0)
 
-            # Number and text in same font, same color.
-            full_text = f"{num}. {text}"
+            # Render number in bold, rest in regular font.
+            num_str = f"{num}. "
+            num_w = num_font.size(num_str)[0]
+            num_color = TEXT_GOLD if is_latest else (200, 200, 200)
+            self.screen.blit(num_font.render(num_str, True, num_color), (15, y))
+
+            # Body text — regular font, white, wrapped.
             color = (255, 255, 255) if is_latest else (220, 230, 220)
-            y = self._wrap_text(body_font, full_text, 15, y, text_w, color, panel_rect.bottom - 20)
-            y += 6
+            y = self._wrap_text(body_font, text, 15 + num_w, y, text_w - num_w, color, panel_rect.bottom - 20)
+            y += 6  # Breathing room.
 
             # Horizontal separator line.
             if y + 10 < panel_rect.bottom - 15:
