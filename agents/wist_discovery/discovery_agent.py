@@ -532,7 +532,22 @@ class WistDiscoveryAgent(Agent):
         if len(playable) == 1:
             card = playable[0]
         elif self.training and random.random() < self.epsilon:
-            card = random.choice(playable)
+            # Curiosity-driven exploration: prefer unvisited states.
+            if random.random() < 0.3:
+                # Pick action that leads to least-visited state.
+                state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs))
+                min_visits = float("inf")
+                curiosity_card = random.choice(playable)
+                for c in playable:
+                    key = _encode_play_action(c, obs)
+                    full_key = state_str + key
+                    visits = self._state_visit_counts.get(full_key, 0)
+                    if visits < min_visits:
+                        min_visits = visits
+                        curiosity_card = c
+                card = curiosity_card
+            else:
+                card = random.choice(playable)
         else:
             card = self._best_card(obs, playable)
 
@@ -610,31 +625,20 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """Per-trick intermediate reward + update sequence memory."""
+        """Record trick outcome in sequence memory. No Q-update — the agent must
+        discover that tricks matter from the end-of-shota score alone."""
         if not self.training or not self._play_episode:
             return
 
-        # Record this trick in memory buffer.
+        # Record this trick in memory buffer (observable fact, not reward).
         state, action = self._play_episode[-1]
-        # Extract basic info from action encoding for memory.
-        rank_norm = 1.0 if action.startswith("A") else (0.7 if action.startswith("H") else (0.4 if action.startswith("M") else 0.1))
+        rank_norm = 1.0 if action.startswith("A") else (0.7 if action.startswith("K") else (0.4 if action.startswith("M") else 0.1))
         was_trump = 1.0 if "T" in action else 0.0
         followed = 1.0 if "F" in action else 0.0
         won_f = 1.0 if won else 0.0
         self._trick_memory.append((rank_norm, was_trump, followed, won_f))
         if len(self._trick_memory) > self._memory_size:
             self._trick_memory = self._trick_memory[-self._memory_size:]
-            return
-        micro_reward = 0.3 if won else -0.1
-        effective_alpha = max(0.03, self.alpha * 0.3 * (1.0 / (1.0 + self.episodes_trained / 2000)))
-        state, action = self._play_episode[-1]
-        for q_table in (self.play_q, self.play_q2):
-            current_q = q_table[state][action]
-            q_table[state][action] += effective_alpha * (micro_reward - current_q)
-
-        # Train CardEvaluator per-trick.
-        if self._use_neural and self._nn_play_features:
-            self._play_net.update(self._nn_play_features[-1], micro_reward)
 
     def reward(self, score: float) -> None:
         """End-of-shota reward with all architecture enhancements."""
@@ -676,11 +680,6 @@ class WistDiscoveryAgent(Agent):
             # Prioritized replay.
             self._replay_buffer.add(state, action, reward_signal, "play", td_error)
 
-            # Curiosity bonus.
-            visit_count = self._state_visit_counts.get(state, 1)
-            curiosity = self._curiosity_scale / math.sqrt(visit_count)
-            play_q_update[state][action] += play_alpha * 0.1 * curiosity
-
             # Train CardEvaluator neural net.
             if self._use_neural and idx < len(nn_features_reversed):
                 self._play_net.update(nn_features_reversed[idx], reward_signal)
@@ -692,7 +691,7 @@ class WistDiscoveryAgent(Agent):
         else:
             bid_q_update = self.bid_q2
 
-        bid_reward = score * (self.gamma ** len(self._play_episode))
+        bid_reward = score  # Bid directly caused the shota outcome — full credit.
         for state, action in reversed(self._bid_episode):
             trace = self._bid_traces[state].get(action, 1.0)
             current_q = bid_q_update[state][action]
@@ -712,14 +711,8 @@ class WistDiscoveryAgent(Agent):
         # === Decay eligibility traces ===
         self._decay_traces()
 
-        # === Meta-learning: auto-adjust hyperparameters ===
-        if self._meta_learner.should_adjust(self.episodes_trained):
-            adjustments = self._meta_learner.suggest_adjustments(
-                self.epsilon, self.alpha, self.lambda_trace, self.episodes_trained)
-            if "epsilon" in adjustments:
-                self.epsilon = adjustments["epsilon"]
-            if "alpha" in adjustments:
-                self.alpha = adjustments["alpha"]
+        # === Meta-learning: log performance (no epsilon/alpha override — single decay owns it) ===
+        self._meta_learner.should_adjust(self.episodes_trained)  # Track stats only.
 
         # === Curriculum: switch to neural net after enough episodes ===
         if not self._use_neural and self.episodes_trained >= self._neural_switch_threshold:
