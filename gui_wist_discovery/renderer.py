@@ -273,7 +273,7 @@ class Renderer:
 
         y = disc_rect.top + 10
         self.screen.blit(self.fonts["large"].render("Milestones", True, TEXT_GOLD), (px + 10, y))
-        y += 22
+        y += 24
 
         milestones = state["milestones_list"]
         if not milestones:
@@ -282,32 +282,41 @@ class Renderer:
             disc_scroll = state.get("disc_scroll", 0)
             total = len(milestones)
             panel_text_w = panel_w - 30
+            num_font = self.fonts["large"]    # Bold for number.
+            body_font = self.fonts["medium"]  # Regular for text (same as insights).
 
-            # Newest on top. Scroll = how many items from the top to skip.
-            # When user scrolls down, they see older items.
-            # New items at top don't shift the view because main.py
-            # increments disc_scroll when new milestones arrive.
             for i in range(disc_scroll, total):
                 idx = total - 1 - i  # Newest first.
                 title_text, desc_text = milestones[idx]
                 num = idx + 1
 
-                if y + 38 > disc_rect.bottom - 15:
+                if y + 20 > disc_rect.bottom - 15:
                     break
 
                 is_latest = (i == 0 and disc_scroll == 0)
-                title_color = (100, 255, 100) if is_latest else (255, 255, 255)
 
-                title_str = f"{num}. {title_text}"
-                y = self._wrap_text(self.fonts["large"], title_str, px + 10, y, panel_text_w, title_color, disc_rect.bottom - 20)
+                # Number in bold gold/white.
+                num_str = f"{num}. "
+                num_w = num_font.size(num_str)[0]
+                num_color = TEXT_GOLD if is_latest else (200, 200, 200)
+                self.screen.blit(num_font.render(num_str, True, num_color), (px + 10, y))
 
-                desc_font = self.fonts["medium"]
+                # Title in regular font, white.
+                title_color = (255, 255, 255) if is_latest else (220, 230, 220)
+                y = self._wrap_text(body_font, title_text, px + 10 + num_w, y, panel_text_w - num_w, title_color, disc_rect.bottom - 20)
+
+                # Description lines in regular font, lighter.
                 for line_idx, line_part in enumerate(desc_text.split("\n")):
-                    line_color = (255, 255, 255) if line_idx == 0 else (200, 210, 220)
-                    y = self._wrap_text(desc_font, line_part, px + 20, y, panel_text_w, line_color, disc_rect.bottom - 20)
+                    line_color = (200, 210, 220)
+                    y = self._wrap_text(body_font, line_part, px + 20, y, panel_text_w, line_color, disc_rect.bottom - 20)
                     if y > disc_rect.bottom - 20:
                         break
-                y += 10
+                y += 6
+
+                # Horizontal separator.
+                if y + 10 < disc_rect.bottom - 15:
+                    pygame.draw.line(self.screen, (50, 60, 30), (px + 15, y), (px + panel_w - 15, y), 1)
+                    y += 8
 
                 if y > disc_rect.bottom - 15:
                     break
