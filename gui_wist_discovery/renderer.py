@@ -298,14 +298,14 @@ class Renderer:
                 # Number in bold gold/white.
                 num_str = f"{num}. "
                 num_w = num_font.size(num_str)[0]
-                num_color = TEXT_GOLD if is_latest else (200, 200, 200)
+                num_color = TEXT_GOLD if is_latest else (255, 255, 255)
                 self.screen.blit(num_font.render(num_str, True, num_color), (px + 10, y))
 
                 # Title: description — all in one paragraph separated by ":"
                 # Flatten multi-line desc into single line.
                 desc_flat = " ".join(line.strip() for line in desc_text.split("\n") if line.strip())
                 full_text = f"{title_text}: {desc_flat}" if desc_flat else title_text
-                color = (255, 255, 255) if is_latest else (220, 230, 220)
+                color = (255, 255, 255) if is_latest else (255, 255, 255)
                 y = self._wrap_text(body_font, full_text, px + 10 + num_w, y, panel_text_w - num_w, color, disc_rect.bottom - 20)
                 y += 6
 
@@ -321,8 +321,23 @@ class Renderer:
 
     # ─── Left Panel (Insights) ──────────────────────────────────────────────────
 
+    # Category colors for badges.
+    _CAT_COLORS = {
+        "bidding": (60, 130, 200),
+        "trump": (200, 80, 80),
+        "timing": (180, 150, 50),
+        "partnership": (80, 180, 80),
+        "defense": (160, 80, 180),
+        "voids": (80, 180, 180),
+    }
+    _CONF_LABELS = {
+        "emerging": "o",
+        "proven": "*",
+        "mastered": "**",
+    }
+
     def _render_insights_panel(self, panel_w, state):
-        """Render left panel with strategic insights."""
+        """Render left panel with structured strategic insights."""
         panel_rect = pygame.Rect(5, 60, panel_w - 10, SCREEN_HEIGHT - 80)
         pygame.draw.rect(self.screen, (0, 0, 0), panel_rect, border_radius=10)
         pygame.draw.rect(self.screen, (20, 70, 50), panel_rect, width=1, border_radius=10)
@@ -342,31 +357,94 @@ class Renderer:
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
         text_w = panel_w - 35
-        body_font = self.fonts["medium"]  # 12px regular — not bold.
-        num_font = self.fonts["large"]    # 15px bold — for the number only.
+        body_font = self.fonts["medium"]
+        small_font = self.fonts["small"]
+        num_font = self.fonts["large"]
 
-        # Newest on top.
         for i in range(insight_scroll, total):
             if y + 20 > panel_rect.bottom - 15:
                 break
 
             idx = total - 1 - i
-            text = insights[idx].lstrip("• ").strip()
+            ins = insights[idx]
+
+            # Handle both old string format and new dict format.
+            if isinstance(ins, str):
+                text = ins.lstrip("• ").strip()
+                category = ""
+                confidence = ""
+                condition = ""
+                why = ""
+                is_new = False
+            else:
+                text = ins.get("text", "")
+                category = ins.get("category", "")
+                confidence = ins.get("confidence", "")
+                condition = ins.get("condition", "")
+                why = ins.get("why", "")
+                is_new = ins.get("new", False)
+
             num = idx + 1
             is_latest = (i == 0 and insight_scroll == 0)
 
-            # Render number in bold, rest in regular font.
+            # --- Line 1: Number + category badge + NEW badge + confidence ---
+            x_cursor = 15
+
+            # Number.
             num_str = f"{num}. "
-            num_w = num_font.size(num_str)[0]
-            num_color = TEXT_GOLD if is_latest else (200, 200, 200)
-            self.screen.blit(num_font.render(num_str, True, num_color), (15, y))
+            num_color = TEXT_GOLD if is_latest else (255, 255, 255)
+            self.screen.blit(num_font.render(num_str, True, num_color), (x_cursor, y))
+            x_cursor += num_font.size(num_str)[0]
 
-            # Body text — regular font, white, wrapped.
-            color = (255, 255, 255) if is_latest else (220, 230, 220)
-            y = self._wrap_text(body_font, text, 15 + num_w, y, text_w - num_w, color, panel_rect.bottom - 20)
-            y += 6  # Breathing room.
+            # Category badge.
+            if category:
+                cat_color = self._CAT_COLORS.get(category, (120, 120, 120))
+                cat_text = category.upper()
+                cat_surf = small_font.render(cat_text, True, (255, 255, 255))
+                cat_w = cat_surf.get_width() + 8
+                cat_h = cat_surf.get_height() + 4
+                badge_rect = pygame.Rect(x_cursor, y + (18 - cat_h) // 2, cat_w, cat_h)
+                pygame.draw.rect(self.screen, cat_color, badge_rect, border_radius=3)
+                self.screen.blit(cat_surf, (x_cursor + 4, badge_rect.y + 2))
+                x_cursor += cat_w + 4
 
-            # Horizontal separator line.
+            # NEW! badge.
+            if is_new:
+                new_surf = small_font.render("NEW", True, (0, 0, 0))
+                new_w = new_surf.get_width() + 8
+                new_h = new_surf.get_height() + 4
+                new_rect = pygame.Rect(x_cursor, y + (18 - new_h) // 2, new_w, new_h)
+                pygame.draw.rect(self.screen, (220, 160, 0), new_rect, border_radius=3)
+                self.screen.blit(new_surf, (x_cursor + 4, new_rect.y + 2))
+                x_cursor += new_w + 4
+
+            # Confidence symbol.
+            if confidence:
+                conf_sym = self._CONF_LABELS.get(confidence, "")
+                if conf_sym:
+                    self.screen.blit(small_font.render(conf_sym, True, TEXT_GOLD), (x_cursor, y + 3))
+
+            y += 18
+
+            # --- Line 2+: Main text ---
+            y = self._wrap_text(body_font, text, 25, y, text_w - 10, (255, 255, 255), panel_rect.bottom - 20)
+            y += 2
+
+            # --- Line 3: Condition (if present) ---
+            if condition and y + 14 < panel_rect.bottom - 20:
+                cond_text = f"  - When: {condition}"
+                y = self._wrap_text(body_font, cond_text, 30, y, text_w - 20, (255, 255, 255), panel_rect.bottom - 20)
+                y += 2
+
+            # --- Line 4: Why (if present) ---
+            if why and y + 14 < panel_rect.bottom - 20:
+                why_text = f"  - Why: {why}"
+                y = self._wrap_text(body_font, why_text, 30, y, text_w - 20, (255, 255, 255), panel_rect.bottom - 20)
+                y += 2
+
+            y += 4
+
+            # Separator.
             if y + 10 < panel_rect.bottom - 15:
                 pygame.draw.line(self.screen, (40, 70, 40), (20, y), (panel_w - 30, y), 1)
                 y += 8

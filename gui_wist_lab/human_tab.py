@@ -51,6 +51,10 @@ class HumanTab:
         self._confirm_frame = None
         self._trick_played = {}
 
+        # Player evaluation system.
+        from gui_wist_lab.player_evaluator import PlayerEvaluator
+        self._evaluator = PlayerEvaluator()
+
         # Game state.
         self.players = None
         self.round = None
@@ -394,7 +398,7 @@ class HumanTab:
             pass
 
     def _draw_centre_trick(self, winner_id=None):
-        """Draw played cards in the centre with player labels and winner highlight."""
+        """Draw played cards in the centre with player labels and winner/whip highlight."""
         canvas = self._centre_canvas
         canvas.delete("all")
         w, h = 280, 200
@@ -416,11 +420,60 @@ class HumanTab:
             3: (cw // 2 + 12, h // 2 + ch // 2 + 10),
         }
 
+        # Determine whipping/over-trumping for red highlight.
+        # Rule: red highlight ONLY when led suit is NOT trump and a card is trump.
+        # Over-trump: a higher trump after a previous trump, still only in non-trump led tricks.
+        trump_sym = SUIT_SYMBOLS.get(self.trump_suit, "") if self.trump_suit else ""
+        play_order = self.round.state.current_trick.play_order if (
+            self.round and self.round.state.current_trick and
+            hasattr(self.round.state.current_trick, 'play_order')
+        ) else []
+
+        # Determine the led suit from the first card played in this trick.
+        led_suit_sym = ""
+        first_pid = play_order[0] if play_order else None
+        if first_pid is not None and first_pid in self._trick_played:
+            _, led_suit_sym = parse_card_text(self._trick_played[first_pid])
+        elif self._trick_played:
+            # Fallback: first entry in trick_played dict.
+            first_card = next(iter(self._trick_played.values()), "")
+            _, led_suit_sym = parse_card_text(first_card)
+
+        led_is_trump = (led_suit_sym == trump_sym) if trump_sym else False
+
+        # Track highest trump seen so far for over-trump detection.
+        whip_cards = set()  # PIDs that are whipping or over-trumping.
+        if not led_is_trump and trump_sym:
+            highest_trump_rank = -1
+            rank_values = {"2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7,
+                           "8": 8, "9": 9, "10": 10, "J": 11, "Q": 12, "K": 13, "A": 14}
+            for pid in (play_order if play_order else sorted(self._trick_played.keys())):
+                if pid not in self._trick_played:
+                    continue
+                ct = self._trick_played[pid]
+                rank, suit_sym = parse_card_text(ct)
+                if suit_sym == trump_sym and pid != first_pid:
+                    # This is a trump played in a non-trump trick = whip or over-trump.
+                    rv = rank_values.get(rank, 0)
+                    if highest_trump_rank < 0:
+                        # First trump in this trick = whipping.
+                        whip_cards.add(pid)
+                    elif rv > highest_trump_rank:
+                        # Higher trump than previous = over-trumping.
+                        whip_cards.add(pid)
+                    highest_trump_rank = max(highest_trump_rank, rv)
+
         for pid, (x, y) in positions.items():
             if pid in self._trick_played:
                 ct = self._trick_played[pid]
                 rank, suit = parse_card_text(ct)
-                hl = "#ffd54f" if pid == winner_id else None
+                # Highlight: gold for winner, red for whip/over-trump, none otherwise.
+                if pid == winner_id:
+                    hl = "#ffd54f"
+                elif pid in whip_cards:
+                    hl = "#e53935"  # Red for whipping / over-trumping.
+                else:
+                    hl = None
                 draw_card(canvas, x, y, rank, suit, width=cw, height=ch,
                           highlight=hl)
             else:
@@ -430,7 +483,7 @@ class HumanTab:
             # Player label near each slot.
             lx, ly = label_pos[pid]
             pname = DISPLAY_NAMES.get(pid, f"P{pid+1}")
-            color = "#ffd54f" if pid == winner_id else "#5a8a5a"
+            color = "#ffd54f" if pid == winner_id else ("#e53935" if pid in whip_cards else "#5a8a5a")
             canvas.create_text(lx, ly, text=pname, fill=color,
                                font=("Segoe UI", 7))
 
@@ -564,7 +617,18 @@ class HumanTab:
         """Load a trained learning model JSON for the AI opponents."""
         from tkinter import filedialog
         from agents.wist_learning.learning_agent import LearningAgent
+
+        # Default browse to the wist_discovery agent folder.
+        import os
+        default_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "agents", "wist_discovery"
+        )
+        if not os.path.isdir(default_dir):
+            default_dir = ""
+
         path = filedialog.askopenfilename(
+            initialdir=default_dir,
             filetypes=[("JSON files", "*.json")],
             title="Load Learning Agent for AI opponents",
         )
@@ -767,7 +831,7 @@ class HumanTab:
         if can_dak:
             tk.Button(inner1, text="Dak", font=("Segoe UI", 10, "bold"),
                       fg="#fff", bg=COLORS["btn_red"], bd=0, padx=10, pady=3,
-                      cursor="hand2", command=lambda: self._human_bid(None)
+                      cursor="hand2", command=self._human_dak
                       ).pack(side="left", padx=2)
 
         # Row 2: Trump + confirm (shown after bid selected).
@@ -821,6 +885,18 @@ class HumanTab:
             return
         self._human_chosen_trump = self._human_trump_choice
         self._human_bid(self._human_bid_value)
+
+    def _human_dak(self):
+        """Handle Dak — all passed and qabool declares redeal."""
+        self._safe_destroy(self._bid_btn_frame)
+        self._bid_btn_frame = None
+        self._clear_active_highlight()
+        self._show_human_hand(clickable=False)
+
+        self._set_status("Dak! Re-dealing...")
+        self._log("  ⚡ DAK! All passed — re-dealing.")
+        self.game_running = False
+        self._schedule(1500, self._start_game)
 
     def _human_bid(self, value):
         """Handle human's bid decision."""
@@ -1067,6 +1143,41 @@ class HumanTab:
         self._draw_centre_trick()
         self._show_human_hand(clickable=False)
 
+        # --- Record decision for evaluation ---
+        try:
+            ai_agent = self._get_ai_agent()
+            if ai_agent and hasattr(ai_agent, 'act'):
+                # Ask AI what it would play in this situation.
+                from environments.wist.observations import WistObservation
+                obs = WistObservation(
+                    player_id=HUMAN_ID,
+                    hand=self.players[HUMAN_ID].hand,
+                    trump_suit=self.trump_suit,
+                    current_trick=self.round.state.current_trick,
+                    team_scores={0: self.team_tricks[0], 1: self.team_tricks[1]},
+                )
+                ai_action = ai_agent.act(obs)
+                ai_card_str = card_str(ai_action.card) if hasattr(ai_action, 'card') else ""
+                was_trump = (self.trump_suit and card.suit == self.trump_suit)
+                # Check if this creates a void.
+                from collections import Counter
+                suit_counts = Counter(c.suit for c in self.players[HUMAN_ID].hand)
+                created_void = (suit_counts.get(card.suit, 0) == 0)
+                position = self._play_idx - 1
+                self._evaluator.record_trick_decision(
+                    shota=self.shota_number,
+                    trick=self.trick_number,
+                    player_card=ct,
+                    ai_card=ai_card_str,
+                    position=position,
+                    was_trump=bool(was_trump),
+                    created_void=created_void,
+                    trick_won_by_team=False,  # Updated after trick resolves.
+                    context=f"Trick {self.trick_number}, pos {position}",
+                )
+        except Exception:
+            pass  # Don't let evaluation errors break gameplay.
+
         # Reveal trump on first card of first trick.
         if not self.trump_revealed and self.trick_number == 1:
             self._show_trump()
@@ -1201,6 +1312,45 @@ class HumanTab:
                 self._log("━━━ GAME OVER ━━━")
                 self._log(f"  Winner: {'Team 1 (YOU)' if self.game_scores[0] > self.game_scores[1] else 'Team 2'}")
                 self.game_running = False
+
+                # --- Player Evaluation ---
+                try:
+                    won = self.game_scores[0] > self.game_scores[1]
+                    analysis = self._evaluator.finish_game(
+                        won=won,
+                        score_team1=self.game_scores[0],
+                        score_team2=self.game_scores[1],
+                        shotas_played=self.shota_number,
+                    )
+                    self._log("")
+                    self._log("━━━ YOUR PERFORMANCE ━━━")
+                    self._log(f"  Skill Rating: {analysis['elo']} ({'+' if analysis['elo_change'] > 0 else ''}{analysis['elo_change']:.0f})")
+                    self._log(f"  Games Played: {analysis['games_played']}")
+                    self._log(f"  Bid Accuracy: {analysis['bid_accuracy']}%")
+                    self._log(f"  AI Agreement: {analysis['decision_agreement']}%")
+                    self._log(f"  Trump Use: {analysis['trump_efficiency']}%")
+                    self._log(f"  Void Play: {analysis['void_exploitation']}%")
+                    self._log(f"  Partnership: {analysis['partnership_score']}%")
+                    self._log(f"  Defense: {analysis['defense_score']}%")
+                    if analysis.get("strengths"):
+                        self._log("  Strengths:")
+                        for s in analysis["strengths"]:
+                            self._log(f"    + {s}")
+                    if analysis.get("weaknesses"):
+                        self._log("  Areas to improve:")
+                        for w in analysis["weaknesses"]:
+                            self._log(f"    - {w}")
+                    if analysis.get("turning_points"):
+                        self._log("  Key moments:")
+                        for tp in analysis["turning_points"]:
+                            icon = "★" if tp["type"] == "brilliance" else "✗"
+                            self._log(f"    {icon} S{tp['shota']}T{tp['trick']}: played {tp['played']} (AI: {tp['ai_choice']})")
+                    if analysis.get("improvement", {}).get("details"):
+                        self._log("  Trend:")
+                        for d in analysis["improvement"]["details"]:
+                            self._log(f"    → {d}")
+                except Exception:
+                    pass  # Don't break game over screen.
             else:
                 result_text = "✓ Bid MET" if bid_met else "✗ Bid FAILED"
                 canvas.create_text(w // 2, h // 2 - 30,

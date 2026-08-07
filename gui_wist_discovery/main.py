@@ -53,7 +53,7 @@ class WistDiscoveryWatcher:
         self.fonts = {
             "title": pygame.font.SysFont("Segoe UI", 22, bold=True),
             "large": pygame.font.SysFont("Segoe UI", 15, bold=True),
-            "medium": pygame.font.SysFont("Segoe UI", 12),
+            "medium": pygame.font.SysFont("Segoe UI", 15),
             "small": pygame.font.SysFont("Segoe UI", 10),
         }
         self.renderer = Renderer(self.screen, self.fonts)
