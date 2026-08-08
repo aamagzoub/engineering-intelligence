@@ -36,7 +36,8 @@ _TIER_RANK = {"A": 5, "K": 4, "Q": 3, "J": 2, "M": 1, "L": 0, "X": -1}
 
 
 def make_insight(text, category, difficulty, confidence="emerging",
-                 episode=0, condition=None, exception=None, why=None, links=None):
+                 episode=0, condition=None, exception=None, why=None, links=None,
+                 version=0):
     """Create a structured insight dict."""
     return {
         "text": text,
@@ -49,6 +50,7 @@ def make_insight(text, category, difficulty, confidence="emerging",
         "why": why,
         "links": links or [],
         "new": True,
+        "version": version,  # 0 = first discovery, 1+ = refinement.
     }
 
 
@@ -58,8 +60,12 @@ def make_insight(text, category, difficulty, confidence="emerging",
 def generate_insights(agent) -> list:
     """
     Generate structured insights from the agent's learned knowledge.
-    Returns list of insight dicts. Grows with training.
-    Preserves previously discovered insights and marks new ones.
+
+    ACCUMULATION MODEL: insights are NEVER removed. Once discovered, they stay
+    forever as part of the brain's history. New insights are added on top.
+    If an insight refines an earlier one, it gets version (+N).
+
+    Returns list of insight dicts, always growing.
     """
     if agent.episodes_trained < 5000:
         return [make_insight(
@@ -72,93 +78,93 @@ def generate_insights(agent) -> list:
     bid_q = agent.bid_q
     play_items = list(play_q.items())[:min(len(play_q), 20000)]
 
-    # Load previously cached insights.
-    cached = _load_cached_insights()
-    cached_texts = {ins["text"] for ins in cached}
+    # Load ALL previously accumulated insights (never discard).
+    accumulated = _load_cached_insights()
+    accumulated_texts = {ins["text"] for ins in accumulated}
 
-    # Generate all current insights.
+    # Generate current insights from Q-tables.
     raw = []
-
-    # 1. Hand-based bidding insights.
     raw.extend(_hand_based_insights(bid_q, episodes))
-
-    # 2. Conditional insights.
     raw.extend(_conditional_insights(play_items, bid_q, episodes))
-
-    # 3. Partnership insights.
     raw.extend(_partnership_insights(play_items, episodes))
-
-    # 4. Opponent-reading insights.
     raw.extend(_opponent_reading_insights(play_items, episodes))
-
-    # 5. Mistake-based insights.
     raw.extend(_mistake_insights(play_items, bid_q, episodes))
-
-    # 6. Core play lessons (basics).
     raw.extend(_core_play_insights(play_items, episodes))
-
-    # 7. Trump insights.
     raw.extend(_trump_insights(play_items, episodes))
-
-    # 8. Void insights.
     raw.extend(_void_insights(play_items, episodes))
-
-    # 9. Timing insights.
     raw.extend(_timing_insights(play_items, episodes))
-
-    # 10. Evolution insights (endless growth).
     raw.extend(_evolution_insights(play_items, bid_q, episodes))
-
-    # 11. Surprise discoveries — counter-intuitive patterns that defy expectations.
     raw.extend(_surprise_discoveries(play_items, bid_q, episodes))
-
-    # 12. Deep hand analysis — more specific hand-based tips from bid Q-table.
     raw.extend(_deep_hand_insights(bid_q, episodes))
-
-    # 13. Position-phase combos — what specifically works in each seat at each phase.
     raw.extend(_position_phase_insights(play_items, episodes))
-
-    # 14. ENDLESS: Mine individual Q-table entries for specific situational lessons.
-    #     This layer grows proportionally with Q-table size — truly unlimited.
     raw.extend(_endless_situational_mining(play_items, bid_q, episodes))
 
-    # Progression gating — only show insights appropriate to training level.
+    # Progression gating.
     raw = _apply_progression_gate(raw, episodes)
 
-    # Deduplicate.
+    # Deduplicate within the new batch only.
     raw = _deduplicate(raw)
 
-    # Mark new vs existing.
+    # ACCUMULATION: merge new insights into the accumulated history.
     for ins in raw:
-        if ins["text"] in cached_texts:
-            ins["new"] = False
-            # Preserve original episode from cache.
-            for cached_ins in cached:
-                if cached_ins["text"] == ins["text"]:
-                    ins["episode"] = cached_ins["episode"]
-                    ins["confidence"] = cached_ins["confidence"]
+        if ins["text"] in accumulated_texts:
+            # Already known — update confidence only.
+            for acc_ins in accumulated:
+                if acc_ins["text"] == ins["text"]:
+                    age = episodes - acc_ins["episode"]
+                    if age > 100000:
+                        acc_ins["confidence"] = "mastered"
+                    elif age > 30000:
+                        acc_ins["confidence"] = "proven"
+                    acc_ins["new"] = False
                     break
         else:
+            # NEW insight — check if it refines an existing one.
             ins["new"] = True
             ins["episode"] = episodes
+            ins["version"] = _find_version(ins, accumulated)
+            accumulated.append(ins)
+            accumulated_texts.add(ins["text"])
 
-    # Update confidence based on training duration since discovery.
-    for ins in raw:
-        age = episodes - ins["episode"]
+    # Update confidence for all accumulated insights.
+    for ins in accumulated:
+        age = episodes - ins.get("episode", 0)
         if age > 100000:
             ins["confidence"] = "mastered"
         elif age > 30000:
             ins["confidence"] = "proven"
-        else:
-            ins["confidence"] = "emerging"
+        elif not ins.get("new"):
+            ins["confidence"] = ins.get("confidence", "emerging")
 
-    # Link related insights.
-    _link_insights(raw)
+    # Save entire accumulated history.
+    _save_cached_insights(accumulated)
 
-    # Save cache.
-    _save_cached_insights(raw)
+    return accumulated
 
-    return raw
+
+def _find_version(new_ins, accumulated) -> int:
+    """
+    Check if new insight refines an existing one (same category + similar topic).
+    Returns the version number: 0 if brand new, N+1 if refining insight at version N.
+    """
+    category = new_ins["category"]
+    new_words = set(new_ins["text"].lower().split())
+
+    best_overlap = 0
+    best_version = -1
+
+    for existing in accumulated:
+        if existing["category"] != category:
+            continue
+        existing_words = set(existing["text"].lower().split())
+        overlap = len(new_words & existing_words) / max(len(new_words | existing_words), 1)
+        if overlap > 0.4 and overlap > best_overlap:
+            best_overlap = overlap
+            best_version = existing.get("version", 0)
+
+    if best_version >= 0:
+        return best_version + 1
+    return 0
 
 
 
@@ -1738,32 +1744,43 @@ def _save_snapshots(snapshots):
         pass
 
 
-def _load_cached_insights() -> list:
-    try:
-        if os.path.exists(_INSIGHTS_CACHE_PATH):
-            with open(_INSIGHTS_CACHE_PATH, "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return []
-
-
 def _save_cached_insights(insights):
     try:
-        # Only save serializable fields.
         to_save = []
         for ins in insights:
             to_save.append({
-                "text": ins["text"],
-                "category": ins["category"],
-                "difficulty": ins["difficulty"],
-                "confidence": ins["confidence"],
-                "episode": ins["episode"],
+                "text": ins.get("text", ""),
+                "category": ins.get("category", ""),
+                "difficulty": ins.get("difficulty", "beginner"),
+                "confidence": ins.get("confidence", "emerging"),
+                "episode": ins.get("episode", 0),
+                "version": ins.get("version", 0),
+                "why": ins.get("why", ""),
+                "new": ins.get("new", False),
             })
         with open(_INSIGHTS_CACHE_PATH, "w") as f:
             json.dump(to_save, f)
     except Exception:
         pass
+
+
+def _load_cached_insights() -> list:
+    try:
+        if os.path.exists(_INSIGHTS_CACHE_PATH):
+            with open(_INSIGHTS_CACHE_PATH, "r") as f:
+                data = json.load(f)
+            # Ensure all entries have required fields.
+            for ins in data:
+                ins.setdefault("version", 0)
+                ins.setdefault("why", "")
+                ins.setdefault("new", False)
+                ins.setdefault("links", [])
+                ins.setdefault("condition", None)
+                ins.setdefault("exception", None)
+            return data
+    except Exception:
+        pass
+    return []
 
 
 # ─── Helper: Get insight text for backward compatibility ─────────────────────────

@@ -1418,13 +1418,31 @@ class HumanTab:
                 except Exception:
                     pass  # Don't break game over screen.
             else:
-                result_text = "✓ Bid MET" if bid_met else "✗ Bid FAILED"
+                # Context-aware shota result wording.
+                user_team = 0  # Team 1 = user's team.
+                if self.playing_team_id == user_team:
+                    # User's team bid.
+                    if bid_met:
+                        result_text = "✓ Your Team Won"
+                        result_color = COLORS["gold"]
+                    else:
+                        result_text = "✗ Your Team Lost"
+                        result_color = "#ff6666"
+                else:
+                    # Opponents bid.
+                    if bid_met:
+                        result_text = "Opponents Made Their Bid"
+                        result_color = "#ffaa44"
+                    else:
+                        result_text = "✓ Defense Successful!"
+                        result_color = COLORS["gold"]
+
                 canvas.create_text(w // 2, h // 2 - 30,
                                    text=f"Shota {self.shota_number} Complete",
                                    fill="#ffffff", font=("Segoe UI", 12, "bold"))
                 canvas.create_text(w // 2, h // 2,
                                    text=f"{result_text} | T1:{self.team_tricks[0]} – T2:{self.team_tricks[1]}",
-                                   fill=COLORS["gold"] if bid_met else "#ff6666",
+                                   fill=result_color,
                                    font=("Segoe UI", 10))
                 canvas.create_text(w // 2, h // 2 + 30,
                                    text=f"Score: {self.game_scores[0]} – {self.game_scores[1]}",

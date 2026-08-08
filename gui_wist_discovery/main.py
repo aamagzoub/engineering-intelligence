@@ -621,7 +621,7 @@ class WistDiscoveryWatcher:
             "last_winner": self.last_winner,
             "compute_time": self._accumulated_compute + self._get_compute_time(),
             "episodes": episodes,
-            "seeks_achieved": self.seeks_achieved,
+            "seeks_achieved": self.seeks_achieved + self._auto_stats.get("total_seeks", 0),
             "bids_met": self.bids_met,
             "bids_failed": self.bids_failed,
             "epsilon": self.discovery.epsilon,

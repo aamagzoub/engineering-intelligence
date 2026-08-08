@@ -387,11 +387,13 @@ class Renderer:
             num = idx + 1
             is_latest = (i == 0 and insight_scroll == 0)
 
-            # --- Line 1: Number + category badge + NEW badge + confidence ---
+            # --- Line 1: Number + version + category badge + NEW badge + confidence ---
             x_cursor = 15
 
-            # Number.
-            num_str = f"{num}. "
+            # Number with version.
+            version = ins.get("version", 0) if isinstance(ins, dict) else 0
+            version_str = f" (+{version})" if version > 0 else ""
+            num_str = f"{num}{version_str}. "
             num_color = TEXT_GOLD if is_latest else (255, 255, 255)
             self.screen.blit(num_font.render(num_str, True, num_color), (x_cursor, y))
             x_cursor += num_font.size(num_str)[0]
@@ -426,20 +428,19 @@ class Renderer:
 
             y += 18
 
-            # --- Line 2+: Main text ---
-            y = self._wrap_text(body_font, text, 25, y, text_w - 10, (255, 255, 255), panel_rect.bottom - 20)
+            # --- Line 2+: WHAT: Main text ---
+            what_label = num_font.render("WHAT: ", True, (255, 255, 255))
+            self.screen.blit(what_label, (25, y))
+            what_label_w = what_label.get_width()
+            y = self._wrap_text(body_font, text, 25 + what_label_w, y, text_w - 10 - what_label_w, (255, 255, 255), panel_rect.bottom - 20)
             y += 2
 
-            # --- Line 3: Condition (if present) ---
-            if condition and y + 14 < panel_rect.bottom - 20:
-                cond_text = f"  - When: {condition}"
-                y = self._wrap_text(body_font, cond_text, 30, y, text_w - 20, (255, 255, 255), panel_rect.bottom - 20)
-                y += 2
-
-            # --- Line 4: Why (if present) ---
+            # --- Line 3: WHY: (if present, no "When:") ---
             if why and y + 14 < panel_rect.bottom - 20:
-                why_text = f"  - Why: {why}"
-                y = self._wrap_text(body_font, why_text, 30, y, text_w - 20, (255, 255, 255), panel_rect.bottom - 20)
+                why_label = num_font.render("WHY: ", True, (255, 255, 255))
+                self.screen.blit(why_label, (25, y))
+                why_label_w = why_label.get_width()
+                y = self._wrap_text(body_font, why, 25 + why_label_w, y, text_w - 10 - why_label_w, (255, 255, 255), panel_rect.bottom - 20)
                 y += 2
 
             y += 4
