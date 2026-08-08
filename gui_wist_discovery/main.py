@@ -417,6 +417,33 @@ class WistDiscoveryWatcher:
             if len(self._wist_win_history) >= 10:
                 if sum(self._wist_win_history[-10:]) / 10 >= 0.7:
                     self._best_snapshot = snapshot_brain(self.discovery)
+                # Graduate to stage 4 after sustained dominance.
+                if len(self._wist_win_history) >= 50:
+                    recent_50 = sum(self._wist_win_history[-50:]) / 50
+                    if recent_50 >= 0.85 or stagnated:
+                        self._opponent_stage = 4
+                        self._best_snapshot = snapshot_brain(self.discovery)
+                        self._log(f"  ** CURRICULUM: Stage 4 — Elite (episode {episodes}) **")
+                        self._trigger("stage_4",
+                                      "CURRICULUM STAGE 4: Graduated to elite training. "
+                                      "Opponents now use zero exploration and play perfectly.")
+
+        elif self._opponent_stage == 4:
+            if len(self._wist_win_history) >= 100:
+                recent_100 = sum(self._wist_win_history[-100:]) / 100
+                if recent_100 >= 0.9 or stagnated:
+                    self._opponent_stage = 5
+                    self._best_snapshot = snapshot_brain(self.discovery)
+                    self._log(f"  ** CURRICULUM: Stage 5 — Grandmaster (episode {episodes}) **")
+                    self._trigger("stage_5",
+                                  "CURRICULUM STAGE 5: Grandmaster level. "
+                                  "Training against population of diverse expert opponents.")
+
+        elif self._opponent_stage == 5:
+            # Keep updating best snapshot — no further graduation, just refinement.
+            if len(self._wist_win_history) >= 10:
+                if sum(self._wist_win_history[-10:]) / 10 >= 0.7:
+                    self._best_snapshot = snapshot_brain(self.discovery)
 
     # ─── Background Training ────────────────────────────────────────────────────
 

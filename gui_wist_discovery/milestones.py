@@ -442,3 +442,18 @@ def auto_discover(auto_stats, context, trigger_fn):
                 trigger_fn(f"auto_wr100_{threshold}",
                            f"NEAR PERFECTION: Win rate at {threshold}%+ over 100 shotas -- losses are almost non-existent")
                 return
+
+    # Volume milestones — celebrate training progress itself.
+    for threshold in [100000, 250000, 500000, 1000000, 2000000, 3000000, 5000000,
+                      7500000, 10000000, 25000000, 50000000, 100000000]:
+        key = f"volume_{threshold}"
+        if key not in crossed and episodes >= threshold:
+            crossed.add(key)
+            stats["last_discovery_episode"] = episodes
+            if threshold >= 1000000:
+                label = f"{threshold // 1000000}M"
+            else:
+                label = f"{threshold // 1000}K"
+            trigger_fn(f"auto_volume_{threshold}",
+                       f"TRAINING VOLUME: Reached {label} shotas learned -- the brain keeps growing deeper")
+            return
