@@ -840,7 +840,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             if phase_name and pos_name:
                 insights.append(make_insight(
                     f"Surprising: in the {phase_name} tricks when you're {pos_name}, playing LOW cards works better than playing your Aces and Kings — saving them for later is worth more than winning the trick now",
-                    "timing", "advanced", "emerging", episodes,
+                    "counter-intuitive", "advanced", "emerging", episodes,
                     condition=f"You're {pos_name} in {phase_name} tricks",
                     why="The trick isn't worth the investment. Your high cards earn more later when the table is thinner"
                 ))
@@ -854,7 +854,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             if phase_name:
                 insights.append(make_insight(
                     f"Counter-intuitive: in the {phase_name} phase, middle cards (9s, 10s, Jacks) outperform Aces — Aces attract trump from void opponents, but mid cards fly under the radar",
-                    "timing", "advanced", "emerging", episodes,
+                    "counter-intuitive", "advanced", "emerging", episodes,
                     condition=f"You're in the {phase_name} phase of the game",
                     why="High cards become targets. Opponents save their trumps specifically to kill your Aces. Mid cards win tricks nobody fights over"
                 ))
@@ -891,7 +891,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         if best_action == "PASS" and highs >= 3 and best_avg > 0.1:  # Lowered from highs>=4, avg>0.3
             insights.append(make_insight(
                 f"Surprising: with {highs} high cards, passing is BETTER than bidding — high cards without trump length are a mirage. They look strong but get trumped",
-                "bidding", "advanced", "emerging", episodes,
+                "counter-intuitive", "advanced", "emerging", episodes,
                 condition=f"You have {highs}+ high cards but few trumps",
                 why="High cards in non-trump suits get trumped by void opponents. Trump count matters more than raw power",
                 exception="If most of your high cards ARE trumps, then bid confidently"
@@ -904,7 +904,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
                 if bid_val <= 6:
                     insights.append(make_insight(
                         f"Surprising: with {highs} high cards, bidding only {bid_val} works best — promising less and over-delivering beats going all-in and failing",
-                        "bidding", "advanced", "emerging", episodes,
+                        "counter-intuitive", "advanced", "emerging", episodes,
                         condition=f"You have {highs}+ high cards",
                         why="High bids have huge penalties when they fail. A safe bid plus extra tricks scores nearly as well with zero risk"
                     ))
@@ -933,7 +933,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         if keep_avg > 0.2 and void_avg < -0.1:  # Lowered from 0.4/-0.2
             insights.append(make_insight(
                 "Surprise: sometimes keeping a short suit is BETTER than voiding it — if that suit has a high card, the void isn't worth losing the sure trick",
-                "voids", "advanced", "emerging", episodes,
+                "counter-intuitive", "advanced", "emerging", episodes,
                 condition="Your short suit contains an Ace or King",
                 why="A void gives you trumping potential, but your Ace is already a guaranteed trick. Don't sacrifice guaranteed tricks for potential ones"
             ))
@@ -959,14 +959,14 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         if early_avg > late_avg + 0.15:  # Lowered from 0.3
             insights.append(make_insight(
                 "Counter-intuitive: trumping EARLY is more valuable than saving your trumps for later — early trumps disrupt opponents' plans before they develop",
-                "trump", "advanced", "emerging", episodes,
+                "counter-intuitive", "advanced", "emerging", episodes,
                 condition="You're void in a suit in the first half of the game",
                 why="Opponents build their strategy around their strong suits. Trumping early breaks their plans before they execute them. Late trumps are too late — the damage is done"
             ))
         elif late_avg > early_avg + 0.15:  # Lowered from 0.3
             insights.append(make_insight(
                 "Saving your trumps for the endgame is massively more profitable than spending them early — late trumps win tricks nobody can contest",
-                "trump", "advanced", "emerging", episodes,
+                "counter-intuitive", "advanced", "emerging", episodes,
                 condition="You have 3+ trumps and it's early in the game",
                 why="In the endgame, opponents have fewer cards and fewer options. A trump in trick 11 faces less resistance than a trump in trick 3"
             ))
@@ -993,13 +993,13 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         if best_pos == "3":
             insights.append(make_insight(
                 "Playing last is the most powerful position in Wist — you see everyone else's card before choosing yours, so you never overpay and never underpay",
-                "timing", "intermediate", "emerging", episodes,
+                "counter-intuitive", "intermediate", "emerging", episodes,
                 why="Information is power. Last seat has perfect information about the current trick"
             ))
         elif best_pos == "0":
             insights.append(make_insight(
                 "Leading is the strongest position — whoever sets the suit controls what everyone else must play. That power is worth more than seeing others' cards first",
-                "timing", "intermediate", "emerging", episodes,
+                "counter-intuitive", "intermediate", "emerging", episodes,
                 why="The leader chooses the battlefield. If you lead your strongest suit, opponents must follow or waste a trump"
             ))
 
@@ -1031,7 +1031,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             if desp_avg > comf_avg + 0.15 and tier == "X":  # Lowered from 0.3
                 insights.append(make_insight(
                     "When you're behind, throwing away your weakest cards aggressively works — it sounds like giving up, but it's actually setting up voids for a comeback through trumping",
-                    "defense", "advanced", "emerging", episodes,
+                    "counter-intuitive", "advanced", "emerging", episodes,
                     condition="Your team is behind in the game score",
                     why="When behind, you need tricks from nowhere. Dumping weak cards creates voids fast, and voids create free tricks through trumping"
                 ))
@@ -1045,7 +1045,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             if desp_avg > comf_avg + 0.15:  # Lowered from 0.3
                 insights.append(make_insight(
                     "When behind, play your Aces and Kings immediately — normally you'd save them, but when desperate you need tricks NOW before opponents consolidate their lead",
-                    "timing", "advanced", "emerging", episodes,
+                    "counter-intuitive", "advanced", "emerging", episodes,
                     condition="Your team is losing and you need to catch up",
                     why="Saving cards is a luxury for teams that are winning. When behind, every delayed trick is a trick that might never come"
                 ))

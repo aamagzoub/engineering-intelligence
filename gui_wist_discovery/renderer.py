@@ -329,6 +329,7 @@ class Renderer:
         "partnership": (80, 180, 80),
         "defense": (160, 80, 180),
         "voids": (80, 180, 180),
+        "counter-intuitive": (220, 120, 0),
     }
     _CONF_LABELS = {
         "emerging": "o",
@@ -346,34 +347,47 @@ class Renderer:
 
         y = panel_rect.top + 10
 
-        # Title + category filter chips on the same line.
-        title_surf = self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD)
-        self.screen.blit(title_surf, (15, y))
-
-        # Render filter chips to the right of the title.
+        # Category filter chips — two rows above the title, same size as insight badges.
         active_filter = state.get("insight_filter", None)
-        chip_x = 15 + title_surf.get_width() + 8
         chip_rects = {}
-        chip_font = pygame.font.SysFont("Segoe UI", 8)
-        for cat, color in self._CAT_COLORS.items():
-            label = cat[0].upper()  # First letter: B, T, T, P, D, V
+        chip_font = self._cat_font  # 13px bold — matches the insight badges.
+        categories = list(self._CAT_COLORS.keys())
+        chip_x = 15
+        chip_y = y
+
+        for i, cat in enumerate(categories):
+            color = self._CAT_COLORS[cat]
+            label = cat.upper()
             is_active = (active_filter == cat)
-            bg = color if is_active else (50, 50, 50)
+            bg = color if is_active else (30, 30, 30)
             border = color
+
             chip_surf = chip_font.render(label, True, (255, 255, 255))
-            cw = chip_surf.get_width() + 6
-            ch = chip_surf.get_height() + 2
-            chip_rect = pygame.Rect(chip_x, y + 4, cw, ch)
-            pygame.draw.rect(self.screen, bg, chip_rect, border_radius=3)
-            pygame.draw.rect(self.screen, border, chip_rect, width=1, border_radius=3)
-            self.screen.blit(chip_surf, (chip_x + 3, y + 5))
+            cw = chip_surf.get_width() + 10
+            ch = chip_surf.get_height() + 6
+            chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
+
+            # Wrap to second row if overflows panel width.
+            if chip_x + cw > panel_w - 20:
+                chip_y += ch + 4
+                chip_x = 15
+                chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
+
+            pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
+            pygame.draw.rect(self.screen, border, chip_rect, width=1, border_radius=4)
+            # Center text in chip.
+            text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
+            text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
+            self.screen.blit(chip_surf, (text_x, text_y))
             chip_rects[cat] = chip_rect
-            chip_x += cw + 2
+            chip_x += cw + 4
 
-        # Store chip rects for click detection (via state).
         state["_chip_rects"] = chip_rects
+        y = chip_y + ch + 8
 
-        y += 26
+        # Title.
+        self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
+        y += 22
 
         insights = state.get("insights", [])
         if not insights:
