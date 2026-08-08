@@ -821,7 +821,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         # Average Q per tier in this context.
         tier_avg = {}
         for key, vals in action_qs.items():
-            if len(vals) < 8:
+            if len(vals) < 3:  # Lowered from 8 to 3 for younger Q-tables.
                 continue
             tier = key[0]
             if tier not in tier_avg:
@@ -834,7 +834,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         # Surprise: low cards beat high cards in this context.
         low_avg = tier_avg.get("L", tier_avg.get("X", None))
         high_avg = tier_avg.get("A", tier_avg.get("K", None))
-        if low_avg is not None and high_avg is not None and low_avg > high_avg + 0.5:
+        if low_avg is not None and high_avg is not None and low_avg > high_avg + 0.2:  # Lowered from 0.5
             phase_name = {"1": "early", "2": "early-mid", "3": "middle", "4": "late-mid", "5": "final"}.get(phase, "")
             pos_name = {"0": "leading", "1": "second", "2": "third", "3": "last"}.get(pos, "")
             if phase_name and pos_name:
@@ -849,7 +849,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         # Surprise: mid cards beat aces in this context.
         mid_avg = tier_avg.get("M", tier_avg.get("J", None))
         ace_avg = tier_avg.get("A", None)
-        if mid_avg is not None and ace_avg is not None and mid_avg > ace_avg + 0.4:
+        if mid_avg is not None and ace_avg is not None and mid_avg > ace_avg + 0.2:  # Lowered from 0.4
             phase_name = {"1": "early", "2": "early-mid", "3": "middle", "4": "late-mid", "5": "final"}.get(phase, "")
             if phase_name:
                 insights.append(make_insight(
@@ -874,8 +874,8 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             hand_surprises[(highs, aces)][action].append(q)
 
     for (highs, aces), action_qs in hand_surprises.items():
-        if highs < 3:
-            continue  # Only look at "strong-looking" hands.
+        if highs < 2:
+            continue  # Lowered from 3 — find surprises in weaker-looking hands too.
         # Find best action.
         best_action, best_avg = None, -999
         for action, vals in action_qs.items():
@@ -888,7 +888,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             continue
 
         # Surprise: strong hand but PASS is best.
-        if best_action == "PASS" and highs >= 4 and best_avg > 0.3:
+        if best_action == "PASS" and highs >= 3 and best_avg > 0.1:  # Lowered from highs>=4, avg>0.3
             insights.append(make_insight(
                 f"Surprising: with {highs} high cards, passing is BETTER than bidding — high cards without trump length are a mirage. They look strong but get trumped",
                 "bidding", "advanced", "emerging", episodes,
@@ -898,7 +898,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             ))
 
         # Surprise: strong hand but LOW bid is best.
-        if best_action.startswith("B") and highs >= 4:
+        if best_action.startswith("B") and highs >= 3:  # Lowered from highs>=4
             try:
                 bid_val = int(best_action[1:])
                 if bid_val <= 6:
@@ -922,15 +922,15 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             is_trump = key[2] == "T"
             if is_trump:
                 continue
-            if creates_void and q < -0.3:
+            if creates_void and q < -0.1:  # Lowered from -0.3
                 void_bad.append(q)
-            elif not creates_void and key[3] == "S" and q > 0.5:  # Short suit, keep
+            elif not creates_void and key[3] == "S" and q > 0.2:  # Lowered from 0.5
                 keep_good.append(q)
 
-    if len(void_bad) >= 10 and len(keep_good) >= 10:
+    if len(void_bad) >= 5 and len(keep_good) >= 5:  # Lowered from 10
         void_avg = sum(void_bad) / len(void_bad)
         keep_avg = sum(keep_good) / len(keep_good)
-        if keep_avg > 0.4 and void_avg < -0.2:
+        if keep_avg > 0.2 and void_avg < -0.1:  # Lowered from 0.4/-0.2
             insights.append(make_insight(
                 "Surprise: sometimes keeping a short suit is BETTER than voiding it — if that suit has a high card, the void isn't worth losing the sure trick",
                 "voids", "advanced", "emerging", episodes,
@@ -953,17 +953,17 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
             elif phase in ("4", "5"):
                 late_trump_q.append(q)
 
-    if len(early_trump_q) >= 15 and len(late_trump_q) >= 15:
+    if len(early_trump_q) >= 5 and len(late_trump_q) >= 5:  # Lowered from 15
         early_avg = sum(early_trump_q) / len(early_trump_q)
         late_avg = sum(late_trump_q) / len(late_trump_q)
-        if early_avg > late_avg + 0.3:
+        if early_avg > late_avg + 0.15:  # Lowered from 0.3
             insights.append(make_insight(
                 "Counter-intuitive: trumping EARLY is more valuable than saving your trumps for later — early trumps disrupt opponents' plans before they develop",
                 "trump", "advanced", "emerging", episodes,
                 condition="You're void in a suit in the first half of the game",
                 why="Opponents build their strategy around their strong suits. Trumping early breaks their plans before they execute them. Late trumps are too late — the damage is done"
             ))
-        elif late_avg > early_avg + 0.3:
+        elif late_avg > early_avg + 0.15:  # Lowered from 0.3
             insights.append(make_insight(
                 "Saving your trumps for the endgame is massively more profitable than spending them early — late trumps win tricks nobody can contest",
                 "trump", "advanced", "emerging", episodes,
@@ -983,7 +983,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
 
     pos_avgs = {}
     for pos, vals in pos_overall_q.items():
-        if len(vals) >= 50:
+        if len(vals) >= 20:  # Lowered from 50
             pos_avgs[pos] = sum(vals) / len(vals)
 
     if pos_avgs:
@@ -1025,10 +1025,10 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
     for tier in ("X", "L", "M"):
         desp_vals = desperate_plays.get(tier, [])
         comf_vals = comfortable_plays.get(tier, [])
-        if len(desp_vals) >= 20 and len(comf_vals) >= 20:
+        if len(desp_vals) >= 8 and len(comf_vals) >= 8:  # Lowered from 20
             desp_avg = sum(desp_vals) / len(desp_vals)
             comf_avg = sum(comf_vals) / len(comf_vals)
-            if desp_avg > comf_avg + 0.3 and tier == "X":
+            if desp_avg > comf_avg + 0.15 and tier == "X":  # Lowered from 0.3
                 insights.append(make_insight(
                     "When you're behind, throwing away your weakest cards aggressively works — it sounds like giving up, but it's actually setting up voids for a comeback through trumping",
                     "defense", "advanced", "emerging", episodes,
@@ -1039,10 +1039,10 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
     for tier in ("A", "K"):
         desp_vals = desperate_plays.get(tier, [])
         comf_vals = comfortable_plays.get(tier, [])
-        if len(desp_vals) >= 15 and len(comf_vals) >= 15:
+        if len(desp_vals) >= 8 and len(comf_vals) >= 8:  # Lowered from 15
             desp_avg = sum(desp_vals) / len(desp_vals)
             comf_avg = sum(comf_vals) / len(comf_vals)
-            if desp_avg > comf_avg + 0.3:
+            if desp_avg > comf_avg + 0.15:  # Lowered from 0.3
                 insights.append(make_insight(
                     "When behind, play your Aces and Kings immediately — normally you'd save them, but when desperate you need tricks NOW before opponents consolidate their lead",
                     "timing", "advanced", "emerging", episodes,
@@ -1298,7 +1298,7 @@ def _endless_situational_mining(play_items, bid_q, episodes) -> list:
         spread = best_q - second_q
         range_val = best_q - worst_q
 
-        if spread > 1.5 and range_val > 2.5 and len(best_key) >= 3:
+        if spread > 0.8 and range_val > 1.5 and len(best_key) >= 3:  # Lowered from 1.5/2.5
             decisive_plays.append((state, best_key, best_q, spread, worst_q))
 
     # Sort by spread (most decisive first) and take top ones.
@@ -1367,7 +1367,7 @@ def _endless_situational_mining(play_items, bid_q, episodes) -> list:
         second_q = sorted_actions[1][1] if len(sorted_actions) > 1 else 0
         spread = best_q - second_q
 
-        if spread > 1.0 and best_q > 0.3:
+        if spread > 0.5 and best_q > 0.2:  # Lowered from 1.0/0.3
             decisive_bids.append((state, best_key, best_q, spread))
 
     decisive_bids.sort(key=lambda x: -x[3])
