@@ -56,6 +56,14 @@ class HumanTab:
         from gui_wist_lab.player_evaluator import PlayerEvaluator
         self._evaluator = PlayerEvaluator()
 
+        # Load learned insights for AI reasoning display.
+        self._ai_insights = []
+        try:
+            from gui_wist_discovery.insights import _load_cached_insights
+            self._ai_insights = _load_cached_insights()
+        except Exception:
+            pass
+
         # Game state.
         self.players = None
         self.round = None
@@ -1133,6 +1141,11 @@ class HumanTab:
                     self._show_trump()
 
                 self._set_status(f"Trick {self.trick_number} — {DISPLAY_NAMES[pid]} played {ct}")
+
+                # Show AI reasoning from learned insights.
+                reason = self._find_relevant_insight(action.card, obs)
+                if reason:
+                    self._log(f"    💡 {reason}")
             except Exception as e:
                 # AI failed — skip this player with a dummy play if possible.
                 self._log(f"  ⚠ AI error P{pid+1}: {e}")
@@ -1489,6 +1502,65 @@ class HumanTab:
                 print(f"[HumanTab ERROR] {callback.__name__}: {e}")
                 self._log(f"⚠ Error: {e}")
         self.root.after(delay_ms, safe_wrapper)
+
+    # ----------------------------------------------------------
+    # Utilities
+    # ----------------------------------------------------------
+    # AI Insight Reasoning
+    # ----------------------------------------------------------
+
+    def _find_relevant_insight(self, card, obs) -> str:
+        """Find a relevant insight that explains why the AI played this card."""
+        if not self._ai_insights:
+            return ""
+
+        # Determine card properties.
+        is_trump = (self.trump_suit and card.suit == self.trump_suit)
+        rank_val = rank_value(card.rank)
+        is_high = rank_val >= 12
+        is_low = rank_val <= 6
+        leading_suit = None
+        if obs.current_trick and obs.current_trick.played_cards:
+            leading_suit = obs.current_trick.leading_suit
+        follows_suit = (leading_suit and card.suit == leading_suit)
+        is_trumping = is_trump and not follows_suit and leading_suit is not None
+
+        # Score each insight by relevance to this play.
+        best_insight = ""
+        best_score = 0
+
+        for ins in self._ai_insights:
+            if not isinstance(ins, dict):
+                continue
+            text = ins.get("text", "").lower()
+            cat = ins.get("category", "")
+            score = 0
+
+            if is_trumping and cat == "trump":
+                score += 3
+            if is_trumping and "trump" in text and ("void" in text or "can't follow" in text):
+                score += 5
+            if is_trump and cat == "trump" and "lead" in text and not leading_suit:
+                score += 4
+            if is_low and follows_suit and ("weakest" in text or "lowest" in text or "save" in text):
+                score += 4
+            if is_high and follows_suit and ("ace" in text or "king" in text):
+                score += 3
+            if cat == "voids" and not follows_suit and not is_trump:
+                score += 2
+            if cat == "partnership" and "partner" in text:
+                score += 1
+
+            if score > best_score:
+                best_score = score
+                best_insight = ins.get("text", "")
+
+        if best_score >= 3:
+            # Truncate if too long.
+            if len(best_insight) > 80:
+                best_insight = best_insight[:77] + "..."
+            return best_insight
+        return ""
 
     # ----------------------------------------------------------
     # Utilities

@@ -131,6 +131,10 @@ class WistDiscoveryWatcher:
         self._disc_scroll_offset = 0
         self._insight_scroll_offset = 0
 
+        # Insight category filter (None = show all).
+        self._insight_filter = None
+        self._insight_chip_rects = {}  # {category: pygame.Rect} — set by renderer.
+
         # Background training.
         self._bg_active = False
         self._bg_agent = None
@@ -536,6 +540,15 @@ class WistDiscoveryWatcher:
                     self._toggle_pause()
                 if self._reset_btn_rect and self._reset_btn_rect.collidepoint(event.pos):
                     self._reset_brain()
+                # Check insight category filter chip clicks.
+                for cat, rect in self._insight_chip_rects.items():
+                    if rect.collidepoint(event.pos):
+                        if self._insight_filter == cat:
+                            self._insight_filter = None  # Toggle off.
+                        else:
+                            self._insight_filter = cat  # Toggle on.
+                        self._insight_scroll_offset = 0
+                        break
             elif event.type == pygame.MOUSEWHEEL:
                 mx, _my = pygame.mouse.get_pos()
                 right_panel_x = SCREEN_WIDTH - 290
@@ -628,11 +641,15 @@ class WistDiscoveryWatcher:
             "opponent_stage": self._opponent_stage,
             "milestones_list": self._milestones_list,
             "insights": self._cached_insights,
+            "insight_filter": self._insight_filter,
             "disc_scroll": self._disc_scroll_offset,
             "insight_scroll": self._insight_scroll_offset,
         }
 
         self._mode_btn_rect, self._reset_btn_rect = self.renderer.render_frame(render_state)
+
+        # Capture chip rects from renderer for click detection.
+        self._insight_chip_rects = render_state.get("_chip_rects", {})
 
 
 def main():

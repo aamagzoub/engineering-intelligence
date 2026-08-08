@@ -345,7 +345,34 @@ class Renderer:
         self.screen.set_clip(pygame.Rect(10, 65, panel_w - 20, SCREEN_HEIGHT - 90))
 
         y = panel_rect.top + 10
-        self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
+
+        # Title + category filter chips on the same line.
+        title_surf = self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD)
+        self.screen.blit(title_surf, (15, y))
+
+        # Render filter chips to the right of the title.
+        active_filter = state.get("insight_filter", None)
+        chip_x = 15 + title_surf.get_width() + 8
+        chip_rects = {}
+        chip_font = pygame.font.SysFont("Segoe UI", 8)
+        for cat, color in self._CAT_COLORS.items():
+            label = cat[0].upper()  # First letter: B, T, T, P, D, V
+            is_active = (active_filter == cat)
+            bg = color if is_active else (50, 50, 50)
+            border = color
+            chip_surf = chip_font.render(label, True, (255, 255, 255))
+            cw = chip_surf.get_width() + 6
+            ch = chip_surf.get_height() + 2
+            chip_rect = pygame.Rect(chip_x, y + 4, cw, ch)
+            pygame.draw.rect(self.screen, bg, chip_rect, border_radius=3)
+            pygame.draw.rect(self.screen, border, chip_rect, width=1, border_radius=3)
+            self.screen.blit(chip_surf, (chip_x + 3, y + 5))
+            chip_rects[cat] = chip_rect
+            chip_x += cw + 2
+
+        # Store chip rects for click detection (via state).
+        state["_chip_rects"] = chip_rects
+
         y += 26
 
         insights = state.get("insights", [])
@@ -353,6 +380,11 @@ class Renderer:
             self.screen.blit(self.fonts["medium"].render("Training...", True, TEXT_DIM), (15, y))
             self.screen.set_clip(None)
             return
+
+        # Filter insights by category if a filter is active.
+        if active_filter:
+            insights = [ins for ins in insights
+                        if (isinstance(ins, dict) and ins.get("category") == active_filter)]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
