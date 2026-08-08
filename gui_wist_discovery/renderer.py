@@ -332,9 +332,9 @@ class Renderer:
         "counter-intuitive": (220, 120, 0),
     }
     _CONF_LABELS = {
-        "emerging": "o",
-        "proven": "*",
-        "mastered": "**",
+        "emerging": "[new]",
+        "proven": "[solid]",
+        "mastered": "[proven]",
     }
 
     def _render_insights_panel(self, panel_w, state):

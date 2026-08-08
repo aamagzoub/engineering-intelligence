@@ -105,6 +105,13 @@ def generate_insights(agent) -> list:
     # Deduplicate within the new batch only.
     raw = _deduplicate(raw)
 
+    # Auto-recategorize: any insight starting with "Surprising" or "Counter-intuitive"
+    # gets moved to "counter-intuitive" category regardless of original generator.
+    for ins in raw:
+        text = ins.get("text", "")
+        if text.startswith("Surprising") or text.startswith("Counter-intuitive"):
+            ins["category"] = "counter-intuitive"
+
     # ACCUMULATION: merge new insights into the accumulated history.
     for ins in raw:
         if ins["text"] in accumulated_texts:
@@ -780,7 +787,7 @@ def _timing_insights(play_items, episodes) -> list:
 
         if early_avg < 0 and late_avg > 0.4 and "late_power" not in seen_categories:
             insights.append(make_insight(
-                "Save one strong card for the very end — in the final tricks, most opponents are out of options and can't stop you",
+                "Save one strong card for the very end — in tricks 12-13, most opponents are out of options and can't stop you",
                 "timing", "intermediate", "emerging", episodes,
                 condition="You're deciding whether to play your last strong card now or later",
                 why="In the endgame, fewer cards remain, so your strong card faces less competition"
@@ -835,7 +842,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         low_avg = tier_avg.get("L", tier_avg.get("X", None))
         high_avg = tier_avg.get("A", tier_avg.get("K", None))
         if low_avg is not None and high_avg is not None and low_avg > high_avg + 0.2:  # Lowered from 0.5
-            phase_name = {"1": "early", "2": "early-mid", "3": "middle", "4": "late-mid", "5": "final"}.get(phase, "")
+            phase_name = {"1": "tricks 1-3", "2": "tricks 4-5", "3": "tricks 6-9", "4": "tricks 10-11", "5": "tricks 12-13"}.get(phase, "")
             pos_name = {"0": "leading", "1": "second", "2": "third", "3": "last"}.get(pos, "")
             if phase_name and pos_name:
                 insights.append(make_insight(
@@ -850,7 +857,7 @@ def _surprise_discoveries(play_items, bid_q, episodes) -> list:
         mid_avg = tier_avg.get("M", tier_avg.get("J", None))
         ace_avg = tier_avg.get("A", None)
         if mid_avg is not None and ace_avg is not None and mid_avg > ace_avg + 0.2:  # Lowered from 0.4
-            phase_name = {"1": "early", "2": "early-mid", "3": "middle", "4": "late-mid", "5": "final"}.get(phase, "")
+            phase_name = {"1": "tricks 1-3", "2": "tricks 4-5", "3": "tricks 6-9", "4": "tricks 10-11", "5": "tricks 12-13"}.get(phase, "")
             if phase_name:
                 insights.append(make_insight(
                     f"Counter-intuitive: in the {phase_name} phase, middle cards (9s, 10s, Jacks) outperform Aces — Aces attract trump from void opponents, but mid cards fly under the radar",
@@ -1209,7 +1216,7 @@ def _position_phase_insights(play_items, episodes) -> list:
             combo_q[(pos, phase)][act_type].append(q)
 
     pos_names = {"0": "you're leading", "1": "you play second", "2": "you play third", "3": "you play last"}
-    phase_names = {"1": "the first few tricks", "2": "the early-mid game", "3": "the middle game", "4": "the late-mid game", "5": "the final tricks"}
+    phase_names = {"1": "tricks 1-3", "2": "tricks 4-5", "3": "tricks 6-9", "4": "tricks 10-11", "5": "tricks 12-13"}
 
     for (pos, phase), act_qs in combo_q.items():
         pos_name = pos_names.get(pos, "")
@@ -1441,7 +1448,7 @@ def _decode_play_state(state: str) -> dict:
         td = state[6]  # W/A/T/B
 
         pos_names = {"0": "leading", "1": "playing second", "2": "playing third", "3": "playing last"}
-        phase_names = {"1": "first few tricks", "2": "early-mid game", "3": "middle game", "4": "late-mid game", "5": "final tricks"}
+        phase_names = {"1": "tricks 1-3", "2": "tricks 4-5", "3": "tricks 6-9", "4": "tricks 10-11", "5": "tricks 12-13"}
 
         result = {
             "pos": pos,
