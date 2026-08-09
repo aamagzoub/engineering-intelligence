@@ -605,7 +605,7 @@ class WistDiscoveryWatcher:
                 right_panel_x = SCREEN_WIDTH - 290
                 if mx >= right_panel_x:
                     self._disc_scroll_offset = max(0, self._disc_scroll_offset - event.y)
-                elif mx <= 210:
+                elif mx <= 260:
                     self._insight_scroll_offset = max(0, self._insight_scroll_offset - event.y)
 
     def _toggle_pause(self):

@@ -46,7 +46,7 @@ class Renderer:
         """
         self.screen.fill(BG_DARK)
 
-        left_panel_w = 210
+        left_panel_w = 260
         table = pygame.Rect(
             left_panel_w + 10, 60,
             SCREEN_WIDTH - left_panel_w - 280, SCREEN_HEIGHT - 80,
