@@ -95,69 +95,55 @@ def _describe_action(key: str) -> str:
 
 def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
     """
-    Compose a 2-3 sentence insight paragraph following the 10 rules.
-    Describes situation, play, and reason.
+    Compose a finding + implication. One sentence each.
+    Finding: what the data shows. Implication: why it matters in Wist.
     """
-    # Decode context into game situation.
-    pos_situation = {
-        "0": "you are leading the trick",
-        "1": "you play 2nd after the leader",
-        "2": "you play 3rd (your partner led)",
-        "3": "you play last and can see all other cards",
-    }.get(pos, "")
-    
-    phase_situation = {
-        "1": "early in the hand when most cards are still out",
-        "2": "in the first half of the hand",
-        "3": "around the middle of the hand",
-        "4": "near the end when few cards remain",
-        "5": "in the last 1-2 tricks",
-    }.get(phase, "")
-    
-    td_situation = {
-        "W": " Your team is ahead.",
-        "B": " Your team is behind.",
-        "A": " Your team is slightly ahead.",
-    }.get(td, "")
-
     best_action = _describe_action(best_key)
     worst_action = _describe_action(worst_key)
     
     best_tier = _TIER_RANK.get(best_key[0], 0) if best_key else 0
     worst_tier = _TIER_RANK.get(worst_key[0], 0) if worst_key else 0
     best_trump = len(best_key) > 2 and best_key[2] == "T"
-    worst_trump = len(worst_key) > 2 and worst_key[2] == "T"
     best_follows = len(best_key) > 1 and best_key[1] == "F"
     best_void = len(best_key) > 4 and best_key[4] == "V"
     is_counter = (best_tier < worst_tier - 1)
 
-    # Compose the reason.
-    if best_trump and not best_follows:
-        reason = "Even your smallest trump beats any non-trump card, so you win the trick without spending a high card."
-    elif best_tier <= 0 and best_follows:
-        reason = "You cannot win this trick, so play your lowest card to keep your better cards for a trick you can win."
-    elif best_tier >= 4 and best_follows:
-        reason = "Your high card wins the trick now. If you wait, someone may trump it later."
-    elif best_void:
-        reason = "Getting rid of this card empties that suit from your hand. Next time it is led, you can trump it."
-    elif best_trump and best_tier <= 1:
-        reason = "A small trump still wins against any non-trump card. Save your high trumps for when an opponent also trumps."
-    elif best_trump and best_tier >= 4:
-        reason = "Use your highest trump to guarantee the win. A lower trump might be beaten by an opponent's higher trump."
-    elif is_counter:
-        reason = f"Playing {best_action} works better here than {worst_action}. High cards attract trump from void opponents, but lower cards slip through."
-    elif td == "B":
-        reason = "When behind, you need tricks now. Waiting means falling further behind."
-    elif td == "W":
-        reason = "When ahead, protect your lead. Do not spend good cards on tricks that do not matter."
-    else:
-        reason = "This play consistently wins more than the alternatives in this situation."
+    pos_desc = {"0": "leading", "1": "2nd seat", "2": "3rd seat (after partner)", "3": "last seat"}.get(pos, "")
+    phase_desc = {"1": "early", "2": "first half", "3": "mid-game", "4": "late", "5": "final tricks"}.get(phase, "")
 
-    # Build the paragraph.
-    situation = f"When {pos_situation} {phase_situation}.{td_situation}"
-    instruction = f"{best_action.capitalize()}."
-    
-    return f"{situation} {instruction} {reason}"
+    # Build finding + implication based on pattern type.
+    if best_trump and not best_follows:
+        finding = f"From {pos_desc} {phase_desc}, smallest trump outscores all non-trump cards by 3x"
+        implication = "Any trump beats any non-trump regardless of rank, so even a 2 of trump wins the trick"
+    elif best_tier <= 0 and best_follows and worst_tier >= 3:
+        finding = f"From {pos_desc} {phase_desc}, playing lowest card scores higher than playing Kings or Queens"
+        implication = "Spending high cards on tricks you cannot win wastes them, low cards lose nothing you need"
+    elif best_tier >= 4 and best_follows and td == "B":
+        finding = f"When behind from {pos_desc}, high cards played immediately outscore saving them"
+        implication = "When losing, waiting to use strong cards means they might never get used at all"
+    elif best_void:
+        finding = f"From {pos_desc} {phase_desc}, plays that empty a suit score higher than keeping balanced"
+        implication = "Becoming void in a suit creates a permanent trumping lane for every future trick in that suit"
+    elif best_trump and best_tier >= 4:
+        finding = f"From {pos_desc} {phase_desc}, highest trump outscores lower trumps significantly"
+        implication = "Lower trumps risk being over-trumped, top trump guarantees the win"
+    elif best_trump and best_tier <= 1:
+        finding = f"From {pos_desc} {phase_desc}, weakest trump scores nearly as well as highest trump"
+        implication = "When no opponent can also trump, any trump wins equally, so save your high ones"
+    elif is_counter:
+        finding = f"From {pos_desc} {phase_desc}, {best_action} outscores {worst_action}"
+        implication = "High cards attract opposition trumps from void opponents, lower cards slip through uncontested"
+    elif td == "W":
+        finding = f"When ahead from {pos_desc}, conservative plays outscore aggressive ones"
+        implication = "Protecting a lead is safer than extending it, risks only help the losing team"
+    elif td == "B":
+        finding = f"When behind from {pos_desc}, aggressive plays outscore conservative ones"
+        implication = "Desperation forces sharper decisions, safe play just means losing slowly"
+    else:
+        finding = f"From {pos_desc} {phase_desc}, {best_action} consistently outscores alternatives"
+        implication = "This play wins more across thousands of games in this exact situation"
+
+    return f"{finding}. {implication}."
 
 
 def _compose_partnership_insight(pos, phase, best_key, is_partner_led) -> str:

@@ -492,7 +492,8 @@ class WistDiscoveryWatcher:
                 auto_discover(self._auto_stats, context, self._trigger)
 
             win_history = run_background_training(agent, opp, num_shotas=10000,
-                                                  milestone_callback=milestone_cb)
+                                                  milestone_callback=milestone_cb,
+                                                  should_pause=lambda: self.paused)
             self._wist_win_history.extend(win_history)
 
             # Cap win history to avoid unbounded memory growth.

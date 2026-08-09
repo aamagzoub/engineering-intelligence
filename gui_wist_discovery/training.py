@@ -149,7 +149,8 @@ def create_diverse_opponent(agent, stage, frozen_snapshot=None, best_snapshot=No
 
 
 def run_background_training(agent, opp, num_shotas=10000, milestone_callback=None,
-                            stage=1, frozen_snapshot=None, best_snapshot=None):
+                            stage=1, frozen_snapshot=None, best_snapshot=None,
+                            should_pause=None):
     """
     Run silent self-play training in background.
 
@@ -164,6 +165,7 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
         stage: Curriculum stage for diverse opponent creation.
         frozen_snapshot: Frozen Q-tables for stage 2+.
         best_snapshot: Best-ever Q-tables for stage 3.
+        should_pause: Optional callable() -> bool. If returns True, pause training.
 
     Returns:
         win_history: list of bools (game won or not).
@@ -174,6 +176,12 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
     SWAP_INTERVAL = 5  # Swap opponent style every 5 games.
 
     while shotas_done < num_shotas:
+        # Check if paused.
+        if should_pause and should_pause():
+            import time as _time
+            while should_pause() :
+                _time.sleep(0.1)
+
         team_scores = [0, 0]
         shota_count = 0
 
