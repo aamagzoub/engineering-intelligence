@@ -372,10 +372,22 @@ class WistDiscoveryWatcher:
             win_rate = sum(self._wist_win_history) / len(self._wist_win_history) * 100
         episodes = self.discovery.episodes_trained
 
+        # Format: each stat on its own line, blank line, then milestone text.
+        if episodes >= 1000000:
+            ep_str = f"{episodes / 1000000:.1f}M"
+        elif episodes >= 1000:
+            ep_str = f"{episodes // 1000}K"
+        else:
+            ep_str = str(episodes)
+
         desc = (
-            f"{base_desc}\n"
-            f"Total compute: {total_str} | Since last: {delta_str}\n"
-            f"Win rate: {win_rate:.0f}% | Bid accuracy: {bid_accuracy:.0f}%"
+            f"Win rate: {win_rate:.0f}%\n"
+            f"Bid accuracy: {bid_accuracy:.0f}%\n"
+            f"Training: {ep_str} shotas\n"
+            f"Compute: {total_str}\n"
+            f"Since last: {delta_str}\n"
+            f"\n"
+            f"{base_desc}"
         )
 
         self._milestones_list.append((f"{title} (#{episodes})", desc))

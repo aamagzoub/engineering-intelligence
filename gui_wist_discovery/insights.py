@@ -302,7 +302,7 @@ def _conditional_insights(play_items, bid_q, episodes) -> list:
         bid_avg = sum(opp_bid_high_bid) / len(opp_bid_high_bid)
         if pass_avg > bid_avg + 0.3:
             insights.append(make_insight(
-                "If opponents bid high (8+), pass and defend — they overreach and fail more often than they succeed",
+                "When opponents already bid 8+ — pass and play defense. High bids fail more than they succeed. Let them take the risk while you collect free points from their failure",
                 "bidding", "intermediate", "emerging", episodes,
                 condition="Opponents already bid 8 or higher",
                 why="High bids require near-perfect hands. Defending costs nothing and their failure gives you free points",
@@ -352,7 +352,7 @@ def _conditional_insights(play_items, bid_q, episodes) -> list:
         aggro_avg = sum(winning_aggro) / len(winning_aggro)
         if passive_avg > aggro_avg + 0.2:
             insights.append(make_insight(
-                "When your team is ahead, play conservatively — don't risk your lead chasing extra tricks you don't need",
+                "When your team is ahead in tricks — switch to your weakest cards. You don't need more tricks, you need to not LOSE the ones you have. Let opponents waste their strength",
                 "timing", "intermediate", "emerging", episodes,
                 condition="Your team is ahead in tricks",
                 why="You only need to maintain your advantage, not extend it. Playing safe prevents costly mistakes"
@@ -370,7 +370,7 @@ def _conditional_insights(play_items, bid_q, episodes) -> list:
         passive_avg = sum(losing_passive) / len(losing_passive)
         if aggro_avg > passive_avg + 0.2:
             insights.append(make_insight(
-                "When behind, take risks with your strong cards — playing it safe when losing just means losing slowly",
+                "When your team is behind — play your Aces and Kings NOW. You need tricks immediately. Saving them for later is a luxury only winning teams can afford",
                 "timing", "advanced", "emerging", episodes,
                 condition="Your team is behind in tricks",
                 why="You need to change the momentum. Safe play maintains a losing position"
@@ -445,7 +445,7 @@ def _partnership_insights(play_items, episodes) -> list:
         avg = sum(partner_led_trump_high) / len(partner_led_trump_high)
         if avg > 0.3:
             insights.append(make_insight(
-                "When your partner leads trump, play your highest trump — together you flush out the opponents' trumps faster",
+                "When your partner leads trump — throw your HIGHEST trump. Together you remove two enemy trumps in one trick. This clears the way for both of you in later tricks",
                 "partnership", "beginner", "emerging", episodes,
                 condition="Partner leads trump",
                 why="Two high trumps from the same team in one trick removes two enemy trumps at once"
@@ -464,7 +464,7 @@ def _partnership_insights(play_items, episodes) -> list:
         avg = sum(last_seat_save) / len(last_seat_save)
         if avg > 0.2:
             insights.append(make_insight(
-                "When you play last and your partner is already winning the trick, throw your weakest — don't waste good cards on a trick your team already has",
+                "When you play last and your partner is winning — throw your weakest card from your SHORTEST suit. You save good cards AND build toward a void at the same time",
                 "partnership", "beginner", "emerging", episodes,
                 condition="You're last to play and partner's card is winning",
                 why="Every good card you save is one more trick you can win later"
@@ -510,7 +510,7 @@ def _opponent_reading_insights(play_items, episodes) -> list:
         avg = sum(opp_void_trump_q) / len(opp_void_trump_q)
         if avg > 0.3:
             insights.append(make_insight(
-                "When you know an opponent is void in a suit, lead trump instead — don't let them keep trumping your good cards",
+                "When an opponent couldn't follow a suit before — STOP leading that suit. They'll trump your winners. Switch to leading trump to remove their trumping power first",
                 "defense", "advanced", "emerging", episodes,
                 condition="You noticed an opponent couldn't follow suit earlier",
                 why="If they're void, they'll trump your winners. Leading trump removes their trumping power first"
@@ -528,7 +528,7 @@ def _opponent_reading_insights(play_items, episodes) -> list:
 
     # General reading tips (always applicable).
     insights.append(make_insight(
-        "Watch which suits opponents can't follow — that tells you they'll trump it next time. Remember it and avoid leading that suit",
+        "Track every time an opponent plays a different suit than what was led — they're void in that suit now. Never lead it again unless you want them to trump you",
         "defense", "beginner", "emerging", episodes,
         condition="An opponent plays a different suit than what was led",
         why="When someone can't follow suit, they're either trumping or discarding. Either way, that suit is now dangerous to lead"
@@ -652,7 +652,7 @@ def _core_play_insights(play_items, episodes) -> list:
 
     if _check(lambda k: k[0] == "X" and k[1] == "F" and k[2] == "N") > 0.3:
         insights.append(make_insight(
-            "When you can't win a trick, throw your weakest card — protect your better cards for tricks you can actually fight for",
+            "When the cards on the table are already higher than anything you have — throw your lowest card from your LONGEST suit. You lose nothing and keep your short suits ready to void",
             "timing", "beginner", "emerging", episodes,
             condition="The cards already played are higher than anything you have",
             why="Every strong card you save is a future trick. Wasting them on lost causes costs double"
@@ -660,7 +660,7 @@ def _core_play_insights(play_items, episodes) -> list:
 
     if _check(lambda k: k[0] in "LX" and k[1] == "O" and k[2] == "T") > 0.4:
         insights.append(make_insight(
-            "Even your smallest trump wins when others play a non-trump suit — a 2 of trump beats a King of anything else",
+            "When you can't follow suit and have any trump — play it. Even your weakest trump beats their strongest non-trump card. Save your high trumps for when opponents also trump",
             "trump", "beginner", "emerging", episodes,
             condition="You can't follow suit and have any trump card",
             why="Trump always beats non-trump regardless of rank. That's why creating voids is so powerful"
@@ -689,7 +689,7 @@ def _trump_insights(play_items, episodes) -> list:
 
     if len(trump_lead_high) >= 10 and sum(trump_lead_high) / len(trump_lead_high) > 0.4:
         insights.append(make_insight(
-            "Lead your strongest trump to force out everyone else's — after a few rounds, your remaining trumps face no opposition",
+            "When you have 4+ trumps and the lead — play your highest trump NOW. Each one you lead forces one out of an opponent's hand. After 2-3 rounds, your remaining trumps win automatically",
             "trump", "intermediate", "emerging", episodes,
             condition="You have 4+ trumps including high ones",
             why="Each high trump you lead removes one enemy trump. After 2-3 rounds, you control the game",
@@ -698,7 +698,7 @@ def _trump_insights(play_items, episodes) -> list:
 
     if len(trump_whip_low) >= 10 and sum(trump_whip_low) / len(trump_whip_low) > 0.3:
         insights.append(make_insight(
-            "When you can't follow suit, use your smallest trump — it still wins, and you keep your big trumps for harder fights later",
+            "When you're void in the led suit — trump with your LOWEST trump. It still wins the trick, and your high trumps stay ready for when an opponent also trumps",
             "trump", "beginner", "emerging", episodes,
             condition="You can't follow suit and have multiple trumps",
             why="Any trump beats any non-trump card. Using your lowest saves the rest for when opponents also trump"
@@ -706,7 +706,7 @@ def _trump_insights(play_items, episodes) -> list:
 
     if len(trump_follow_low) >= 5 and sum(trump_follow_low) / len(trump_follow_low) < -0.3:
         insights.append(make_insight(
-            "When someone else leads trump, don't throw in a small trump to lose — save it for a trick where YOU choose to trump",
+            "When trump is led and you only have small trumps — don't waste them following. They'll lose anyway. Save them for a trick where YOU are void and can trump a non-trump lead",
             "trump", "intermediate", "emerging", episodes,
             condition="Trump is led and you only have low trumps",
             why="A small trump following a trump lead will lose to any higher trump. But that same card wins any non-trump trick later",
@@ -724,7 +724,7 @@ def _void_insights(play_items, episodes) -> list:
 
     if len(void_q) >= 10 and sum(void_q) / len(void_q) > 0.3:
         insights.append(make_insight(
-            "Get rid of your short suits early — once you have zero cards in a suit, you can trump it every single time it comes up",
+            "If you have only 1-2 cards in a suit — dump them in the first few tricks. Once you're void, every time that suit is led becomes a free trick for you through trumping",
             "voids", "beginner", "emerging", episodes,
             condition="You have a suit with only 1-2 cards",
             why="Being void in a suit turns every lead of that suit into a free trick for you"
@@ -735,7 +735,7 @@ def _void_insights(play_items, episodes) -> list:
                 if len(k) >= 5 and k[3] == "L" and k[0] in "LX" and k[2] != "T" and q > 0.3]
     if len(long_low) >= 10 and sum(long_low) / len(long_low) > 0.3:
         insights.append(make_insight(
-            "Lead low from your longest suit — opponents will run out of it before you do, and your remaining cards become winners",
+            "Lead your LOWEST card from your longest suit — opponents have fewer cards in it and will run out first. Once they're void, your remaining cards in that suit win without a fight",
             "voids", "intermediate", "emerging", episodes,
             condition="You have a suit with 5+ cards",
             why="When opponents are void in your long suit, they must trump or discard. Either way, your remaining cards eventually win"
