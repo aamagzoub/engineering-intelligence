@@ -331,11 +331,7 @@ class Renderer:
         "voids": (80, 180, 180),
         "counter-intuitive": (220, 120, 0),
     }
-    _CONF_LABELS = {
-        "emerging": "[new]",
-        "proven": "[solid]",
-        "mastered": "[proven]",
-    }
+    _CONF_LABELS = None  # No longer used — confidence is +N number now.
 
     def _render_insights_panel(self, panel_w, state):
         """Render left panel with structured strategic insights."""
@@ -418,14 +414,14 @@ class Renderer:
             if isinstance(ins, str):
                 text = ins.lstrip("• ").strip()
                 category = ""
-                confidence = ""
+                confidence = 1
                 condition = ""
                 why = ""
                 is_new = False
             else:
                 text = ins.get("text", "")
                 category = ins.get("category", "")
-                confidence = ins.get("confidence", "")
+                confidence = ins.get("confidence", 1)
                 condition = ins.get("condition", "")
                 why = ins.get("why", "")
                 is_new = ins.get("new", False)
@@ -466,11 +462,12 @@ class Renderer:
                 self.screen.blit(new_surf, (x_cursor + 4, new_rect.y + 2))
                 x_cursor += new_w + 4
 
-            # Confidence symbol.
-            if confidence:
-                conf_sym = self._CONF_LABELS.get(confidence, "")
-                if conf_sym:
-                    self.screen.blit(small_font.render(conf_sym, True, TEXT_GOLD), (x_cursor, y + 3))
+            # Confidence as +N number.
+            conf_val = ins.get("confidence", 1) if isinstance(ins, dict) else 1
+            if isinstance(conf_val, int) and conf_val > 0:
+                conf_text = f"+{conf_val}"
+                self.screen.blit(small_font.render(conf_text, True, TEXT_GOLD), (x_cursor, y + 3))
+                x_cursor += small_font.size(conf_text)[0] + 4
 
             y += 18
 
