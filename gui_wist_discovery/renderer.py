@@ -46,10 +46,10 @@ class Renderer:
         """
         self.screen.fill(BG_DARK)
 
-        left_panel_w = 230
+        left_panel_w = 210
         table = pygame.Rect(
             left_panel_w + 10, 60,
-            SCREEN_WIDTH - left_panel_w - 320, SCREEN_HEIGHT - 80,
+            SCREEN_WIDTH - left_panel_w - 280, SCREEN_HEIGHT - 80,
         )
         pygame.draw.rect(self.screen, TABLE_FELT, table, border_radius=12)
         pygame.draw.rect(self.screen, TABLE_BORDER, table, width=2, border_radius=12)
@@ -206,8 +206,8 @@ class Renderer:
 
     def _render_right_panel(self, state):
         """Scoreboard and discoveries panel on the right side."""
-        px = SCREEN_WIDTH - 290
-        panel_w = 280
+        px = SCREEN_WIDTH - 270
+        panel_w = 260
 
         # Scoreboard box.
         score_h = 175
@@ -352,12 +352,16 @@ class Renderer:
 
         self.screen.set_clip(pygame.Rect(10, 65, panel_w - 20, SCREEN_HEIGHT - 90))
 
-        y = panel_rect.top + 10
+        y = panel_rect.top + 6
 
-        # Category filter chips — two rows above the title, same size as insight badges.
+        # Title.
+        self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
+        y += 20
+
+        # Category filter chips — after title, tight spacing.
         active_filter = state.get("insight_filter", None)
         chip_rects = {}
-        chip_font = self._cat_font  # 13px bold — matches the insight badges.
+        chip_font = self._cat_font
         categories = list(self._CAT_COLORS.keys())
         chip_x = 15
         chip_y = y
@@ -374,27 +378,21 @@ class Renderer:
             ch = chip_surf.get_height() + 6
             chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
 
-            # Wrap to second row if overflows panel width.
             if chip_x + cw > panel_w - 20:
-                chip_y += ch + 4
+                chip_y += ch + 3
                 chip_x = 15
                 chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
 
             pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
             pygame.draw.rect(self.screen, border, chip_rect, width=1, border_radius=4)
-            # Center text in chip.
             text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
             text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
             self.screen.blit(chip_surf, (text_x, text_y))
             chip_rects[cat] = chip_rect
-            chip_x += cw + 4
+            chip_x += cw + 3
 
         state["_chip_rects"] = chip_rects
-        y = chip_y + ch + 8
-
-        # Title.
-        self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
-        y += 22
+        y = chip_y + ch + 6
 
         insights = state.get("insights", [])
         if not insights:
