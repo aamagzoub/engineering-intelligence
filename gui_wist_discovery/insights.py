@@ -57,51 +57,138 @@ _ACTION_DESC = {
 }
 
 def _describe_action(key: str) -> str:
-    """Auto-describe an action key like 'AFNLK' into human text."""
+    """Describe an action key as a simple play instruction."""
     if len(key) < 3:
         return "play a card"
     tier, follows, trump = key[0], key[1], key[2]
-    desc = _ACTION_DESC.get((tier, follows, trump), None)
-    if desc:
-        return desc
-    # Fallback auto-compose.
-    tier_name = {"A": "Ace", "K": "King", "Q": "Queen", "J": "Jack", "M": "mid card", "L": "low card", "X": "weakest card"}.get(tier, "card")
+    
+    # Card range description.
+    card_desc = {"A": "Ace", "K": "King", "Q": "Queen", "J": "Jack", "M": "a 9 or 10", "L": "a 7 or 8", "X": "your weakest card (2-6)"}.get(tier, "a card")
+    
     if trump == "T" and follows == "O":
-        return f"trump with your {tier_name}"
-    elif trump == "T":
-        return f"follow with {tier_name} of trump"
+        if tier in ("L", "X"):
+            return "trump with your smallest trump"
+        elif tier in ("A", "K"):
+            return "trump with your highest trump"
+        else:
+            return f"trump with {card_desc}"
+    elif trump == "T" and follows == "F":
+        if tier in ("A", "K"):
+            return f"follow with your {card_desc} of trump"
+        elif tier in ("L", "X"):
+            return "follow with your smallest trump"
+        else:
+            return f"follow trump with {card_desc}"
     elif follows == "O":
-        return f"discard your {tier_name}"
+        if tier in ("L", "X"):
+            return "discard your weakest card from another suit"
+        else:
+            return f"discard your {card_desc}"
     else:
-        return f"play your {tier_name}"
+        if tier in ("L", "X"):
+            return "follow with your lowest card"
+        elif tier in ("A", "K"):
+            return f"follow with your {card_desc}"
+        else:
+            return f"follow with {card_desc}"
 
 
-def _why_from_pattern(best_key, worst_key, spread, context_desc) -> str:
-    """Auto-generate WHY based on what wins vs what loses."""
+def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
+    """
+    Compose a 2-3 sentence insight paragraph following the 10 rules.
+    Describes situation, play, and reason.
+    """
+    # Decode context into game situation.
+    pos_situation = {
+        "0": "you are leading the trick",
+        "1": "you play 2nd after the leader",
+        "2": "you play 3rd (your partner led)",
+        "3": "you play last and can see all other cards",
+    }.get(pos, "")
+    
+    phase_situation = {
+        "1": "early in the hand when most cards are still out",
+        "2": "in the first half of the hand",
+        "3": "around the middle of the hand",
+        "4": "near the end when few cards remain",
+        "5": "in the last 1-2 tricks",
+    }.get(phase, "")
+    
+    td_situation = {
+        "W": " Your team is ahead.",
+        "B": " Your team is behind.",
+        "A": " Your team is slightly ahead.",
+    }.get(td, "")
+
+    best_action = _describe_action(best_key)
+    worst_action = _describe_action(worst_key)
+    
     best_tier = _TIER_RANK.get(best_key[0], 0) if best_key else 0
     worst_tier = _TIER_RANK.get(worst_key[0], 0) if worst_key else 0
-    best_trump = best_key[2] == "T" if len(best_key) > 2 else False
-    worst_trump = worst_key[2] == "T" if len(worst_key) > 2 else False
-    best_follows = best_key[1] == "F" if len(best_key) > 1 else False
+    best_trump = len(best_key) > 2 and best_key[2] == "T"
+    worst_trump = len(worst_key) > 2 and worst_key[2] == "T"
+    best_follows = len(best_key) > 1 and best_key[1] == "F"
     best_void = len(best_key) > 4 and best_key[4] == "V"
+    is_counter = (best_tier < worst_tier - 1)
 
-    if best_trump and not worst_trump:
-        return "trump beats everything — even a 2 of trump wins against any non-trump card"
-    if best_tier < worst_tier and not best_trump:
-        return "saving your strong cards for later gives them more value when fewer cards remain"
-    if best_tier > worst_tier and best_follows:
-        return "your high card wins the trick now — no point waiting if you can take it"
-    if best_void:
-        return "creating a void opens up free tricks through trumping later"
-    if best_trump and best_tier < 2:
-        return "even your weakest trump wins here — save the big ones for when opponents also trump"
-    if spread > 3:
-        return "the difference is massive — doing anything else costs heavily"
-    if context_desc and "behind" in context_desc:
-        return "when behind, you need tricks NOW — waiting means losing slowly"
-    if context_desc and "ahead" in context_desc:
-        return "when ahead, protect your lead — don't risk what you already have"
-    return "this play consistently outperforms all alternatives in this situation"
+    # Compose the reason.
+    if best_trump and not best_follows:
+        reason = "Even your smallest trump beats any non-trump card, so you win the trick without spending a high card."
+    elif best_tier <= 0 and best_follows:
+        reason = "You cannot win this trick, so play your lowest card to keep your better cards for a trick you can win."
+    elif best_tier >= 4 and best_follows:
+        reason = "Your high card wins the trick now. If you wait, someone may trump it later."
+    elif best_void:
+        reason = "Getting rid of this card empties that suit from your hand. Next time it is led, you can trump it."
+    elif best_trump and best_tier <= 1:
+        reason = "A small trump still wins against any non-trump card. Save your high trumps for when an opponent also trumps."
+    elif best_trump and best_tier >= 4:
+        reason = "Use your highest trump to guarantee the win. A lower trump might be beaten by an opponent's higher trump."
+    elif is_counter:
+        reason = f"Playing {best_action} works better here than {worst_action}. High cards attract trump from void opponents, but lower cards slip through."
+    elif td == "B":
+        reason = "When behind, you need tricks now. Waiting means falling further behind."
+    elif td == "W":
+        reason = "When ahead, protect your lead. Do not spend good cards on tricks that do not matter."
+    else:
+        reason = "This play consistently wins more than the alternatives in this situation."
+
+    # Build the paragraph.
+    situation = f"When {pos_situation} {phase_situation}.{td_situation}"
+    instruction = f"{best_action.capitalize()}."
+    
+    return f"{situation} {instruction} {reason}"
+
+
+def _compose_partnership_insight(pos, phase, best_key, is_partner_led) -> str:
+    """Compose a partnership-focused insight paragraph."""
+    best_action = _describe_action(best_key)
+    best_tier = _TIER_RANK.get(best_key[0], 0) if best_key else 0
+    best_trump = len(best_key) > 2 and best_key[2] == "T"
+
+    if is_partner_led:
+        if best_tier <= 1:
+            return (f"When your partner leads a trick and their card looks strong enough to win, "
+                    f"{best_action}. Keep your high cards for tricks where your team needs you to fight.")
+        elif best_trump and best_key[1] == "F":
+            return (f"When your partner leads trump, {best_action}. "
+                    f"Together you remove 2 enemy trumps in 1 trick, which helps both of you later.")
+        elif best_tier >= 4:
+            return (f"When your partner leads but their card may not win, {best_action}. "
+                    f"Your high card guarantees the trick stays with your team.")
+        else:
+            return (f"When your partner leads, {best_action}. "
+                    f"This supports their play without wasting your strongest cards.")
+    else:
+        if best_tier <= 1:
+            return (f"When you lead, start with a low card. "
+                    f"This lets your partner show their strength or tells you which suits are safe.")
+        elif best_trump:
+            return (f"When you lead, {best_action}. "
+                    f"Leading trump removes opponents' trumps and helps your partner too.")
+        else:
+            return (f"When you lead, {best_action}. "
+                    f"Your choice of suit forces everyone to follow, so pick a suit where your team is strong.")
 
 
 
@@ -351,7 +438,42 @@ def _mine_play_patterns(play_items, episodes) -> list:
                 why="desperation drives risk-taking which reveals hidden opportunities in the hand"
             ))
 
-    return insights[:12]
+    # 7. Specific decisive plays — use compose function for rich descriptions.
+    context_actions = defaultdict(lambda: defaultdict(list))
+    for state, actions in play_items:
+        if len(state) < 7 or len(actions) < 2:
+            continue
+        pos = state[4]
+        phase = state[5]
+        td = state[6] if len(state) > 6 else "T"
+        ctx = (pos, phase, td)
+        for key, q in actions.items():
+            if len(key) >= 3:
+                context_actions[ctx][key].append(q)
+
+    for ctx, action_qs in context_actions.items():
+        pos, phase, td = ctx
+        avg_by_action = {}
+        for key, vals in action_qs.items():
+            if len(vals) >= 3:
+                avg_by_action[key] = sum(vals) / len(vals)
+        if len(avg_by_action) < 2:
+            continue
+        sorted_actions = sorted(avg_by_action.items(), key=lambda x: -x[1])
+        best_key, best_avg = sorted_actions[0]
+        worst_key, worst_avg = sorted_actions[-1]
+        spread = best_avg - worst_avg
+        if spread < 0.8:
+            continue
+
+        text = _compose_play_insight(pos, phase, td, best_key, worst_key, spread)
+        best_rank = _TIER_RANK.get(best_key[0], 0)
+        worst_rank = _TIER_RANK.get(worst_key[0], 0)
+        is_counter = (best_rank < worst_rank - 1)
+        category = "counter-intuitive" if is_counter else _categorize(best_key, worst_key, False)
+        insights.append(_make(text, category, "intermediate", 1, episodes, why=""))
+
+    return insights[:30]
 
 
 def _mine_bid_patterns(bid_q, episodes) -> list:
