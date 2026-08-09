@@ -370,7 +370,10 @@ class WistDiscoveryWatcher:
         win_rate = 0
         if self._wist_win_history:
             win_rate = sum(self._wist_win_history) / len(self._wist_win_history) * 100
+        # Use background agent episodes if available (more current than main).
         episodes = self.discovery.episodes_trained
+        if self._bg_agent:
+            episodes = max(episodes, self._bg_agent.episodes_trained)
 
         # Format: each stat on its own line, blank line, then milestone text.
         if episodes >= 1000000:
@@ -381,14 +384,14 @@ class WistDiscoveryWatcher:
             ep_str = str(episodes)
 
         desc = (
+            f"{base_desc}\n"
+            f"\n"
             f"M-Shota: {episodes}\n"
-            f"Training: {ep_str} shotas\n"
+            f"T-Shotas: {ep_str}\n"
             f"Bid accuracy: {bid_accuracy:.0f}%\n"
             f"Win rate: {win_rate:.0f}%\n"
             f"Compute: {total_str}\n"
-            f"Since last: {delta_str}\n"
-            f"\n"
-            f"{base_desc}"
+            f"Since last: {delta_str}"
         )
 
         self._milestones_list.append((f"{title}", desc))
@@ -463,6 +466,14 @@ class WistDiscoveryWatcher:
     def _bg_train(self):
         """Run continuous background self-play training."""
         while self.running:
+            # Wait while paused.
+            while self.paused and self.running:
+                import time as _time
+                _time.sleep(0.1)
+
+            if not self.running:
+                break
+
             agent = create_training_clone(self.discovery)
             opp = create_opponent(self.discovery, self._opponent_stage,
                                   self._frozen_snapshot, self._best_snapshot)
