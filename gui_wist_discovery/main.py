@@ -391,7 +391,7 @@ class WistDiscoveryWatcher:
             f"{base_desc}"
         )
 
-        self._milestones_list.append((f"{title} (#{episodes})", desc))
+        self._milestones_list.append((f"{title}", desc))
         self._log(f"  ** DISCOVERED: {title} **")
 
         # If user is scrolled down, bump scroll so new item at top doesn't shift view.
