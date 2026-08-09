@@ -108,40 +108,40 @@ def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
     best_void = len(best_key) > 4 and best_key[4] == "V"
     is_counter = (best_tier < worst_tier - 1)
 
-    pos_desc = {"0": "leading", "1": "2nd seat", "2": "3rd seat (after partner)", "3": "last seat"}.get(pos, "")
+    pos_desc = {"0": "when you lead", "1": "when you play 2nd", "2": "when your partner led", "3": "when you play last"}.get(pos, "")
     phase_desc = {"1": "early", "2": "first half", "3": "mid-game", "4": "late", "5": "final tricks"}.get(phase, "")
 
     # Build finding + implication based on pattern type.
     if best_trump and not best_follows:
-        finding = f"From {pos_desc} {phase_desc}, smallest trump outscores all non-trump cards by 3x"
+        finding = f"{pos_desc.capitalize()}, smallest trump outscores all non-trump cards by 3x"
         implication = "Any trump beats any non-trump regardless of rank, so even a 2 of trump wins the trick"
     elif best_tier <= 0 and best_follows and worst_tier >= 3:
-        finding = f"From {pos_desc} {phase_desc}, playing lowest card scores higher than playing Kings or Queens"
+        finding = f"{pos_desc.capitalize()}, playing lowest card scores higher than playing Kings or Queens"
         implication = "Spending high cards on tricks you cannot win wastes them, low cards lose nothing you need"
     elif best_tier >= 4 and best_follows and td == "B":
-        finding = f"When behind from {pos_desc}, high cards played immediately outscore saving them"
+        finding = f"When behind {pos_desc}, high cards played immediately outscore saving them"
         implication = "When losing, waiting to use strong cards means they might never get used at all"
     elif best_void:
-        finding = f"From {pos_desc} {phase_desc}, plays that empty a suit score higher than keeping balanced"
+        finding = f"{pos_desc.capitalize()}, plays that empty a suit score higher than keeping balanced"
         implication = "Becoming void in a suit creates a permanent trumping lane for every future trick in that suit"
     elif best_trump and best_tier >= 4:
-        finding = f"From {pos_desc} {phase_desc}, highest trump outscores lower trumps significantly"
+        finding = f"{pos_desc.capitalize()}, highest trump outscores lower trumps significantly"
         implication = "Lower trumps risk being over-trumped, top trump guarantees the win"
     elif best_trump and best_tier <= 1:
-        finding = f"From {pos_desc} {phase_desc}, weakest trump scores nearly as well as highest trump"
+        finding = f"{pos_desc.capitalize()}, weakest trump scores nearly as well as highest trump"
         implication = "When no opponent can also trump, any trump wins equally, so save your high ones"
     elif is_counter:
-        finding = f"From {pos_desc} {phase_desc}, {best_action} outscores {worst_action}"
+        finding = f"{pos_desc.capitalize()}, {best_action} outscores {worst_action}"
         implication = "High cards attract opposition trumps from void opponents, lower cards slip through uncontested"
     elif td == "W":
-        finding = f"When ahead from {pos_desc}, conservative plays outscore aggressive ones"
+        finding = f"When ahead {pos_desc}, conservative plays outscore aggressive ones"
         implication = "Protecting a lead is safer than extending it, risks only help the losing team"
     elif td == "B":
-        finding = f"When behind from {pos_desc}, aggressive plays outscore conservative ones"
+        finding = f"When behind {pos_desc}, aggressive plays outscore conservative ones"
         implication = "Desperation forces sharper decisions, safe play just means losing slowly"
     else:
-        finding = f"From {pos_desc} {phase_desc}, {best_action} consistently outscores alternatives"
-        implication = "This play wins more across thousands of games in this exact situation"
+        finding = f"{pos_desc.capitalize()}, {best_action} consistently outscores alternatives"
+        implication = "This play wins more across thousands of games in this situation"
 
     return f"{finding}. {implication}."
 
@@ -424,21 +424,20 @@ def _mine_play_patterns(play_items, episodes) -> list:
                 why="desperation drives risk-taking which reveals hidden opportunities in the hand"
             ))
 
-    # 7. Specific decisive plays — use compose function for rich descriptions.
+    # 7. Specific decisive plays — grouped by position+td only (no phase).
     context_actions = defaultdict(lambda: defaultdict(list))
     for state, actions in play_items:
         if len(state) < 7 or len(actions) < 2:
             continue
         pos = state[4]
-        phase = state[5]
         td = state[6] if len(state) > 6 else "T"
-        ctx = (pos, phase, td)
+        ctx = (pos, td)
         for key, q in actions.items():
             if len(key) >= 3:
                 context_actions[ctx][key].append(q)
 
     for ctx, action_qs in context_actions.items():
-        pos, phase, td = ctx
+        pos, td = ctx
         avg_by_action = {}
         for key, vals in action_qs.items():
             if len(vals) >= 3:
@@ -452,7 +451,7 @@ def _mine_play_patterns(play_items, episodes) -> list:
         if spread < 0.8:
             continue
 
-        text = _compose_play_insight(pos, phase, td, best_key, worst_key, spread)
+        text = _compose_play_insight(pos, "", td, best_key, worst_key, spread)
         best_rank = _TIER_RANK.get(best_key[0], 0)
         worst_rank = _TIER_RANK.get(worst_key[0], 0)
         is_counter = (best_rank < worst_rank - 1)
@@ -546,21 +545,18 @@ def _mine_partnership_patterns(play_items, episodes) -> list:
     """Mine Q-table for partnership coordination patterns."""
     insights = []
 
-    # Group by position — positions 2 (third seat = partner led) and 0 (leading for partner).
+    # Group by position only — no phase splitting for partnership.
     partner_contexts = defaultdict(lambda: defaultdict(list))
     for state, actions in play_items:
         if len(state) < 6:
             continue
         pos = state[4]
-        phase = state[5]
-        # Position 2 = partner led from pos 0.
-        # Position 0 = you're leading (partner benefits from your choice).
         if pos in ("0", "2"):
             for key, q in actions.items():
                 if len(key) >= 3:
-                    partner_contexts[(pos, phase)][key].append(q)
+                    partner_contexts[pos][key].append(q)
 
-    for (pos, phase), action_qs in partner_contexts.items():
+    for pos, action_qs in partner_contexts.items():
         avg_by_action = {}
         for key, vals in action_qs.items():
             if len(vals) >= 3:
