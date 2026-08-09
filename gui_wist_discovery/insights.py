@@ -573,39 +573,10 @@ def _mine_partnership_patterns(play_items, episodes) -> list:
         if spread < 0.4:
             continue
 
-        pos_desc = _POS_DESC.get(pos, "")
-        phase_desc = _PHASE_DESC.get(phase, "")
-        action_desc = _describe_action(best_key)
-        best_follows = best_key[1] == "F" if len(best_key) > 1 else False
-        best_trump = best_key[2] == "T" if len(best_key) > 2 else False
-        best_tier = _TIER_RANK.get(best_key[0], 0)
-
-        # Generate partnership-specific WHY.
-        if pos == "2":  # Partner led.
-            if best_tier <= 1:  # Low card following partner.
-                why = "partner is likely winning, save your strength for tricks where you need to fight"
-                text = f"When your partner leads in {phase_desc}, {action_desc}, trust their lead"
-            elif best_trump and best_key[1] == "F":
-                why = "together you flush out opponents' trumps, clearing the way for both of you"
-                text = f"When partner leads trump in {phase_desc}, {action_desc}, help them clear the field"
-            elif best_tier >= 4:
-                why = "your partner's lead might not win alone, your high card guarantees the trick for your team"
-                text = f"When partner leads in {phase_desc} and trick is contested, {action_desc}"
-            else:
-                why = "coordinating with partner's lead maximizes your team's trick count"
-                text = f"In {phase_desc} when partner leads, {action_desc}"
-        else:  # pos 0 = you're leading.
-            if best_tier <= 1:
-                why = "leading low probes the table and lets partner play their strength"
-                text = f"In {phase_desc} when leading, {action_desc}, let partner handle the heavy lifting"
-            elif best_trump:
-                why = "leading trump helps both you and your partner by removing opponents' trump threats"
-                text = f"In {phase_desc} when leading, {action_desc}, clears trump for your team"
-            else:
-                why = "your lead sets up the trick for partner to win or you to take it together"
-                text = f"In {phase_desc} when leading, {action_desc}"
-
-        insights.append(_make(text, "partnership", "intermediate", 1, episodes, why=why))
+        # Use compose function for rich descriptions.
+        is_partner_led = (pos == "2")
+        text = _compose_partnership_insight(pos, "", best_key, is_partner_led)
+        insights.append(_make(text, "partnership", "intermediate", 1, episodes, why=""))
 
     return insights[:15]
 
