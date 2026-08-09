@@ -146,7 +146,11 @@ def generate_insights(agent) -> list:
     new_insights = []
     new_insights.extend(_mine_play_patterns(play_items, episodes))
     new_insights.extend(_mine_bid_patterns(bid_q, episodes))
+    new_insights.extend(_mine_partnership_patterns(play_items, episodes))
     new_insights.extend(_mine_counter_intuitive(play_items, bid_q, episodes))
+
+    # Dedup similar insights: same position + phase + action tier = merge into one.
+    new_insights = _dedup_merge(new_insights)
 
     # Merge new into accumulated.
     for ins in new_insights:
@@ -247,7 +251,7 @@ def _mine_play_patterns(play_items, episodes) -> list:
 
         text = f"{context_str}, {action_desc}"
         if is_counter:
-            text = f"Counter-intuitive: {context_str}, {action_desc} (beats {_describe_action(worst_key)})"
+            text = f"{context_str}, {action_desc} (beats {_describe_action(worst_key)})"
 
         why = _why_from_pattern(best_key, worst_key, spread, td_desc)
         category = _categorize(best_key, worst_key, is_counter)
@@ -330,13 +334,117 @@ def _mine_bid_patterns(bid_q, episodes) -> list:
 
         text = f"When your hand has {hand_desc}, {action_desc}"
         if is_counter:
-            text = f"Counter-intuitive: hand with {hand_desc}, {action_desc} works better than expected"
+            text = f"Hand with {hand_desc}, {action_desc} works better than expected"
 
         category = "counter-intuitive" if is_counter else "bidding"
         insights.append(_make(text, category, "intermediate", 1, episodes, why=why))
 
     return insights[:20]
 
+
+
+def _mine_partnership_patterns(play_items, episodes) -> list:
+    """Mine Q-table for partnership coordination patterns."""
+    insights = []
+
+    # Group by position — positions 2 (third seat = partner led) and 0 (leading for partner).
+    partner_contexts = defaultdict(lambda: defaultdict(list))
+    for state, actions in play_items:
+        if len(state) < 6:
+            continue
+        pos = state[4]
+        phase = state[5]
+        # Position 2 = partner led from pos 0.
+        # Position 0 = you're leading (partner benefits from your choice).
+        if pos in ("0", "2"):
+            for key, q in actions.items():
+                if len(key) >= 3:
+                    partner_contexts[(pos, phase)][key].append(q)
+
+    for (pos, phase), action_qs in partner_contexts.items():
+        avg_by_action = {}
+        for key, vals in action_qs.items():
+            if len(vals) >= 3:
+                avg_by_action[key] = sum(vals) / len(vals)
+
+        if len(avg_by_action) < 2:
+            continue
+
+        sorted_actions = sorted(avg_by_action.items(), key=lambda x: -x[1])
+        best_key, best_avg = sorted_actions[0]
+        worst_key, worst_avg = sorted_actions[-1]
+        spread = best_avg - worst_avg
+
+        if spread < 0.4:
+            continue
+
+        pos_desc = _POS_DESC.get(pos, "")
+        phase_desc = _PHASE_DESC.get(phase, "")
+        action_desc = _describe_action(best_key)
+        best_follows = best_key[1] == "F" if len(best_key) > 1 else False
+        best_trump = best_key[2] == "T" if len(best_key) > 2 else False
+        best_tier = _TIER_RANK.get(best_key[0], 0)
+
+        # Generate partnership-specific WHY.
+        if pos == "2":  # Partner led.
+            if best_tier <= 1:  # Low card following partner.
+                why = "partner is likely winning, save your strength for tricks where you need to fight"
+                text = f"When your partner leads in {phase_desc}, {action_desc}, trust their lead"
+            elif best_trump and best_key[1] == "F":
+                why = "together you flush out opponents' trumps, clearing the way for both of you"
+                text = f"When partner leads trump in {phase_desc}, {action_desc}, help them clear the field"
+            elif best_tier >= 4:
+                why = "your partner's lead might not win alone, your high card guarantees the trick for your team"
+                text = f"When partner leads in {phase_desc} and trick is contested, {action_desc}"
+            else:
+                why = "coordinating with partner's lead maximizes your team's trick count"
+                text = f"In {phase_desc} when partner leads, {action_desc}"
+        else:  # pos 0 = you're leading.
+            if best_tier <= 1:
+                why = "leading low probes the table and lets partner play their strength"
+                text = f"In {phase_desc} when leading, {action_desc}, let partner handle the heavy lifting"
+            elif best_trump:
+                why = "leading trump helps both you and your partner by removing opponents' trump threats"
+                text = f"In {phase_desc} when leading, {action_desc}, clears trump for your team"
+            else:
+                why = "your lead sets up the trick for partner to win or you to take it together"
+                text = f"In {phase_desc} when leading, {action_desc}"
+
+        insights.append(_make(text, "partnership", "intermediate", 1, episodes, why=why))
+
+    return insights[:15]
+
+
+def _dedup_merge(insights) -> list:
+    """
+    Merge similar insights into one. If two insights describe the same
+    position + phase + action tier, keep the better one and increment confidence.
+    """
+    # Build signature for each insight: extract key components from text.
+    seen = {}  # signature -> insight
+    for ins in insights:
+        text = ins.get("text", "")
+        cat = ins.get("category", "")
+        # Create a rough signature from key words.
+        words = text.lower().split()
+        # Extract position, phase, and action keywords.
+        sig_parts = [cat]
+        for w in words:
+            if w in ("leading", "second", "third", "last"):
+                sig_parts.append(w)
+            elif "trick" in w and any(c.isdigit() for c in w):
+                sig_parts.append(w)
+            elif w in ("ace", "king", "queen", "jack", "trump", "low", "weakest", "mid"):
+                sig_parts.append(w)
+        sig = " ".join(sig_parts[:5])  # First 5 sig parts.
+
+        if sig in seen:
+            # Duplicate — increment confidence of existing.
+            seen[sig]["confidence"] = seen[sig].get("confidence", 1) + 1
+        else:
+            seen[sig] = ins
+
+    return list(seen.values())
 
 
 def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
@@ -374,12 +482,12 @@ def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
         phase_desc = _PHASE_DESC.get(phase, "")
 
         if low_avg is not None and high_avg is not None and low_avg > high_avg + 0.2:
-            text = f"Counter-intuitive: in {phase_desc} when {pos_desc}, low cards outperform Aces and Kings, save your power for other moments"
+            text = f"In {phase_desc} when {pos_desc}, low cards outperform Aces and Kings, save your power for other moments"
             why = "high cards attract trumps from void opponents here. Low cards fly under the radar and preserve your hand"
             insights.append(_make(text, "counter-intuitive", "advanced", 1, episodes, why=why))
 
         if mid_avg is not None and high_avg is not None and mid_avg > high_avg + 0.2:
-            text = f"Counter-intuitive: in {phase_desc} when {pos_desc}, mid cards (9s, 10s, Jacks) beat Aces, opponents target your high cards but ignore middle ones"
+            text = f"In {phase_desc} when {pos_desc}, mid cards (9s, 10s, Jacks) beat Aces, opponents target your high cards but ignore middle ones"
             why = "opponents save trumps to kill your Aces. Mid cards win tricks nobody fights over"
             insights.append(_make(text, "counter-intuitive", "advanced", 1, episodes, why=why))
 
@@ -401,7 +509,7 @@ def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
             continue
         best_bid_q = max(bid_qs)
         if pass_q > best_bid_q + 0.3:
-            text = f"Counter-intuitive: with {highs} high cards, passing beats any bid, raw card power without trump length is a trap"
+            text = f"With {highs} high cards, passing beats any bid, raw card power without trump length is a trap"
             why = "high cards spread across multiple suits get trumped. Trump count matters more than face cards"
             insights.append(_make(text, "counter-intuitive", "advanced", 1, episodes, why=why))
             break  # One per scan.

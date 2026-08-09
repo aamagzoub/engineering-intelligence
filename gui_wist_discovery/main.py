@@ -381,9 +381,10 @@ class WistDiscoveryWatcher:
             ep_str = str(episodes)
 
         desc = (
-            f"Win rate: {win_rate:.0f}%\n"
-            f"Bid accuracy: {bid_accuracy:.0f}%\n"
+            f"M-Shota: {episodes}\n"
             f"Training: {ep_str} shotas\n"
+            f"Bid accuracy: {bid_accuracy:.0f}%\n"
+            f"Win rate: {win_rate:.0f}%\n"
             f"Compute: {total_str}\n"
             f"Since last: {delta_str}\n"
             f"\n"

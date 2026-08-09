@@ -210,7 +210,7 @@ class Renderer:
         panel_w = 280
 
         # Scoreboard box.
-        score_h = 215
+        score_h = 175
         score_rect = pygame.Rect(px, 60, panel_w, score_h)
         pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
@@ -482,20 +482,12 @@ class Renderer:
 
             y += 18
 
-            # --- Line 2+: WHAT: Main text ---
-            what_label = num_font.render("WHAT: ", True, (255, 255, 255))
-            self.screen.blit(what_label, (25, y))
-            what_label_w = what_label.get_width()
-            y = self._wrap_text(body_font, text, 25 + what_label_w, y, text_w - 10 - what_label_w, (255, 255, 255), panel_rect.bottom - 20)
+            # --- Line 2+: Main text + why combined ---
+            full_text = text
+            if why:
+                full_text = f"{text}. {why}"
+            y = self._wrap_text(body_font, full_text, 25, y, text_w - 10, (255, 255, 255), panel_rect.bottom - 20)
             y += 2
-
-            # --- Line 3: WHY: (if present, no "When:") ---
-            if why and y + 14 < panel_rect.bottom - 20:
-                why_label = num_font.render("WHY: ", True, (255, 255, 255))
-                self.screen.blit(why_label, (25, y))
-                why_label_w = why_label.get_width()
-                y = self._wrap_text(body_font, why, 25 + why_label_w, y, text_w - 10 - why_label_w, (255, 255, 255), panel_rect.bottom - 20)
-                y += 2
 
             y += 4
 

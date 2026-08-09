@@ -58,6 +58,7 @@ class HumanTab:
 
         # Load learned insights for AI reasoning display.
         self._ai_insights = []
+        self._show_tips = False  # Tips hidden by default.
         try:
             from gui_wist_discovery.insights import _load_cached_insights
             self._ai_insights = _load_cached_insights()
@@ -205,6 +206,12 @@ class HumanTab:
                                         font=("Segoe UI", 8), fg="#aaaaaa",
                                         bg=COLORS["header_bg"])
         self._ai_model_label.pack(side="left", padx=8)
+
+        # Tips toggle button.
+        self._tips_btn = tk.Button(bf, text="Tips: OFF", font=("Segoe UI", 9),
+                                   fg="#fff", bg="#555555", bd=0, padx=10, pady=3,
+                                   cursor="hand2", command=self._toggle_tips)
+        self._tips_btn.pack(side="left", padx=4)
 
     def _create_opponent_area(self, parent, pid, name, team, row, col):
         """Create opponent player area — fixed size to prevent jumping."""
@@ -1142,10 +1149,11 @@ class HumanTab:
 
                 self._set_status(f"Trick {self.trick_number} — {DISPLAY_NAMES[pid]} played {ct}")
 
-                # Show AI reasoning from learned insights.
-                reason = self._find_relevant_insight(action.card, obs)
-                if reason:
-                    self._log(f"    💡 {reason}")
+                # Show AI reasoning from learned insights (only if tips enabled).
+                if self._show_tips:
+                    reason = self._find_relevant_insight(action.card, obs)
+                    if reason:
+                        self._log(f"    Tip: {reason}")
             except Exception as e:
                 # AI failed — skip this player with a dummy play if possible.
                 self._log(f"  ⚠ AI error P{pid+1}: {e}")
@@ -1508,6 +1516,14 @@ class HumanTab:
     # ----------------------------------------------------------
     # AI Insight Reasoning
     # ----------------------------------------------------------
+
+    def _toggle_tips(self):
+        """Toggle tip display on/off."""
+        self._show_tips = not self._show_tips
+        if self._show_tips:
+            self._tips_btn.config(text="Tips: ON", bg="#4caf50")
+        else:
+            self._tips_btn.config(text="Tips: OFF", bg="#555555")
 
     def _find_relevant_insight(self, card, obs) -> str:
         """Find a relevant insight that explains why the AI played this card."""

@@ -67,7 +67,7 @@ class WistApp:
                         if event.key == pygame.K_RETURN:
                             # Confirm name and start game.
                             if not self._player_name.strip():
-                                self._player_name = "Omer"
+                                self._player_name = "User"
                             self._apply_player_name()
                             self._start_playing()
                         elif event.key == pygame.K_BACKSPACE:
@@ -83,7 +83,7 @@ class WistApp:
                             self.running = False
                         elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
                             if not self._player_name.strip():
-                                self._player_name = "Omer"
+                                self._player_name = "User"
                             self._apply_player_name()
                             self._start_playing()
                     continue
@@ -122,7 +122,7 @@ class WistApp:
         btn_rect = pygame.Rect(cx - 120, cy + 115, 240, 55)
         if btn_rect.collidepoint(pos):
             if not self._player_name.strip():
-                self._player_name = "Omer"
+                self._player_name = "User"
             self._apply_player_name()
             self._start_playing()
             return
@@ -131,7 +131,7 @@ class WistApp:
         shotas_rect = pygame.Rect(cx - 120, cy + 180, 240, 55)
         if shotas_rect.collidepoint(pos):
             if not self._player_name.strip():
-                self._player_name = "Omer"
+                self._player_name = "User"
             self._apply_player_name()
             self._start_playing_shotas()
             return
@@ -229,10 +229,10 @@ class WistApp:
             if os.path.exists(stats_file):
                 with open(stats_file, 'r') as f:
                     data = json.load(f)
-                return data.get("name", "Omer")
+                return data.get("name", "")
         except Exception:
             pass
-        return "Omer"
+        return ""
 
     def _save_player_name(self):
         """Save player name to stats file."""
