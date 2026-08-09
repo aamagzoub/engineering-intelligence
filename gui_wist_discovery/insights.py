@@ -245,9 +245,9 @@ def _mine_play_patterns(play_items, episodes) -> list:
             context_parts.append(f"and your team is {td_desc}")
         context_str = " ".join(context_parts)
 
-        text = f"{context_str} — {action_desc}"
+        text = f"{context_str}, {action_desc}"
         if is_counter:
-            text = f"Counter-intuitive: {context_str} — {action_desc} (beats {_describe_action(worst_key)})"
+            text = f"Counter-intuitive: {context_str}, {action_desc} (beats {_describe_action(worst_key)})"
 
         why = _why_from_pattern(best_key, worst_key, spread, td_desc)
         category = _categorize(best_key, worst_key, is_counter)
@@ -302,7 +302,7 @@ def _mine_bid_patterns(bid_q, episodes) -> list:
         # Build hand description.
         hand_parts = []
         if longest >= 5:
-            hand_parts.append(f"longest suit has {longest} cards")
+            hand_parts.append(f"a {longest}-card suit")
         if highs >= 3:
             hand_parts.append(f"{highs}+ high cards")
         if voids >= 1:
@@ -328,9 +328,9 @@ def _mine_bid_patterns(bid_q, episodes) -> list:
         else:
             continue
 
-        text = f"When your hand has {hand_desc} — {action_desc}"
+        text = f"When your hand has {hand_desc}, {action_desc}"
         if is_counter:
-            text = f"Counter-intuitive: hand with {hand_desc} — {action_desc} works better than expected"
+            text = f"Counter-intuitive: hand with {hand_desc}, {action_desc} works better than expected"
 
         category = "counter-intuitive" if is_counter else "bidding"
         insights.append(_make(text, category, "intermediate", 1, episodes, why=why))
@@ -374,12 +374,12 @@ def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
         phase_desc = _PHASE_DESC.get(phase, "")
 
         if low_avg is not None and high_avg is not None and low_avg > high_avg + 0.2:
-            text = f"Counter-intuitive: in {phase_desc} when {pos_desc}, low cards outperform Aces and Kings — save your power for other moments"
+            text = f"Counter-intuitive: in {phase_desc} when {pos_desc}, low cards outperform Aces and Kings, save your power for other moments"
             why = "high cards attract trumps from void opponents here. Low cards fly under the radar and preserve your hand"
             insights.append(_make(text, "counter-intuitive", "advanced", 1, episodes, why=why))
 
         if mid_avg is not None and high_avg is not None and mid_avg > high_avg + 0.2:
-            text = f"Counter-intuitive: in {phase_desc} when {pos_desc}, mid cards (9s, 10s, Jacks) beat Aces — opponents target your high cards but ignore middle ones"
+            text = f"Counter-intuitive: in {phase_desc} when {pos_desc}, mid cards (9s, 10s, Jacks) beat Aces, opponents target your high cards but ignore middle ones"
             why = "opponents save trumps to kill your Aces. Mid cards win tricks nobody fights over"
             insights.append(_make(text, "counter-intuitive", "advanced", 1, episodes, why=why))
 
@@ -401,7 +401,7 @@ def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
             continue
         best_bid_q = max(bid_qs)
         if pass_q > best_bid_q + 0.3:
-            text = f"Counter-intuitive: with {highs} high cards, passing beats any bid — raw card power without trump length is a trap"
+            text = f"Counter-intuitive: with {highs} high cards, passing beats any bid, raw card power without trump length is a trap"
             why = "high cards spread across multiple suits get trumped. Trump count matters more than face cards"
             insights.append(_make(text, "counter-intuitive", "advanced", 1, episodes, why=why))
             break  # One per scan.

@@ -301,12 +301,23 @@ class Renderer:
                 num_color = TEXT_GOLD if is_latest else (255, 255, 255)
                 self.screen.blit(num_font.render(num_str, True, num_color), (px + 10, y))
 
-                # Title: description — all in one paragraph separated by ":"
-                # Flatten multi-line desc into single line.
-                desc_flat = " ".join(line.strip() for line in desc_text.split("\n") if line.strip())
-                full_text = f"{title_text}: {desc_flat}" if desc_flat else title_text
-                color = (255, 255, 255) if is_latest else (255, 255, 255)
-                y = self._wrap_text(body_font, full_text, px + 10 + num_w, y, panel_text_w - num_w, color, disc_rect.bottom - 20)
+                # Title on first line.
+                color = (255, 255, 255)
+                y = self._wrap_text(num_font, title_text, px + 10 + num_w, y, panel_text_w - num_w, num_color, disc_rect.bottom - 20)
+                y += 2
+
+                # Description: render each line separately (stats + blank + milestone text).
+                desc_lines = desc_text.split("\n")
+                for line in desc_lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        y += 6  # Blank line = spacing before milestone text.
+                        continue
+                    if y + 14 > disc_rect.bottom - 15:
+                        break
+                    y = self._wrap_text(body_font, stripped, px + 15, y, panel_text_w - 20, color, disc_rect.bottom - 20)
+                    y += 1
+
                 y += 6
 
                 # Horizontal separator.
