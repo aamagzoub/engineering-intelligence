@@ -16,7 +16,7 @@ from collections import defaultdict
 import json
 import os
 
-_INSIGHTS_CACHE_PATH = "agents/wist_discovery/insights_cache.json"
+_INSIGHTS_CACHE_PATH = "agents/wist_discovery/insights_cache_v3.1.4.json"
 _SNAPSHOTS_PATH = "agents/wist_discovery/strategy_snapshots.json"
 
 # ─── Decoding Maps ───────────────────────────────────────────────────────────────

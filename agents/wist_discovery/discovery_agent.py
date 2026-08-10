@@ -60,105 +60,42 @@ STATE_FEATURE_SIZE = 32  # Fixed feature vector size for neural net.
 
 def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
                        partner_bid: int = 0, my_tricks: int = 0, opp_tricks: int = 0) -> str:
-    """Rich state encoding — observable features only.
+    """Absolute minimal state encoding — almost nothing.
 
-    Enhanced with:
-    - Exact trick counts (not just phase)
-    - Partner's bid value (observable fact)
-    - Trick score difference (exact, not bucketed)
+    The agent sees only its raw hand size as a rough state key.
+    All real learning happens through the neural net from raw features.
+    The Q-table provides a weak baseline; neural net handles generalization.
     """
     hand = obs.hand
     n_cards = len(hand)
-    suits = [0, 0, 0, 0]
-    highs = 0
-    aces = 0
-    trump_count = 0
-    trump_highs = 0
-    for c in hand:
-        suits[SUIT_IDX[c.suit]] += 1
-        if RANK_VAL[c.rank] >= 12:
-            highs += 1
-        if RANK_VAL[c.rank] == 14:
-            aces += 1
-        if obs.trump_suit and c.suit == obs.trump_suit:
-            trump_count += 1
-            if RANK_VAL[c.rank] >= 12:
-                trump_highs += 1
-
-    shape = "".join(str(min(s, 9)) for s in sorted(suits, reverse=True))
     pos = 0
     if obs.current_trick and obs.current_trick.played_cards:
         pos = len(obs.current_trick.played_cards)
-
-    if n_cards >= 11:
-        phase = "1"
-    elif n_cards >= 8:
-        phase = "2"
-    elif n_cards >= 5:
-        phase = "3"
-    elif n_cards >= 2:
-        phase = "4"
-    else:
-        phase = "5"
-
-    my_team = 0 if obs.player_id in (0, 2) else 1
-    opp_team = 1 - my_team
-    diff = obs.team_scores.get(my_team, 0) - obs.team_scores.get(opp_team, 0)
-    td = "W" if diff >= 3 else ("A" if diff > 0 else ("T" if diff == 0 else "B"))
-    ts = f"{min(trump_count, 7)}{min(trump_highs, 4)}"
-    voids = sum(1 for s in suits if s == 0)
-
-    # Enhanced features: exact trick counts and partner bid.
-    mt = min(my_tricks, 13)
-    ot = min(opp_tricks, 13)
-    pb = min(partner_bid, 13)
-
-    return f"{shape}{pos}{phase}{td}{min(highs, 5)}{ts}v{voids}a{min(aces, 4)}o{min(opp_voids, 6)}t{mt:x}{ot:x}b{pb:x}"
+    # Minimal key: just hand size and position — enough for Q-table baseline.
+    return f"{n_cards:x}{pos}"
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
-    """Fine-grained action encoding with 7 rank tiers."""
+    """Minimal action encoding — no domain knowledge.
+
+    Contains only:
+    - Raw rank number (2-14) — just the card's face value
+    - Suit index (0-3) — just identifies which suit
+    No tiers, no trump labeling, no void detection, no longest suit.
+    """
     rv = RANK_VAL[card.rank]
-    # 7 tiers: A=Ace, K=King, Q=Queen, J=Jack, M=9-10, L=5-8, X=2-4
-    if rv == 14:
-        tier = "A"
-    elif rv == 13:
-        tier = "K"
-    elif rv == 12:
-        tier = "Q"
-    elif rv == 11:
-        tier = "J"
-    elif rv >= 9:
-        tier = "M"
-    elif rv >= 5:
-        tier = "L"
-    else:
-        tier = "X"
-    leading = obs.current_trick.leading_suit if obs.current_trick else None
-    follows = "F" if (leading and card.suit == leading) else "O"
-    is_trump = "T" if (obs.trump_suit and card.suit == obs.trump_suit) else "N"
-    suit_counts = Counter(c.suit for c in obs.hand)
-    longest = max(suit_counts.values()) if suit_counts else 0
-    is_long = "L" if suit_counts.get(card.suit, 0) == longest else "S"
-    creates_void = "V" if suit_counts.get(card.suit, 0) == 1 else "K"
-    return f"{tier}{follows}{is_trump}{is_long}{creates_void}"
+    si = SUIT_IDX[card.suit]
+    return f"{rv:x}{si}"
 
 
 def _encode_bid_state(obs: BiddingObservation) -> str:
-    """Richer bid state."""
-    hand = obs.hand
-    suit_counts = Counter(c.suit for c in hand)
-    longest = max(suit_counts.values()) if suit_counts else 0
-    shortest_valid = min((c for c in suit_counts.values() if 1 <= c <= 7), default=0)
-    highs = sum(1 for c in hand if RANK_VAL[c.rank] >= 12)
-    aces = sum(1 for c in hand if RANK_VAL[c.rank] == 14)
-    voids = sum(1 for s in [Suit.SPADES, Suit.HEARTS, Suit.CLUBS, Suit.DIAMONDS]
-                if suit_counts.get(s, 0) == 0)
+    """Absolute minimal bid state — just whether someone bid and the level.
+
+    Agent must discover everything about hand strength from the neural net.
+    """
     has_bid = "Y" if obs.current_highest_bid else "N"
-    is_q = "Y" if obs.is_sahib_al_qabool else "N"
-    forced = "F" if obs.must_play else "N"
     bid_level = str(min(obs.current_highest_bid, 13)) if obs.current_highest_bid else "0"
-    return f"{longest}{shortest_valid}{min(highs, 5)}{min(aces, 4)}v{voids}{has_bid}{bid_level}{is_q}{forced}"
+    return f"{has_bid}{bid_level}"
 
 
 def _encode_bid_action(action: Action) -> str:
@@ -680,28 +617,9 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """Record trick outcome in sequence memory. No Q-update — the agent must
-        discover that tricks matter from the end-of-shota score alone.
-
-        Enhanced memory: records position of winner, winning card tier, and
-        suit depletion count for richer neural net features.
-        """
-        if not self.training or not self._play_episode:
-            return
-
-        # Record this trick in memory buffer (observable fact, not reward).
-        state, action = self._play_episode[-1]
-        rank_norm = 1.0 if action.startswith("A") else (0.7 if action.startswith("K") else (0.5 if action.startswith("Q") else (0.3 if action.startswith("M") else 0.1)))
-        was_trump = 1.0 if "T" in action else 0.0
-        followed = 1.0 if "F" in action else 0.0
-        won_f = 1.0 if won else 0.0
-        created_void = 1.0 if action.endswith("V") else 0.0
-        # Position in trick (from state).
-        pos_norm = int(state[4]) / 3.0 if len(state) > 4 and state[4].isdigit() else 0.0
-
-        self._trick_memory.append((rank_norm, was_trump, followed, won_f, created_void, pos_norm))
-        if len(self._trick_memory) > self._memory_size:
-            self._trick_memory = self._trick_memory[-self._memory_size:]
+        """No-op. The agent must discover that tricks matter from the shota score alone.
+        No intermediate feedback — only the final score teaches."""
+        pass
 
     def reward(self, score: float) -> None:
         """End-of-shota reward with all architecture enhancements."""
@@ -886,20 +804,9 @@ class WistDiscoveryAgent(Agent):
         return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
 
     def _get_memory_features(self) -> np.ndarray:
-        """Get sequence memory as a fixed 78-dim feature vector (13 tricks × 6 features).
-
-        Enhanced: includes void creation and position information per trick.
-        """
-        features = np.zeros(78)
-        for i, entry in enumerate(self._trick_memory[:13]):
-            base = i * 6
-            features[base] = entry[0]      # rank_norm
-            features[base + 1] = entry[1]  # was_trump
-            features[base + 2] = entry[2]  # followed suit
-            features[base + 3] = entry[3]  # won trick
-            features[base + 4] = entry[4] if len(entry) > 4 else 0.0  # created void
-            features[base + 5] = entry[5] if len(entry) > 5 else 0.0  # position norm
-        return features
+        """Empty memory — agent gets no trick-by-trick history.
+        Returns zeros; neural net must learn from raw hand state alone."""
+        return np.zeros(78)
 
     # =========================================================================
     # Episode Management

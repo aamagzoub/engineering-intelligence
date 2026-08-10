@@ -11,7 +11,7 @@ from collections import deque, Counter
 
 # ─── Milestone Storage ──────────────────────────────────────────────────────────
 
-MILESTONES_PATH = "agents/wist_discovery/milestones.json"
+MILESTONES_PATH = "agents/wist_discovery/milestones_v3.1.4.json"
 
 
 def save_milestones(achieved, milestones_list, compute_time):

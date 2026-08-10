@@ -191,7 +191,8 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
             opp = create_diverse_opponent(agent, stage, frozen_snapshot, best_snapshot)
             games_since_swap = 0
 
-        for shota_idx in range(5):  # 5 shotas per game.
+        shota_idx = 0
+        while shota_idx < 5:  # 5 actual played shotas per game.
             players = create_standard_players()
             agents_list = [agent, opp, agent, opp]
             rnd = Round(players)
@@ -199,7 +200,7 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
 
             if rnd.has_card_based_dak():
                 agent.reset_episode()
-                continue
+                continue  # Dak doesn't count — retry same shota slot.
 
             # Rotate Qabool like in a real game.
             qabool_id = shota_idx % 4
@@ -213,7 +214,7 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
 
             if res.is_dak:
                 agent.reset_episode()
-                continue
+                continue  # Dak doesn't count — retry same shota slot.
 
             rnd.state.trump_suit = res.trump_suit
             rnd.state.winning_bidder_id = res.winning_bidder_id
@@ -249,6 +250,7 @@ def run_background_training(agent, opp, num_shotas=10000, milestone_callback=Non
             team_scores[1] += scores.get(1, 0)
             shota_count += 1
             shotas_done += 1
+            shota_idx += 1  # Only increment after a successfully played shota.
 
             if milestone_callback:
                 bid_met = tt[res.playing_team_id] >= res.winning_bid_value

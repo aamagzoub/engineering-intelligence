@@ -64,7 +64,7 @@ class WistDiscoveryWatcher:
         self.state = "idle"
 
         # Agent — self-play.
-        self.model_path = "agents/wist_discovery/wist_discovery_model.json"
+        self.model_path = "agents/wist_discovery/wist_discovery_model_v3.1.4.json"
         self.discovery = WistDiscoveryAgent(training=True)
         if os.path.exists(self.model_path):
             try:
@@ -181,9 +181,9 @@ class WistDiscoveryWatcher:
             self._log(msg)
 
         if players is None:
-            # All attempts failed — reset agent episode memory.
+            # Dak — doesn't count as a played shota. Decrement back.
+            self.shota_num -= 1
             self.discovery.reset_episode()
-            self.shota_scores.append({0: 0, 1: 0})
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return

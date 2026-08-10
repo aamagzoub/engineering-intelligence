@@ -261,84 +261,54 @@ RANK_NORM = {2: 0.0, 3: 0.08, 4: 0.17, 5: 0.25, 6: 0.33, 7: 0.42,
 
 def card_features(card, obs, playable_cards, rank_val_func, suit_idx_map) -> np.ndarray:
     """
-    Extract 8 numeric features for a single card in the current game context.
-    
-    Features (all normalized 0-1):
-    1. Rank value (normalized)
-    2. Is trump (0/1)
-    3. Follows leading suit (0/1)
-    4. Can win this trick (0/1) — observable fact
-    5. Creates void if played (0/1)
-    6. Is from longest suit in hand (0/1)
-    7. Relative rank position (highest in suit in hand = 1, lowest = 0)
-    8. Cards remaining in this suit (normalized)
+    Raw card features — NO domain knowledge.
+
+    Only observable facts about this card:
+    1. Rank (normalized 0-1) — just the number on the card
+    2. Suit index (normalized 0-1) — which suit it is
+    3. How many cards of this suit in hand (normalized)
+    4. Is this the only card of its suit in hand (0/1)
+    5. Rank position within same-suit cards in hand (relative)
+    6. Number of cards played in this trick so far (normalized)
+    7. Number of legal options available (normalized)
+    8. How many cards total in hand (normalized)
+
+    NO trump labeling, NO "can win", NO "follows suit" labeling.
     """
     rv = rank_val_func(card.rank)
     features = np.zeros(8)
 
-    # 1. Rank (normalized).
-    features[0] = RANK_NORM.get(rv, 0.5)
+    # 1. Raw rank (normalized).
+    features[0] = rv / 14.0
 
-    # 2. Is trump.
-    features[1] = 1.0 if (obs.trump_suit and card.suit == obs.trump_suit) else 0.0
+    # 2. Suit index (normalized).
+    si = suit_idx_map.get(card.suit, 0) if suit_idx_map else 0
+    features[1] = (si + 1) / 4.0
 
-    # 3. Follows leading suit.
-    leading = obs.current_trick.leading_suit if obs.current_trick else None
-    features[2] = 1.0 if (leading and card.suit == leading) else 0.0
+    # 3. How many cards of this suit in hand.
+    suit_count = sum(1 for c in obs.hand if c.suit == card.suit)
+    features[2] = suit_count / 13.0
 
-    # 4. Can win this trick (observable — look at cards already played).
-    can_win = 0.0
-    if obs.current_trick and obs.current_trick.played_cards:
-        # Find current highest.
-        highest_rank = 0
-        highest_is_trump = False
-        for pc in obs.current_trick.played_cards:
-            pc_is_trump = (obs.trump_suit and pc.card.suit == obs.trump_suit)
-            pc_rv = rank_val_func(pc.card.rank)
-            if pc_is_trump and not highest_is_trump:
-                highest_rank = pc_rv
-                highest_is_trump = True
-            elif pc_is_trump and highest_is_trump:
-                highest_rank = max(highest_rank, pc_rv)
-            elif not pc_is_trump and not highest_is_trump:
-                if pc.card.suit == (leading or pc.card.suit):
-                    highest_rank = max(highest_rank, pc_rv)
+    # 4. Is this the only card of its suit (would create void if played).
+    features[3] = 1.0 if suit_count == 1 else 0.0
 
-        card_is_trump = (obs.trump_suit and card.suit == obs.trump_suit)
-        if card_is_trump and not highest_is_trump:
-            can_win = 1.0  # Any trump beats non-trump.
-        elif card_is_trump and highest_is_trump:
-            can_win = 1.0 if rv > highest_rank else 0.0
-        elif not card_is_trump and not highest_is_trump:
-            if leading and card.suit == leading:
-                can_win = 1.0 if rv > highest_rank else 0.0
-            else:
-                can_win = 0.0  # Off-suit non-trump can't win.
-        else:
-            can_win = 0.0  # Non-trump can't beat trump.
-    else:
-        # Leading the trick — always "wins" by default.
-        can_win = 1.0
-    features[3] = can_win
-
-    # 5. Creates void.
-    suit_counts = Counter(c.suit for c in obs.hand)
-    features[4] = 1.0 if suit_counts.get(card.suit, 0) == 1 else 0.0
-
-    # 6. Is from longest suit.
-    longest = max(suit_counts.values()) if suit_counts else 0
-    features[5] = 1.0 if suit_counts.get(card.suit, 0) == longest else 0.0
-
-    # 7. Relative rank position in this suit in hand.
+    # 5. Relative rank within same-suit cards.
     same_suit_ranks = sorted([rank_val_func(c.rank) for c in obs.hand if c.suit == card.suit])
     if len(same_suit_ranks) > 1:
         pos = same_suit_ranks.index(rv)
-        features[6] = pos / (len(same_suit_ranks) - 1)
+        features[4] = pos / (len(same_suit_ranks) - 1)
     else:
-        features[6] = 1.0  # Only card = highest.
+        features[4] = 1.0
 
-    # 8. Cards remaining in this suit (normalized by 13).
-    features[7] = suit_counts.get(card.suit, 0) / 13.0
+    # 6. Cards already played in this trick.
+    if obs.current_trick and obs.current_trick.played_cards:
+        features[5] = len(obs.current_trick.played_cards) / 4.0
+
+    # 7. Number of legal options (normalized).
+    features[6] = len(playable_cards) / 13.0
+
+    # 8. Total cards in hand.
+    features[7] = len(obs.hand) / 13.0
 
     return features
 
@@ -346,9 +316,12 @@ def card_features(card, obs, playable_cards, rank_val_func, suit_idx_map) -> np.
 def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=None,
                    suits_played: dict = None) -> np.ndarray:
     """
-    Extract 28 numeric state features from the observation.
-    
-    Combined with 8 card features + 52 memory = 88 total input to CardEvaluator.
+    Raw state features — NO domain knowledge.
+
+    Just raw observable facts:
+    - What cards are in the hand (normalized rank per suit slot)
+    - How many cards on the table in this trick
+    - What cards are on the table (rank + suit, normalized)
     """
     hand = obs.hand
     n_cards = len(hand)
@@ -357,84 +330,49 @@ def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=Non
     if rank_val_func is None:
         return features
 
-    suit_counts = Counter(c.suit for c in hand)
+    # 1-4: How many cards per suit (raw counts, not sorted — preserves suit identity).
+    suit_counts = [0, 0, 0, 0]
+    for c in hand:
+        si = suit_idx_map.get(c.suit, 0) if suit_idx_map else 0
+        suit_counts[si] += 1
+    for i in range(4):
+        features[i] = suit_counts[i] / 13.0
 
-    # 1-4. Suit distribution (sorted descending, normalized).
-    sorted_counts = sorted(suit_counts.values(), reverse=True)
-    for i in range(min(4, len(sorted_counts))):
-        features[i] = sorted_counts[i] / 13.0
-
-    # 5. Cards remaining (normalized).
+    # 5: Total cards in hand (normalized).
     features[4] = n_cards / 13.0
 
-    # 6. Position in trick (0-3, normalized).
-    pos = 0
+    # 6-9: Average rank per suit (what the hand looks like strength-wise per suit).
+    suit_rank_sums = [0.0, 0.0, 0.0, 0.0]
+    for c in hand:
+        si = suit_idx_map.get(c.suit, 0) if suit_idx_map else 0
+        suit_rank_sums[si] += rank_val_func(c.rank)
+    for i in range(4):
+        if suit_counts[i] > 0:
+            features[5 + i] = (suit_rank_sums[i] / suit_counts[i]) / 14.0
+        else:
+            features[5 + i] = 0.0
+
+    # 10-13: Current trick — cards played (rank normalized, per slot).
     if obs.current_trick and obs.current_trick.played_cards:
-        pos = len(obs.current_trick.played_cards)
-    features[5] = pos / 3.0
+        for idx, pc in enumerate(obs.current_trick.played_cards[:4]):
+            features[9 + idx] = rank_val_func(pc.card.rank) / 14.0
 
-    # 7. Trump count (normalized).
-    trump_count = sum(1 for c in hand if obs.trump_suit and c.suit == obs.trump_suit)
-    features[6] = trump_count / 13.0
-
-    # 8. High trump count (K, Q, A of trump).
-    trump_highs = sum(1 for c in hand if obs.trump_suit and c.suit == obs.trump_suit
-                      and rank_val_func(c.rank) >= 12)
-    features[7] = trump_highs / 4.0
-
-    # 9. Total high cards (normalized).
-    highs = sum(1 for c in hand if rank_val_func(c.rank) >= 12)
-    features[8] = highs / 13.0
-
-    # 10. Aces count.
-    aces = sum(1 for c in hand if rank_val_func(c.rank) == 14)
-    features[9] = aces / 4.0
-
-    # 11. Void count.
-    voids = 4 - len(suit_counts)
-    features[10] = voids / 4.0
-
-    # 12. Team score difference (normalized).
-    my_team = 0 if obs.player_id in (0, 2) else 1
-    opp_team = 1 - my_team
-    diff = obs.team_scores.get(my_team, 0) - obs.team_scores.get(opp_team, 0)
-    features[11] = max(-1.0, min(1.0, diff / 15.0))
-
-    # 13. Opponent voids known (normalized).
-    features[12] = min(opp_voids / 6.0, 1.0)
-
-    # 14. Game phase (0=early, 1=late).
-    features[13] = 1.0 - (n_cards / 13.0)
-
-    # 15-18. Current trick cards info (if any played).
+    # 14-17: Current trick — suits of played cards (normalized suit index).
     if obs.current_trick and obs.current_trick.played_cards:
-        played = obs.current_trick.played_cards
-        # Highest rank on table.
-        max_rank = max(rank_val_func(pc.card.rank) for pc in played)
-        features[14] = RANK_NORM.get(max_rank, 0.5)
-        # Has trump been played in this trick?
-        features[15] = 1.0 if any(obs.trump_suit and pc.card.suit == obs.trump_suit
-                                   for pc in played) else 0.0
-        # Number of cards played.
-        features[16] = len(played) / 4.0
-        # Is leading suit same as trump?
-        features[17] = 1.0 if (obs.current_trick.leading_suit == obs.trump_suit) else 0.0
+        for idx, pc in enumerate(obs.current_trick.played_cards[:4]):
+            si = suit_idx_map.get(pc.card.suit, 0) if suit_idx_map else 0
+            features[13 + idx] = (si + 1) / 4.0
 
-    # 19. Must lead trump.
-    features[18] = 1.0 if obs.must_lead_trump else 0.0
+    # 18: Number of cards played in this trick (position proxy).
+    if obs.current_trick and obs.current_trick.played_cards:
+        features[17] = len(obs.current_trick.played_cards) / 4.0
 
-    # 20-23. Cards played per suit (card counting — normalized by 13).
+    # 19-22: Cards played per suit globally (card counting — raw).
     if suits_played:
         for suit_idx in range(4):
-            features[19 + suit_idx] = suits_played.get(suit_idx, 0) / 13.0
+            features[18 + suit_idx] = suits_played.get(suit_idx, 0) / 13.0
 
-    # 24-27. Cards remaining per suit in the game (13 - played - in_hand).
-    if suits_played and suit_idx_map:
-        for suit, idx in suit_idx_map.items():
-            in_hand = sum(1 for c in hand if c.suit == suit)
-            played = suits_played.get(idx, 0)
-            remaining = max(0, 13 - played - in_hand)
-            features[23 + idx] = remaining / 13.0
+    # 23-27: Reserved (zeros — available for future raw features).
 
     return features
 
