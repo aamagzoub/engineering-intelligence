@@ -118,7 +118,7 @@ def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
         finding = f"{pos_desc.capitalize()}, playing your lowest card scores higher than playing Kings or Queens"
         implication = "Spending high cards on tricks you cannot win wastes them, and low cards lose nothing you need"
     elif best_tier >= 4 and best_follows and td == "B":
-        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, high cards played immediately outscore saving them"
+        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, playing your strongest card immediately outscores saving it"
         implication = "When losing, waiting to use strong cards means they might never get used at all"
     elif best_void:
         finding = f"{pos_desc.capitalize()}, playing cards that remove all cards from one suit scores higher than keeping cards spread across all suits"
@@ -154,25 +154,25 @@ def _compose_partnership_insight(pos, phase, best_key, is_partner_led) -> str:
     if is_partner_led:
         if best_tier <= 1:
             return (f"When your partner plays first in a trick and their card looks strong enough to win, "
-                    f"{best_action}. Keep your high cards for tricks where your team needs you to fight.")
+                    f"play your lowest card. Keep your high cards for tricks where your team needs you to fight.")
         elif best_trump and best_key[1] == "F":
-            return (f"When your partner plays trump first, {best_action}. "
+            return (f"When your partner plays trump first, play your highest trump. "
                     f"Together you remove 2 enemy trumps in 1 trick, and that helps both of you later.")
         elif best_tier >= 4:
-            return (f"When your partner plays first but their card may not win, {best_action}. "
+            return (f"When your partner plays first but their card may not win, play your strongest card. "
                     f"Your high card guarantees the trick stays with your team.")
         else:
-            return (f"When your partner plays first in a trick, {best_action}. "
+            return (f"When your partner plays first in a trick, support their play with a mid-range card. "
                     f"This supports their play without wasting your strongest cards.")
     else:
         if best_tier <= 1:
             return (f"When you play first in a trick, start with a low card. "
                     f"This lets your partner show their strength and tells you which suits are safe.")
         elif best_trump:
-            return (f"When you play first in a trick, {best_action}. "
+            return (f"When you play first in a trick, play trump. "
                     f"Playing trump first removes opponents' trumps and helps your partner too.")
         else:
-            return (f"When you play first in a trick, {best_action}. "
+            return (f"When you play first in a trick, play your strongest card. "
                     f"Your choice of suit forces everyone to follow, so pick a suit where your team is strong.")
 
 
@@ -582,29 +582,54 @@ def _mine_partnership_patterns(play_items, episodes) -> list:
 
 def _dedup_merge(insights) -> list:
     """
-    Merge similar insights into one. If two insights describe the same
-    position + phase + action tier, keep the better one and increment confidence.
+    Merge similar insights into one. If insights describe the same
+    position + same type of action (high card, low card, trump, void),
+    merge them regardless of specific rank.
     """
-    # Build signature for each insight: extract key components from text.
     seen = {}  # signature -> insight
+
     for ins in insights:
         text = ins.get("text", "")
         cat = ins.get("category", "")
-        # Create a rough signature from key words.
         words = text.lower().split()
-        # Extract position, phase, and action keywords.
+
+        # Build structural signature: position + action TYPE (not specific rank).
         sig_parts = [cat]
-        for w in words:
-            if w in ("leading", "second", "third", "last"):
-                sig_parts.append(w)
-            elif "trick" in w and any(c.isdigit() for c in w):
-                sig_parts.append(w)
-            elif w in ("ace", "king", "queen", "jack", "trump", "low", "weakest", "mid"):
-                sig_parts.append(w)
-        sig = " ".join(sig_parts[:5])  # First 5 sig parts.
+
+        # Position keywords.
+        if "first to play" in text.lower():
+            sig_parts.append("pos0")
+        elif "second player" in text.lower():
+            sig_parts.append("pos1")
+        elif "partner" in text.lower() and "follow" in text.lower():
+            sig_parts.append("pos2")
+        elif "last player" in text.lower():
+            sig_parts.append("pos3")
+
+        # Action TYPE (generalized, not specific rank).
+        if "trump" in text.lower() and ("smallest" in text.lower() or "weakest" in text.lower()):
+            sig_parts.append("trump_low")
+        elif "trump" in text.lower() and ("highest" in text.lower() or "ace" in text.lower() or "king" in text.lower()):
+            sig_parts.append("trump_high")
+        elif "trump" in text.lower():
+            sig_parts.append("trump")
+        elif any(w in text.lower() for w in ("ace", "king", "queen", "jack", "highest", "high card")):
+            sig_parts.append("high_card")
+        elif any(w in text.lower() for w in ("lowest", "weakest", "2-6", "7 or 8")):
+            sig_parts.append("low_card")
+        elif "void" in text.lower() or "remove all cards" in text.lower():
+            sig_parts.append("void")
+
+        # Game state.
+        if "fewer tricks" in text.lower() or "behind" in text.lower():
+            sig_parts.append("behind")
+        elif "more tricks" in text.lower() or "ahead" in text.lower():
+            sig_parts.append("ahead")
+
+        sig = " ".join(sig_parts)
 
         if sig in seen:
-            # Duplicate — increment confidence of existing.
+            # Duplicate structure — increment confidence of existing.
             seen[sig]["confidence"] = seen[sig].get("confidence", 1) + 1
         else:
             seen[sig] = ins
