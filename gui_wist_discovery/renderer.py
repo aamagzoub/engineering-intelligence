@@ -257,6 +257,8 @@ class Renderer:
 
         y += 8
         stats_lines = [
+            f"Team 1: {state.get('team1_wins', 0)} games won",
+            f"Team 2: {state.get('team2_wins', 0)} games won",
             f"Seeks: {state['seeks_achieved']}",
             f"Bids met: {state['bids_met']}/{state['bids_met'] + state['bids_failed']}",
             f"Epsilon: {state['epsilon']:.3f}  |  Stage: {state['opponent_stage']}",

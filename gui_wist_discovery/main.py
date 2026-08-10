@@ -113,6 +113,8 @@ class WistDiscoveryWatcher:
         self._bids_met_streak = 0
         self._bid_history = []
         self._score_at_shota3 = None
+        self._team1_wins = 0
+        self._team2_wins = 0
 
         # Auto-discovery stats.
         self._auto_stats = create_auto_stats()
@@ -280,6 +282,10 @@ class WistDiscoveryWatcher:
         # Record game result.
         game_won = self.team_scores[0] > self.team_scores[1]
         self._wist_win_history.append(game_won)
+        if game_won:
+            self._team1_wins += 1
+        else:
+            self._team2_wins += 1
 
         # Curriculum stage check.
         self._check_stage_transition()
@@ -652,6 +658,8 @@ class WistDiscoveryWatcher:
         self._bids_met_streak = 0
         self._last_score = None
         self._best_score = -999
+        self._team1_wins = 0
+        self._team2_wins = 0
 
         self._accumulated_compute = 0.0
         self._app_start_time = time.monotonic()
@@ -699,6 +707,8 @@ class WistDiscoveryWatcher:
             "seeks_achieved": self.seeks_achieved + self._auto_stats.get("total_seeks", 0),
             "bids_met": self.bids_met,
             "bids_failed": self.bids_failed,
+            "team1_wins": self._team1_wins,
+            "team2_wins": self._team2_wins,
             "epsilon": self.discovery.epsilon,
             "opponent_stage": self._opponent_stage,
             "milestones_list": self._milestones_list,

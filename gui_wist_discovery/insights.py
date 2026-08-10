@@ -1,15 +1,13 @@
 """
 Strategic Insights System — AUTO-GENERATED from Q-table patterns.
 
-No hardcoded insight text. Every insight is composed from detected patterns:
-- WHO: position (leading, second, third, last)
-- WHEN: trick range (1-3, 4-5, 6-9, 10-11, 12-13)
-- WHAT: the winning action vs the losing action
-- HOW MUCH: advantage magnitude
-- CONTEXT: game state (ahead, behind, trumps, voids)
+Works with the MINIMAL encoding:
+- State key: {n_cards_hex}{position}  (e.g., "d0" = 13 cards, leading)
+- Action key: {rank_hex}{suit_index}  (e.g., "e0" = Ace of spades, "72" = 7 of clubs)
+- Bid state: {has_bid}{bid_level}     (e.g., "N0" = no bid yet, "Y8" = someone bid 8)
+- Bid action: "PASS" or "B7".."B13"
 
-Insights grow proportionally with Q-table size — truly unlimited.
-Counter-intuitive patterns are auto-detected when "obvious" plays lose.
+Insights grow as the Q-table grows. Counter-intuitive patterns detected automatically.
 """
 
 from collections import defaultdict
@@ -17,178 +15,54 @@ import json
 import os
 
 _INSIGHTS_CACHE_PATH = "agents/wist_discovery/insights_cache.json"
-_SNAPSHOTS_PATH = "agents/wist_discovery/strategy_snapshots.json"
 
-# ─── Decoding Maps ───────────────────────────────────────────────────────────────
-
-_POS_DESC = {"0": "leading", "1": "playing second", "2": "playing third", "3": "playing last"}
-_PHASE_DESC = {"1": "tricks 1-3", "2": "tricks 4-5", "3": "tricks 6-9", "4": "tricks 10-11", "5": "tricks 12-13"}
-_TD_DESC = {"W": "ahead", "A": "slightly ahead", "T": "tied", "B": "behind"}
-_TIER_RANK = {"A": 5, "K": 4, "Q": 3, "J": 2, "M": 1, "L": 0, "X": -1}
-
-_ACTION_DESC = {
-    ("A", "F", "N"): "play your Ace following suit",
-    ("K", "F", "N"): "play your King following suit",
-    ("Q", "F", "N"): "play your Queen following suit",
-    ("J", "F", "N"): "play a Jack following suit",
-    ("M", "F", "N"): "play a mid card (9-10) following suit",
-    ("L", "F", "N"): "play a low card following suit",
-    ("X", "F", "N"): "follow with your weakest card",
-    ("A", "O", "N"): "discard your Ace (can't follow)",
-    ("K", "O", "N"): "discard your King (can't follow)",
-    ("L", "O", "N"): "discard a low card (can't follow)",
-    ("X", "O", "N"): "throw away your weakest from another suit",
-    ("A", "F", "T"): "follow with your top trump",
-    ("K", "F", "T"): "follow with your King of trump",
-    ("Q", "F", "T"): "follow with your Queen of trump",
-    ("L", "F", "T"): "follow with a low trump",
-    ("X", "F", "T"): "follow with your weakest trump",
-    ("A", "O", "T"): "trump with your Ace of trump",
-    ("K", "O", "T"): "trump with your King",
-    ("Q", "O", "T"): "trump with your Queen",
-    ("L", "O", "T"): "trump with a low trump",
-    ("X", "O", "T"): "trump with your weakest trump",
-    ("M", "O", "T"): "trump with a mid trump",
-    ("M", "O", "N"): "discard a mid card",
-    ("J", "O", "N"): "discard a Jack",
-    ("J", "F", "T"): "follow with Jack of trump",
-    ("M", "F", "T"): "follow with mid trump",
-    ("J", "O", "T"): "trump with a Jack",
+# Rank hex mapping for display.
+_RANK_NAMES = {
+    2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8",
+    9: "9", 10: "10", 11: "Jack", 12: "Queen", 13: "King", 14: "Ace",
 }
+_SUIT_NAMES = {0: "spades", 1: "hearts", 2: "clubs", 3: "diamonds"}
+_POS_NAMES = {0: "first to play", 1: "second to play", 2: "third to play", 3: "last to play"}
 
-def _describe_action(key: str) -> str:
-    """Describe an action key as a simple play instruction in plain language.
-    Uses generalized terms for high cards (not specific ranks)."""
-    if len(key) < 3:
-        return "play a card"
-    tier, follows, trump = key[0], key[1], key[2]
-    
-    if trump == "T" and follows == "O":
-        if tier in ("L", "X"):
-            return "play your smallest trump"
-        elif tier in ("A", "K", "Q"):
-            return "play your strongest trump"
-        else:
-            return "play a mid-range trump"
-    elif trump == "T" and follows == "F":
-        if tier in ("A", "K", "Q"):
-            return "play your strongest trump"
-        elif tier in ("L", "X"):
-            return "play your smallest trump"
-        else:
-            return "play a mid-range trump"
-    elif follows == "O":
-        if tier in ("L", "X"):
-            return "play your weakest card from another suit"
-        elif tier in ("A", "K", "Q"):
-            return "play a high card from another suit"
-        else:
-            return "play a mid-range card from another suit"
+
+def _parse_action_key(key: str):
+    """Parse action key: {rank_hex}{suit_index} -> (rank_int, suit_int) or None."""
+    try:
+        if len(key) < 2:
+            return None
+        rank = int(key[:-1], 16)
+        suit = int(key[-1])
+        if 2 <= rank <= 14 and 0 <= suit <= 3:
+            return (rank, suit)
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _parse_state_key(key: str):
+    """Parse state key: {n_cards_hex}{position} -> (n_cards, position) or None."""
+    try:
+        if len(key) < 2:
+            return None
+        n_cards = int(key[:-1], 16)
+        pos = int(key[-1])
+        if 1 <= n_cards <= 13 and 0 <= pos <= 3:
+            return (n_cards, pos)
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _rank_tier(rank: int) -> str:
+    """Classify rank into tiers for insight grouping."""
+    if rank >= 13:
+        return "high"   # King, Ace
+    elif rank >= 11:
+        return "upper"  # Jack, Queen
+    elif rank >= 8:
+        return "mid"    # 8, 9, 10
     else:
-        if tier in ("L", "X"):
-            return "play your lowest card"
-        elif tier in ("A", "K", "Q"):
-            return "play your strongest card"
-        else:
-            return "play a mid-range card"
-
-
-def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
-    """
-    Compose a finding + implication. One sentence each.
-    Finding: what the data shows. Implication: why it matters in Wist.
-    """
-    best_action = _describe_action(best_key)
-    worst_action = _describe_action(worst_key)
-    
-    best_tier = _TIER_RANK.get(best_key[0], 0) if best_key else 0
-    worst_tier = _TIER_RANK.get(worst_key[0], 0) if worst_key else 0
-    best_trump = len(best_key) > 2 and best_key[2] == "T"
-    best_follows = len(best_key) > 1 and best_key[1] == "F"
-    best_void = len(best_key) > 4 and best_key[4] == "V"
-    is_counter = (best_tier < worst_tier - 1)
-
-    pos_desc = {"0": "when you are the first to play in a trick", "1": "when you are the second player to play in a trick", "2": "when your partner plays first and you follow", "3": "when you are the last player to play in a trick"}.get(pos, "")
-    phase_desc = {"1": "early", "2": "first half", "3": "mid-game", "4": "late", "5": "final tricks"}.get(phase, "")
-
-    # Build finding + implication based on pattern type.
-    if best_trump and not best_follows:
-        finding = f"{pos_desc.capitalize()}, your smallest trump almost always wins against any non-trump card"
-        implication = "Any trump beats any non-trump card regardless of rank, so even a 2 of trump wins the trick"
-    elif best_tier <= 0 and best_follows and worst_tier >= 3:
-        finding = f"{pos_desc.capitalize()}, playing your lowest card works better than playing high cards you cannot win with"
-        implication = "Spending high cards on tricks you cannot win wastes them, and low cards lose nothing you need"
-    elif best_tier >= 4 and best_follows and td == "B":
-        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, playing your strongest card immediately wins more often than saving it"
-        implication = "When losing, waiting to use strong cards means they might never get used at all"
-    elif best_void:
-        finding = f"{pos_desc.capitalize()}, playing cards that remove all cards from one suit works better than keeping cards in all suits"
-        implication = "Once you have zero cards in a suit, every time that suit is played you can use trump to win it"
-    elif best_trump and best_tier >= 4:
-        finding = f"{pos_desc.capitalize()}, your highest trump almost always wins, while lower trumps sometimes lose"
-        implication = "Lower trumps risk being beaten by an opponent's higher trump, but top trump guarantees the win"
-    elif best_trump and best_tier <= 1:
-        finding = f"{pos_desc.capitalize()}, your weakest trump wins just as often as your highest trump here"
-        implication = "When no opponent can also trump, any trump wins equally, so save your high ones for harder fights"
-    elif is_counter:
-        finding = f"{pos_desc.capitalize()}, {best_action} wins more often than {worst_action}"
-        implication = "High cards attract opposition trumps from void opponents, but lower cards slip through uncontested"
-    elif td == "W":
-        finding = f"When your team has won more tricks than the opponents and {pos_desc}, conservative plays win more often than aggressive ones"
-        implication = "Protecting a lead is safer than extending it, and risks only help the losing team"
-    elif td == "B":
-        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, aggressive plays win more often than conservative ones"
-        implication = "Safe play when losing just means losing slowly, and bold moves can change the momentum"
-    else:
-        finding = f"{pos_desc.capitalize()}, {best_action} wins more often than the alternatives"
-        implication = "This play consistently wins in this situation"
-
-    return f"{finding}. {implication}."
-
-
-def _compose_partnership_insight(pos, phase, best_key, is_partner_led) -> str:
-    """Compose a partnership-focused insight paragraph."""
-    best_action = _describe_action(best_key)
-    best_tier = _TIER_RANK.get(best_key[0], 0) if best_key else 0
-    best_trump = len(best_key) > 2 and best_key[2] == "T"
-
-    if is_partner_led:
-        if best_tier <= 1:
-            return (f"When your partner plays first in a trick and their card looks strong enough to win, "
-                    f"play your lowest card. Keep your high cards for tricks where your team needs you to fight.")
-        elif best_trump and best_key[1] == "F":
-            return (f"When your partner plays trump first, play your highest trump. "
-                    f"Together you remove 2 enemy trumps in 1 trick, and that helps both of you later.")
-        elif best_tier >= 4:
-            return (f"When your partner plays first but their card may not win, play your strongest card. "
-                    f"Your high card guarantees the trick stays with your team.")
-        else:
-            return (f"When your partner plays first in a trick, support their play with a mid-range card. "
-                    f"This supports their play without wasting your strongest cards.")
-    else:
-        if best_tier <= 1:
-            return (f"When you play first in a trick, start with a low card. "
-                    f"This lets your partner show their strength and tells you which suits are safe.")
-        elif best_trump:
-            return (f"When you play first in a trick, play trump. "
-                    f"Playing trump first removes opponents' trumps and helps your partner too.")
-        else:
-            return (f"When you play first in a trick, play your strongest card. "
-                    f"Your choice of suit forces everyone to follow, so pick a suit where your team is strong.")
-
-
-
-def _categorize(best_key, worst_key, is_counter_intuitive) -> str:
-    """Auto-categorize based on action properties."""
-    if is_counter_intuitive:
-        return "counter-intuitive"
-    if len(best_key) >= 3 and best_key[2] == "T":
-        return "trump"
-    if len(best_key) >= 5 and best_key[4] == "V":
-        return "voids"
-    if len(best_key) >= 2 and best_key[1] == "O" and best_key[0] in "LX":
-        return "voids"
-    return "timing"
+        return "low"    # 2-7
 
 
 # ─── Main Entry Point ────────────────────────────────────────────────────────────
@@ -199,17 +73,17 @@ def generate_insights(agent) -> list:
     Auto-generate insights by mining Q-table patterns.
     Returns list of insight dicts. Accumulates over time.
     """
-    if agent.episodes_trained < 5000:
+    if agent.episodes_trained < 3000:
         return [_make(
-            "Still learning basics — building Q-table...",
-            "timing", "beginner", 1, agent.episodes_trained,
+            "Still learning basics, building experience...",
+            "timing", 1, agent.episodes_trained,
             why="Need more games to detect meaningful patterns"
         )]
 
     episodes = agent.episodes_trained
     play_q = agent.play_q
     bid_q = agent.bid_q
-    play_items = list(play_q.items())[:min(len(play_q), 25000)]
+    play_items = list(play_q.items())[:min(len(play_q), 30000)]
 
     # Load accumulated history.
     accumulated = _load_cache()
@@ -217,18 +91,19 @@ def generate_insights(agent) -> list:
 
     # Mine patterns from Q-tables.
     new_insights = []
-    new_insights.extend(_mine_play_patterns(play_items, episodes))
+    new_insights.extend(_mine_rank_patterns(play_items, episodes))
+    new_insights.extend(_mine_suit_patterns(play_items, episodes))
+    new_insights.extend(_mine_position_patterns(play_items, episodes))
+    new_insights.extend(_mine_hand_size_patterns(play_items, episodes))
     new_insights.extend(_mine_bid_patterns(bid_q, episodes))
-    new_insights.extend(_mine_partnership_patterns(play_items, episodes))
-    new_insights.extend(_mine_counter_intuitive(play_items, bid_q, episodes))
+    new_insights.extend(_mine_counter_intuitive(play_items, episodes))
 
-    # Dedup similar insights: same position + phase + action tier = merge into one.
+    # Dedup by core idea.
     new_insights = _dedup_merge(new_insights)
 
     # Merge new into accumulated.
     for ins in new_insights:
         if ins["text"] in acc_texts:
-            # Re-confirmed — increment +N and refine at milestones.
             for acc in accumulated:
                 if acc["text"] == ins["text"]:
                     acc["confidence"] = acc.get("confidence", 1) + 1
@@ -238,25 +113,23 @@ def generate_insights(agent) -> list:
                     elif conf == 10:
                         acc["why"] = _refine_why(acc.get("why", ""), "almost always works")
                     elif conf == 20:
-                        acc["why"] = _refine_why(acc.get("why", ""), "one of the most reliable plays discovered")
+                        acc["why"] = _refine_why(acc.get("why", ""), "most reliable")
                     break
         else:
-            # Brand new discovery.
             accumulated.append(ins)
             acc_texts.add(ins["text"])
 
-    # Save.
     _save_cache(accumulated)
     return accumulated
 
 
-def _make(text, category, difficulty, confidence, episode, why=""):
+def _make(text, category, confidence, episode, why=""):
     """Create insight dict."""
     return {
         "text": text,
         "category": category,
-        "difficulty": difficulty,
-        "confidence": confidence,  # Now an integer: +1, +2, +3, etc.
+        "difficulty": "intermediate",
+        "confidence": confidence,
         "episode": episode,
         "why": why,
         "version": 0,
@@ -267,510 +140,472 @@ def _make(text, category, difficulty, confidence, episode, why=""):
     }
 
 
+# ─── Pattern Miners (New Minimal Encoding) ───────────────────────────────────────
 
-# ─── Pattern Miners ──────────────────────────────────────────────────────────────
 
-
-def _mine_play_patterns(play_items, episodes) -> list:
-    """Mine play Q-table for GENERAL strategic principles, not granular combos."""
+def _mine_rank_patterns(play_items, episodes) -> list:
+    """Which card ranks score highest across all situations?"""
     insights = []
-
-    # Instead of per-context insights, aggregate across contexts to find
-    # universal truths: actions that win in MOST situations.
-    action_wins = defaultdict(lambda: {"total_q": 0, "count": 0, "beats": 0, "contexts": 0})
-    action_losses = defaultdict(lambda: {"total_q": 0, "count": 0, "contexts": 0})
-
-    # Also track: trump vs non-trump, following vs not, tier performance.
-    trump_vs_non = {"trump_q": [], "non_q": []}
-    follow_vs_off = {"follow_q": [], "off_q": []}
-    void_creation = {"void_q": [], "keep_q": []}
-    tier_overall = defaultdict(list)  # tier -> list of Q values.
-    position_advantage = defaultdict(list)  # pos -> Q values.
+    rank_qs = defaultdict(list)  # rank -> list of Q-values
+    tier_qs = defaultdict(list)  # tier -> list of Q-values
 
     for state, actions in play_items:
-        if len(state) < 6 or len(actions) < 2:
+        if len(actions) < 2:
             continue
-
-        sorted_a = sorted(actions.items(), key=lambda x: -x[1])
-        best_key, best_q = sorted_a[0]
-        worst_key, worst_q = sorted_a[-1]
-
-        if len(best_key) < 3:
-            continue
-
-        # Track overall action properties.
         for key, q in actions.items():
-            if len(key) < 3:
+            parsed = _parse_action_key(key)
+            if not parsed:
                 continue
-            tier = key[0]
-            follows = key[1]
-            is_trump = key[2] == "T"
-            creates_void = len(key) > 4 and key[4] == "V"
+            rank, suit = parsed
+            rank_qs[rank].append(q)
+            tier_qs[_rank_tier(rank)].append(q)
 
-            tier_overall[tier].append(q)
-            if is_trump:
-                trump_vs_non["trump_q"].append(q)
-            else:
-                trump_vs_non["non_q"].append(q)
-            if follows == "F":
-                follow_vs_off["follow_q"].append(q)
-            else:
-                follow_vs_off["off_q"].append(q)
-            if creates_void:
-                void_creation["void_q"].append(q)
-            else:
-                void_creation["keep_q"].append(q)
+    # Need minimum data.
+    if not tier_qs or sum(len(v) for v in tier_qs.values()) < 50:
+        return insights
 
-        # Position tracking.
-        pos = state[4]
-        position_advantage[pos].append(best_q)
+    tier_avgs = {t: sum(v)/len(v) for t, v in tier_qs.items() if len(v) >= 10}
+    if not tier_avgs:
+        return insights
 
-    # Now generate GENERAL strategic principles from aggregated data.
+    best_tier = max(tier_avgs, key=tier_avgs.get)
+    worst_tier = min(tier_avgs, key=tier_avgs.get)
 
-    # 1. Trump dominance principle.
-    if trump_vs_non["trump_q"] and trump_vs_non["non_q"]:
-        t_avg = sum(trump_vs_non["trump_q"]) / len(trump_vs_non["trump_q"])
-        n_avg = sum(trump_vs_non["non_q"]) / len(trump_vs_non["non_q"])
-        if t_avg > n_avg + 0.3:
-            insights.append(_make(
-                "Trump control wins games, whoever runs out of trump last controls the endgame",
-                "trump", "intermediate", 1, episodes,
-                why="trump beats everything regardless of rank, managing it well is the single biggest factor"
-            ))
+    if best_tier == "high" and tier_avgs["high"] > tier_avgs.get("low", 0) + 0.2:
+        insights.append(_make(
+            "High cards (Kings and Aces) consistently win more than low cards, raw card power matters",
+            "timing", 1, episodes,
+            why="stronger cards win tricks more often regardless of situation"
+        ))
 
-    # 2. Void power principle.
-    if void_creation["void_q"] and len(void_creation["void_q"]) >= 5:
-        v_avg = sum(void_creation["void_q"]) / len(void_creation["void_q"])
-        k_avg = sum(void_creation["keep_q"]) / len(void_creation["keep_q"]) if void_creation["keep_q"] else 0
-        if v_avg > k_avg + 0.15:
-            insights.append(_make(
-                "A void is worth more than a King, one void gives you multiple free tricks through trumping",
-                "voids", "intermediate", 1, episodes,
-                why="every time that suit is led after you're void, you can trump it for free"
-            ))
+    if best_tier == "low" and tier_avgs["low"] > tier_avgs.get("high", 0) + 0.1:
+        insights.append(_make(
+            "Low cards played at the right time outperform high cards played carelessly",
+            "counter-intuitive", 1, episodes,
+            why="timing matters more than raw strength"
+        ))
 
-    # 3. Following suit vs breaking.
-    if follow_vs_off["follow_q"] and follow_vs_off["off_q"]:
-        f_avg = sum(follow_vs_off["follow_q"]) / len(follow_vs_off["follow_q"])
-        o_avg = sum(follow_vs_off["off_q"]) / len(follow_vs_off["off_q"])
-        if o_avg > f_avg + 0.2:
-            insights.append(_make(
-                "Breaking from the led suit (trumping or discarding) is more profitable than following when you have the choice",
-                "timing", "advanced", 1, episodes,
-                why="following suit with low cards is passive, breaking creates opportunities to control"
-            ))
-        elif f_avg > o_avg + 0.2:
-            insights.append(_make(
-                "Following suit with strong cards is the foundation of trick-winning, high cards in the led suit are your most reliable weapons",
-                "timing", "beginner", 1, episodes,
-                why="the highest card in the led suit wins unless someone trumps it"
-            ))
+    if best_tier == "mid":
+        insights.append(_make(
+            "Mid-range cards (8s, 9s, 10s) quietly outperform both high and low cards on average",
+            "counter-intuitive", 1, episodes,
+            why="they win tricks nobody fights over while high cards attract opposition"
+        ))
 
-    # 4. Tier hierarchy — which card ranks actually perform best.
-    tier_avgs = {}
-    for tier, vals in tier_overall.items():
-        if len(vals) >= 10:
-            tier_avgs[tier] = sum(vals) / len(vals)
 
-    if tier_avgs:
-        best_tier = max(tier_avgs, key=tier_avgs.get)
-        worst_tier = min(tier_avgs, key=tier_avgs.get)
-        # Counter-intuitive: if low cards outperform high ones overall.
-        if _TIER_RANK.get(best_tier, 0) < 2:
-            insights.append(_make(
-                "Low cards played strategically outperform high cards played carelessly, timing matters more than raw card strength",
-                "counter-intuitive", "advanced", 1, episodes,
-                why="high cards attract opposition trumps, low cards preserve hand structure for when it matters"
-            ))
-        if _TIER_RANK.get(best_tier, 0) >= 4:
-            insights.append(_make(
-                "High cards dominate when played at the right moment, the key is knowing WHEN to deploy them",
-                "timing", "intermediate", 1, episodes,
-                why="Aces and Kings are guaranteed winners in the right context but wasted if trumped"
-            ))
-
-    # 5. Position wisdom.
-    if position_advantage:
-        pos_avgs = {p: sum(v)/len(v) for p, v in position_advantage.items() if len(v) >= 10}
-        if pos_avgs:
-            best_pos = max(pos_avgs, key=pos_avgs.get)
-            if best_pos == "3":
+    # Per-rank discoveries: which individual ranks stand out?
+    rank_avgs = {r: sum(v)/len(v) for r, v in rank_qs.items() if len(v) >= 10}
+    if rank_avgs:
+        best_rank = max(rank_avgs, key=rank_avgs.get)
+        worst_rank = min(rank_avgs, key=rank_avgs.get)
+        if rank_avgs[best_rank] - rank_avgs[worst_rank] > 0.3:
+            if best_rank == 14:
                 insights.append(_make(
-                    "Playing last is the strongest position in Wist, you see everyone else's card before choosing yours",
-                    "timing", "intermediate", 1, episodes,
-                    why="perfect information about the current trick lets you play the minimum needed to win"
+                    "Aces dominate, they win almost every trick they are played in",
+                    "timing", 1, episodes,
+                    why="the highest card in any suit almost always takes the trick"
                 ))
-            elif best_pos == "0":
+            elif best_rank <= 5:
                 insights.append(_make(
-                    "Leading gives you control, you choose which suit everyone must follow, that power shapes the entire trick",
-                    "timing", "intermediate", 1, episodes,
-                    why="the leader forces opponents into their weak suits while playing from strength"
+                    "The AI is finding value in very low cards, using them strategically rather than wasting them",
+                    "counter-intuitive", 1, episodes,
+                    why="low cards preserve hand shape and set up future wins"
                 ))
 
-    # 6. Score-state strategy.
-    winning_q = []
-    losing_q = []
-    for state, actions in play_items:
-        if len(state) < 7:
-            continue
-        td = state[6]
-        for key, q in actions.items():
-            if len(key) >= 3:
-                if td == "W":
-                    winning_q.append(q)
-                elif td == "B":
-                    losing_q.append(q)
+    return insights
 
-    if winning_q and losing_q:
-        w_avg = sum(winning_q) / len(winning_q)
-        l_avg = sum(losing_q) / len(losing_q)
-        if l_avg > w_avg + 0.1:
+
+def _mine_suit_patterns(play_items, episodes) -> list:
+    """Does one suit consistently score higher? (indicates trump discovery)."""
+    insights = []
+    suit_qs = defaultdict(list)  # suit_idx -> Q-values
+
+    for state, actions in play_items:
+        if len(actions) < 2:
+            continue
+        for key, q in actions.items():
+            parsed = _parse_action_key(key)
+            if not parsed:
+                continue
+            rank, suit = parsed
+            suit_qs[suit].append(q)
+
+    if not suit_qs or sum(len(v) for v in suit_qs.values()) < 50:
+        return insights
+
+    suit_avgs = {s: sum(v)/len(v) for s, v in suit_qs.items() if len(v) >= 10}
+    if len(suit_avgs) < 2:
+        return insights
+
+    best_suit = max(suit_avgs, key=suit_avgs.get)
+    worst_suit = min(suit_avgs, key=suit_avgs.get)
+    spread = suit_avgs[best_suit] - suit_avgs[worst_suit]
+
+    if spread > 0.3:
+        insights.append(_make(
+            f"One suit ({_SUIT_NAMES.get(best_suit, '?')}) consistently scores higher than others, the AI may be discovering trump power",
+            "trump", 1, episodes,
+            why="trump cards beat all other suits regardless of rank"
+        ))
+    elif spread > 0.15:
+        insights.append(_make(
+            "The AI is starting to differentiate between suits, some are more valuable than others",
+            "trump", 1, episodes,
+            why="not all suits are equal in Wist, one suit dominates each round"
+        ))
+
+    return insights
+
+
+def _mine_position_patterns(play_items, episodes) -> list:
+    """Does playing position affect performance?"""
+    insights = []
+    pos_qs = defaultdict(list)  # position -> list of best-action Q-values
+
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
+            continue
+        n_cards, pos = parsed
+        best_q = max(actions.values())
+        pos_qs[pos].append(best_q)
+
+    if not pos_qs or sum(len(v) for v in pos_qs.values()) < 30:
+        return insights
+
+    pos_avgs = {p: sum(v)/len(v) for p, v in pos_qs.items() if len(v) >= 5}
+    if len(pos_avgs) < 2:
+        return insights
+
+    best_pos = max(pos_avgs, key=pos_avgs.get)
+    worst_pos = min(pos_avgs, key=pos_avgs.get)
+    spread = pos_avgs[best_pos] - pos_avgs[worst_pos]
+
+    if spread > 0.2:
+        pos_name = _POS_NAMES.get(best_pos, "unknown")
+        if best_pos == 3:
             insights.append(_make(
-                "The best plays happen under pressure, being behind forces sharper decisions that often have higher payoff",
-                "counter-intuitive", "advanced", 1, episodes,
-                why="desperation drives risk-taking which reveals hidden opportunities in the hand"
+                "Playing last is the strongest position, you see all other cards before choosing yours",
+                "timing", 1, episodes,
+                why="perfect information lets you play the minimum needed to win"
+            ))
+        elif best_pos == 0:
+            insights.append(_make(
+                "Playing first gives you control, you force everyone to follow your suit choice",
+                "timing", 1, episodes,
+                why="the leader dictates which suit everyone must play"
+            ))
+        else:
+            insights.append(_make(
+                f"Being the {pos_name} gives an advantage the AI is exploiting",
+                "timing", 1, episodes,
+                why="position determines how much information you have when choosing"
             ))
 
-    # 7. Specific decisive plays — grouped by position+td only (no phase).
-    context_actions = defaultdict(lambda: defaultdict(list))
+    # Position-specific card choices.
+    pos_rank_qs = defaultdict(lambda: defaultdict(list))
     for state, actions in play_items:
-        if len(state) < 7 or len(actions) < 2:
+        parsed = _parse_state_key(state)
+        if not parsed:
             continue
-        pos = state[4]
-        td = state[6] if len(state) > 6 else "T"
-        ctx = (pos, td)
+        n_cards, pos = parsed
         for key, q in actions.items():
-            if len(key) >= 3:
-                context_actions[ctx][key].append(q)
+            a_parsed = _parse_action_key(key)
+            if a_parsed:
+                rank, suit = a_parsed
+                pos_rank_qs[pos][_rank_tier(rank)].append(q)
 
-    for ctx, action_qs in context_actions.items():
-        pos, td = ctx
-        avg_by_action = {}
-        for key, vals in action_qs.items():
-            if len(vals) >= 3:
-                avg_by_action[key] = sum(vals) / len(vals)
-        if len(avg_by_action) < 2:
+    for pos in pos_rank_qs:
+        tiers = pos_rank_qs[pos]
+        tier_avgs = {t: sum(v)/len(v) for t, v in tiers.items() if len(v) >= 5}
+        if len(tier_avgs) < 2:
             continue
-        sorted_actions = sorted(avg_by_action.items(), key=lambda x: -x[1])
-        best_key, best_avg = sorted_actions[0]
-        worst_key, worst_avg = sorted_actions[-1]
-        spread = best_avg - worst_avg
-        if spread < 0.8:
+        best_t = max(tier_avgs, key=tier_avgs.get)
+        if best_t == "low" and pos == 0:
+            insights.append(_make(
+                "When playing first, starting low is more effective than leading with high cards",
+                "counter-intuitive", 1, episodes,
+                why="leading low probes the table safely and preserves strong cards"
+            ))
+        elif best_t == "high" and pos == 3:
+            insights.append(_make(
+                "When playing last, high cards are most effective because you know if they will win",
+                "timing", 1, episodes,
+                why="no risk of wasting them since you can see what beats what"
+            ))
+
+    return insights
+
+
+def _mine_hand_size_patterns(play_items, episodes) -> list:
+    """Does hand size (trick number) affect strategy?"""
+    insights = []
+    # Group by hand size (proxy for which trick we're on).
+    early_qs = defaultdict(list)  # tier -> Q (hand 11-13 = tricks 1-3)
+    late_qs = defaultdict(list)   # tier -> Q (hand 1-3 = tricks 11-13)
+
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
             continue
+        n_cards, pos = parsed
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            tier = _rank_tier(rank)
+            if n_cards >= 11:
+                early_qs[tier].append(q)
+            elif n_cards <= 3:
+                late_qs[tier].append(q)
 
-        text = _compose_play_insight(pos, "", td, best_key, worst_key, spread)
-        best_rank = _TIER_RANK.get(best_key[0], 0)
-        worst_rank = _TIER_RANK.get(worst_key[0], 0)
-        is_counter = (best_rank < worst_rank - 1)
-        category = "counter-intuitive" if is_counter else _categorize(best_key, worst_key, False)
-        insights.append(_make(text, category, "intermediate", 1, episodes, why=""))
+    # Early game insight.
+    if early_qs:
+        early_avgs = {t: sum(v)/len(v) for t, v in early_qs.items() if len(v) >= 5}
+        if early_avgs:
+            best_early = max(early_avgs, key=early_avgs.get)
+            if best_early == "low":
+                insights.append(_make(
+                    "In early tricks, playing low cards works better than immediately spending your best cards",
+                    "timing", 1, episodes,
+                    why="saving strong cards for later gives them more impact"
+                ))
+            elif best_early == "high":
+                insights.append(_make(
+                    "In early tricks, aggressive play with high cards establishes dominance immediately",
+                    "timing", 1, episodes,
+                    why="early wins build momentum and force opponents into weak positions"
+                ))
 
-    return insights[:30]
+    # Late game insight.
+    if late_qs:
+        late_avgs = {t: sum(v)/len(v) for t, v in late_qs.items() if len(v) >= 5}
+        if late_avgs:
+            best_late = max(late_avgs, key=late_avgs.get)
+            if best_late == "high":
+                insights.append(_make(
+                    "In late tricks (final 3), high cards are almost guaranteed winners since fewer opponents can respond",
+                    "timing", 1, episodes,
+                    why="with fewer cards in hand, opponents have less ability to counter"
+                ))
+
+    return insights
 
 
 def _mine_bid_patterns(bid_q, episodes) -> list:
-    """Mine bid Q-table for hand-specific bidding advice."""
+    """Mine bid Q-table for bidding insights."""
     insights = []
+    if not bid_q:
+        return insights
 
-    # Group by hand features.
-    hand_groups = defaultdict(lambda: defaultdict(list))
+    # Group by whether someone already bid.
+    no_bid_actions = defaultdict(list)   # action -> Q-values when no one bid
+    has_bid_actions = defaultdict(list)  # action -> Q-values when someone bid
 
-    for state, actions in list(bid_q.items())[:3000]:
-        if len(state) < 5:
+    for state, actions in list(bid_q.items())[:5000]:
+        if len(state) < 2:
             continue
-        try:
-            longest = int(state[0])
-            highs = int(state[2])
-            aces = int(state[3])
-            v_idx = state.index("v")
-            voids = int(state[v_idx + 1])
-        except (ValueError, IndexError):
-            continue
-
-        hand_key = (longest, highs, voids)
+        has_bid = state[0] == "Y"
         for action, q in actions.items():
-            hand_groups[hand_key][action].append(q)
-
-    for (longest, highs, voids), action_qs in hand_groups.items():
-        avg_by_action = {}
-        for action, vals in action_qs.items():
-            if len(vals) >= 2:
-                avg_by_action[action] = sum(vals) / len(vals)
-
-        if len(avg_by_action) < 2:
-            continue
-
-        sorted_actions = sorted(avg_by_action.items(), key=lambda x: -x[1])
-        best_action, best_avg = sorted_actions[0]
-        second_avg = sorted_actions[1][1] if len(sorted_actions) > 1 else 0
-        spread = best_avg - second_avg
-
-        if spread < 0.3:
-            continue
-
-        # Build hand description.
-        hand_parts = []
-        if longest >= 5:
-            hand_parts.append(f"a {longest}-card suit")
-        if highs >= 3:
-            hand_parts.append(f"{highs}+ high cards")
-        if voids >= 1:
-            if voids == 1:
-                hand_parts.append("a void suit")
+            if has_bid:
+                has_bid_actions[action].append(q)
             else:
-                hand_parts.append(f"{voids} void suits")
-        if not hand_parts:
-            continue
-        # Proper English joining: "X and Y" or "X, Y, and Z".
-        if len(hand_parts) == 1:
-            hand_desc = hand_parts[0]
-        elif len(hand_parts) == 2:
-            hand_desc = f"{hand_parts[0]} and {hand_parts[1]}"
-        else:
-            hand_desc = ", ".join(hand_parts[:-1]) + f", and {hand_parts[-1]}"
+                no_bid_actions[action].append(q)
 
-        # Action description.
-        if best_action == "PASS":
-            action_desc = "pass and defend"
-            why = "this hand looks decent but fails to deliver reliably when bidding"
-            # Counter-intuitive if hand looks strong.
-            is_counter = highs >= 3
-        elif best_action.startswith("B"):
-            try:
-                val = int(best_action[1:])
-                action_desc = f"bid {val}"
-                why = f"this hand shape delivers exactly {val} tricks consistently"
-                is_counter = (highs >= 4 and val <= 7)  # Strong hand but low bid.
-            except ValueError:
-                continue
-        else:
-            continue
+    # What does the AI prefer when no one bid yet?
+    if no_bid_actions:
+        avgs = {a: sum(v)/len(v) for a, v in no_bid_actions.items() if len(v) >= 3}
+        if avgs:
+            best_action = max(avgs, key=avgs.get)
+            if best_action == "PASS":
+                insights.append(_make(
+                    "The AI prefers to pass rather than open bidding, waiting for others to commit first",
+                    "bidding", 1, episodes,
+                    why="letting opponents bid first reveals information about their hands"
+                ))
+            elif best_action.startswith("B"):
+                try:
+                    val = int(best_action[1:])
+                    if val <= 8:
+                        insights.append(_make(
+                            f"The AI favors conservative opening bids (around {val}), promising less and aiming to over-deliver",
+                            "bidding", 1, episodes,
+                            why="lower bids are safer and still score well when exceeded"
+                        ))
+                    else:
+                        insights.append(_make(
+                            f"The AI favors aggressive opening bids (around {val}), committing to high targets",
+                            "bidding", 1, episodes,
+                            why="confident bids score more when successful"
+                        ))
+                except ValueError:
+                    pass
 
-        text = f"When your hand has {hand_desc}, {action_desc}"
-        if is_counter:
-            text = f"Hand with {hand_desc}, {action_desc} works better than expected"
+    # When someone already bid — compete or pass?
+    if has_bid_actions:
+        avgs = {a: sum(v)/len(v) for a, v in has_bid_actions.items() if len(v) >= 3}
+        if avgs:
+            best_action = max(avgs, key=avgs.get)
+            if best_action == "PASS":
+                insights.append(_make(
+                    "When opponents bid first, the AI usually passes and defends rather than competing",
+                    "defense", 1, episodes,
+                    why="defending against an opponent's bid is often safer than overbidding"
+                ))
+            elif best_action.startswith("B"):
+                insights.append(_make(
+                    "The AI competes aggressively when opponents bid, escalating to take control",
+                    "bidding", 1, episodes,
+                    why="winning the bid means choosing trump suit which is a huge advantage"
+                ))
 
-        category = "counter-intuitive" if is_counter else "bidding"
-        insights.append(_make(text, category, "intermediate", 1, episodes, why=why))
+    # Bid level preferences.
+    bid_level_qs = defaultdict(list)
+    for state, actions in list(bid_q.items())[:5000]:
+        for action, q in actions.items():
+            if action.startswith("B"):
+                try:
+                    level = int(action[1:])
+                    bid_level_qs[level].append(q)
+                except ValueError:
+                    pass
 
-    return insights[:20]
+    if bid_level_qs:
+        level_avgs = {l: sum(v)/len(v) for l, v in bid_level_qs.items() if len(v) >= 3}
+        if level_avgs:
+            best_level = max(level_avgs, key=level_avgs.get)
+            if best_level == 7:
+                insights.append(_make(
+                    "Bid 7 is the AI's sweet spot, low enough to make reliably but still scores well",
+                    "bidding", 1, episodes,
+                    why="the minimum bid maximizes the chance of success"
+                ))
+            elif best_level >= 10:
+                insights.append(_make(
+                    f"Bid {best_level} scores highest on average, the AI has learned when big bids pay off",
+                    "bidding", 1, episodes,
+                    why="high bids score massively when you have the hand to back them up"
+                ))
+
+    return insights
 
 
-
-def _mine_partnership_patterns(play_items, episodes) -> list:
-    """Mine Q-table for partnership coordination patterns."""
+def _mine_counter_intuitive(play_items, episodes) -> list:
+    """Find patterns where obvious plays lose."""
     insights = []
 
-    # Group by position only — no phase splitting for partnership.
-    partner_contexts = defaultdict(lambda: defaultdict(list))
+    # Do low cards beat high cards in specific positions?
+    pos_tier_qs = defaultdict(lambda: defaultdict(list))
     for state, actions in play_items:
-        if len(state) < 6:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
             continue
-        pos = state[4]
-        if pos in ("0", "2"):
-            for key, q in actions.items():
-                if len(key) >= 3:
-                    partner_contexts[pos][key].append(q)
+        n_cards, pos = parsed
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            pos_tier_qs[pos][_rank_tier(rank)].append(q)
 
-    for pos, action_qs in partner_contexts.items():
-        avg_by_action = {}
-        for key, vals in action_qs.items():
-            if len(vals) >= 3:
-                avg_by_action[key] = sum(vals) / len(vals)
+    for pos, tier_data in pos_tier_qs.items():
+        avgs = {t: sum(v)/len(v) for t, v in tier_data.items() if len(v) >= 10}
+        if "low" in avgs and "high" in avgs:
+            if avgs["low"] > avgs["high"] + 0.15:
+                pos_name = _POS_NAMES.get(pos, "this position")
+                insights.append(_make(
+                    f"When {pos_name}, low cards actually outperform high cards, saving strength for later",
+                    "counter-intuitive", 1, episodes,
+                    why="high cards attract opposition and get wasted in losing battles"
+                ))
 
-        if len(avg_by_action) < 2:
+    # Does any single suit massively outperform? (across all positions).
+    suit_performance = defaultdict(list)
+    for state, actions in play_items:
+        if len(actions) < 2:
             continue
+        sorted_a = sorted(actions.items(), key=lambda x: -x[1])
+        best_key = sorted_a[0][0]
+        parsed = _parse_action_key(best_key)
+        if parsed:
+            rank, suit = parsed
+            suit_performance[suit].append(sorted_a[0][1])
 
-        sorted_actions = sorted(avg_by_action.items(), key=lambda x: -x[1])
-        best_key, best_avg = sorted_actions[0]
-        worst_key, worst_avg = sorted_actions[-1]
-        spread = best_avg - worst_avg
+    if suit_performance:
+        suit_avgs = {s: sum(v)/len(v) for s, v in suit_performance.items() if len(v) >= 10}
+        if len(suit_avgs) >= 2:
+            vals = sorted(suit_avgs.values())
+            if vals[-1] - vals[0] > 0.4:
+                dominant = max(suit_avgs, key=suit_avgs.get)
+                insights.append(_make(
+                    f"One suit ({_SUIT_NAMES.get(dominant, '?')}) is chosen as the winning play far more often than others",
+                    "trump", 1, episodes,
+                    why="this is likely the trump suit which beats all other suits"
+                ))
 
-        if spread < 0.4:
-            continue
+    return insights
 
-        # Use compose function for rich descriptions.
-        is_partner_led = (pos == "2")
-        text = _compose_partnership_insight(pos, "", best_key, is_partner_led)
-        insights.append(_make(text, "partnership", "intermediate", 1, episodes, why=""))
 
-    return insights[:15]
+# ─── Dedup & Helpers ─────────────────────────────────────────────────────────────
 
 
 def _dedup_merge(insights) -> list:
-    """
-    Aggressively merge insights by CORE IDEA — ignoring position.
-    One insight per concept, regardless of which seat it applies to.
-    """
+    """Merge insights by core idea — max 2 per concept."""
     seen = {}
 
     for ins in insights:
         text = ins.get("text", "").lower()
         cat = ins.get("category", "")
 
-        # Extract CORE IDEA — ignore position details entirely.
+        # Extract core idea.
         sig_parts = [cat]
-
-        if "trump" in text and ("smallest" in text or "weakest" in text) and "non-trump" in text:
-            sig_parts.append("small_trump_wins")
-        elif "trump" in text and ("strongest" in text or "highest" in text):
-            sig_parts.append("high_trump")
-        elif "trump" in text and "non-trump" in text:
-            sig_parts.append("trump_beats_nontrump")
-        elif "void" in text or "remove all cards from one suit" in text or "become void" in text:
-            sig_parts.append("void_creation")
-        elif "strongest card" in text and "partner" not in text:
-            sig_parts.append("play_high")
-        elif ("lowest" in text or "weakest" in text) and "trump" not in text:
-            sig_parts.append("play_low")
-        elif "pass" in text and "defend" in text:
-            sig_parts.append("pass_defend")
-        elif "bid" in text and "bid" in cat:
-            if "5-card" in text:
-                sig_parts.append("bid_5card")
-            elif "6-card" in text:
-                sig_parts.append("bid_6card")
-            elif "7-card" in text:
-                sig_parts.append("bid_7card")
-            else:
-                sig_parts.append("bid_general")
-        elif "partner" in text and ("strongest" in text or "high" in text):
-            sig_parts.append("partner_high")
-        elif "partner" in text and ("lowest" in text or "low" in text):
-            sig_parts.append("partner_low")
-        elif "partner" in text and "trump" in text:
-            sig_parts.append("partner_trump")
-        elif "partner" in text:
-            sig_parts.append("partner_general")
-        elif "fewer tricks" in text:
-            sig_parts.append("behind")
-        elif "more tricks" in text:
-            sig_parts.append("ahead")
-        elif "high cards" in text and ("length" in text or "doesn" in text):
-            sig_parts.append("high_cards_trap")
-        elif "low cards" in text and ("waste" not in text):
-            sig_parts.append("low_cards_value")
+        if "ace" in text:
+            sig_parts.append("aces")
+        elif "high card" in text or "kings and aces" in text:
+            sig_parts.append("high_cards")
+        elif "low card" in text and "outperform" in text:
+            sig_parts.append("low_beats_high")
+        elif "mid-range" in text or "mid card" in text:
+            sig_parts.append("mid_cards")
+        elif "suit" in text and ("higher" in text or "trump" in text or "dominant" in text):
+            sig_parts.append("suit_dominance")
+        elif "position" in text or "first to play" in text or "last to play" in text:
+            sig_parts.append("position")
+        elif "early" in text:
+            sig_parts.append("early_game")
+        elif "late" in text:
+            sig_parts.append("late_game")
+        elif "pass" in text and "bid" in cat:
+            sig_parts.append("pass_strategy")
+        elif "bid" in text and "conservative" in text:
+            sig_parts.append("conservative_bid")
+        elif "bid" in text and "aggressive" in text:
+            sig_parts.append("aggressive_bid")
+        elif "defend" in text:
+            sig_parts.append("defense")
         else:
-            words = [w for w in text.split() if len(w) > 4 and w not in
-                     ("when", "your", "that", "this", "from", "than", "with", "play")]
-            sig_parts.append("_".join(words[:3]))
+            words = [w for w in text.split() if len(w) > 4][:3]
+            sig_parts.append("_".join(words))
 
-        sig = " ".join(sig_parts)
+        sig = "|".join(sig_parts)
 
         if sig in seen:
-            # Allow up to 2 per core idea (different contexts can coexist).
             alt_sig = sig + "_alt"
             if alt_sig not in seen:
                 seen[alt_sig] = ins
             else:
-                # Third duplicate — just increment confidence.
-                existing_conf = seen[sig].get("confidence", 1)
-                seen[sig]["confidence"] = existing_conf + 1
+                seen[sig]["confidence"] = seen[sig].get("confidence", 1) + 1
         else:
             seen[sig] = ins
 
     return list(seen.values())
 
 
-def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
-    """Find patterns where the 'obvious' play loses — general strategic reversals."""
-    insights = []
-
-    # Aggregate: do low cards beat high cards ACROSS ALL contexts?
-    low_total_q = []
-    high_total_q = []
-    mid_total_q = []
-    trump_off_q = []  # Trumping when not following.
-
-    for state, actions in play_items:
-        if len(state) < 6:
-            continue
-        for key, q in actions.items():
-            if len(key) < 3:
-                continue
-            tier = key[0]
-            if tier in ("L", "X"):
-                low_total_q.append(q)
-            elif tier in ("A", "K"):
-                high_total_q.append(q)
-            elif tier in ("M", "J"):
-                mid_total_q.append(q)
-            if key[2] == "T" and key[1] == "O":
-                trump_off_q.append(q)
-
-    # General reversal: mid cards beat high cards overall.
-    if mid_total_q and high_total_q:
-        mid_avg = sum(mid_total_q) / len(mid_total_q)
-        high_avg = sum(high_total_q) / len(high_total_q)
-        if mid_avg > high_avg + 0.1:
-            insights.append(_make(
-                "Middle cards (9s, 10s, Jacks) quietly outperform Aces and Kings on average, they win tricks nobody bothers to fight over",
-                "counter-intuitive", "advanced", 1, episodes,
-                why="opponents save their trumps to kill your high cards but let middle cards through uncontested"
-            ))
-
-    # General reversal: low cards have positive value (not just waste).
-    if low_total_q:
-        low_avg = sum(low_total_q) / len(low_total_q)
-        if low_avg > 0.1:
-            insights.append(_make(
-                "Low cards are not waste, playing them strategically builds voids and preserves your hand structure for critical moments",
-                "counter-intuitive", "intermediate", 1, episodes,
-                why="every low card you play is one step closer to being void in that suit, which means free tricks later"
-            ))
-
-    # Trump when not following: is it worth it?
-    if trump_off_q and len(trump_off_q) >= 5:
-        trump_avg = sum(trump_off_q) / len(trump_off_q)
-        if trump_avg > 0.5:
-            insights.append(_make(
-                "Trumping when you can't follow suit is almost always profitable, even your smallest trump beats their best card",
-                "trump", "beginner", 1, episodes,
-                why="trump overrides rank entirely, a 2 of trump beats an Ace of any other suit"
-            ))
-
-    # Bid reversals.
-    strong_hand_pass = []
-    strong_hand_bid = []
-    for state, actions in list(bid_q.items())[:1000]:
-        if len(state) < 5:
-            continue
-        try:
-            highs = int(state[2])
-        except (ValueError, IndexError):
-            continue
-        if highs < 3:
-            continue
-        pass_q = actions.get("PASS", None)
-        bid_qs = [q for k, q in actions.items() if k.startswith("B")]
-        if pass_q is not None:
-            strong_hand_pass.append(pass_q)
-        strong_hand_bid.extend(bid_qs)
-
-    if strong_hand_pass and strong_hand_bid:
-        pass_avg = sum(strong_hand_pass) / len(strong_hand_pass)
-        bid_avg = sum(strong_hand_bid) / len(strong_hand_bid)
-        if pass_avg > bid_avg + 0.2:
-            insights.append(_make(
-                "Having many high cards doesn't mean you should bid, trump LENGTH matters more than card POWER",
-                "counter-intuitive", "advanced", 1, episodes,
-                why="high cards spread across suits get trumped by void opponents, concentrated trump length is what delivers tricks"
-            ))
-        elif bid_avg > pass_avg + 0.3:
-            insights.append(_make(
-                "When your hand has strength, commit to it with a bid, hesitation leaves points on the table for opponents",
-                "bidding", "intermediate", 1, episodes,
-                why="strong hands that pass let opponents bid cheaply and control the game"
-            ))
-
-    return insights[:8]
-
-
 def _refine_why(current_why: str, addition: str) -> str:
     """Refine the why text by appending a confidence qualifier."""
     if not current_why:
         return addition.capitalize()
-    # Don't duplicate if already refined.
     if addition.lower() in current_why.lower():
         return current_why
     return f"{current_why}. {addition.capitalize()}"
@@ -793,7 +628,7 @@ def _load_cache() -> list:
                 ins.setdefault("condition", None)
                 ins.setdefault("exception", None)
                 ins.setdefault("category", "timing")
-                ins.setdefault("difficulty", "beginner")
+                ins.setdefault("difficulty", "intermediate")
                 ins.setdefault("episode", 0)
             return data
     except Exception:
@@ -808,7 +643,7 @@ def _save_cache(insights):
             to_save.append({
                 "text": ins.get("text", ""),
                 "category": ins.get("category", "timing"),
-                "difficulty": ins.get("difficulty", "beginner"),
+                "difficulty": ins.get("difficulty", "intermediate"),
                 "confidence": ins.get("confidence", 1),
                 "episode": ins.get("episode", 0),
                 "why": ins.get("why", ""),
@@ -821,7 +656,7 @@ def _save_cache(insights):
         pass
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────────
+# ─── Public Helpers ──────────────────────────────────────────────────────────────
 
 
 def get_insight_texts(insights) -> list:
