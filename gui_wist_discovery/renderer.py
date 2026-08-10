@@ -86,15 +86,27 @@ class Renderer:
     # ─── Header ─────────────────────────────────────────────────────────────────
 
     def _render_header(self, panel_x, state):
-        """Timer on the left, title in center."""
+        """Timer and shotas learned on the left, vertically centered."""
         total_sec = state["compute_time"]
         hours = int(total_sec // 3600)
         minutes = int((total_sec % 3600) // 60)
         seconds = int(total_sec % 60)
         timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
-        timer_y = (60 - timer_surf.get_height()) // 2
-        # Timer aligned to the left edge of the insights box.
-        self.screen.blit(timer_surf, (15, timer_y))
+
+        episodes = state.get("episodes", 0)
+        if episodes >= 1000000:
+            ep_str = f"{episodes / 1000000:.1f}M"
+        elif episodes >= 1000:
+            ep_str = f"{episodes // 1000}K"
+        else:
+            ep_str = str(episodes)
+        shotas_surf = self.fonts["medium"].render(f"Shotas: {ep_str}", True, TEXT_WHITE)
+
+        # Both vertically centered in the 60px header, stacked.
+        total_h = timer_surf.get_height() + shotas_surf.get_height() + 2
+        start_y = (60 - total_h) // 2
+        self.screen.blit(timer_surf, (15, start_y))
+        self.screen.blit(shotas_surf, (15, start_y + timer_surf.get_height() + 2))
 
     # ─── Players & Cards ────────────────────────────────────────────────────────
 
@@ -251,7 +263,6 @@ class Renderer:
 
         y += 8
         stats_lines = [
-            f"Shotas learned: {state['episodes']:,}",
             f"Seeks: {state['seeks_achieved']}",
             f"Bids met: {state['bids_met']}/{state['bids_met'] + state['bids_failed']}",
             f"Epsilon: {state['epsilon']:.3f}  |  Stage: {state['opponent_stage']}",
@@ -449,7 +460,7 @@ class Renderer:
             version = ins.get("version", 0) if isinstance(ins, dict) else 0
             version_str = f" (+{version})" if version > 0 else ""
             num_str = f"{num}{version_str}. "
-            num_color = TEXT_GOLD if is_latest else (255, 255, 255)
+            num_color = (255, 255, 255)
             self.screen.blit(num_font.render(num_str, True, num_color), (x_cursor, y))
             x_cursor += num_font.size(num_str)[0]
 
@@ -485,10 +496,13 @@ class Renderer:
 
             y += 18
 
-            # --- Line 2+: Main text + why combined ---
+            # --- Line 2+: Main text + why combined + discovery shota ---
             full_text = text
             if why:
                 full_text = f"{text}. {why}"
+            episode = ins.get("episode", 0) if isinstance(ins, dict) else 0
+            if episode > 0:
+                full_text += f" (at {episode:,} shotas)"
             y = self._wrap_text(body_font, full_text, 25, y, text_w - 10, (255, 255, 255), panel_rect.bottom - 20)
             y += 2
 
