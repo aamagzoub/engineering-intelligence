@@ -64,7 +64,7 @@ class WistDiscoveryWatcher:
         self.state = "idle"
 
         # Agent — self-play.
-        self.model_path = "agents/wist_discovery/wist_discovery_model_v3.1.4.json"
+        self.model_path = "agents/wist_discovery/wist_discovery_model.json"
         self.discovery = WistDiscoveryAgent(training=True)
         if os.path.exists(self.model_path):
             try:
