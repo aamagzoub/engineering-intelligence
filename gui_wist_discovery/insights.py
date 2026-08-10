@@ -108,39 +108,39 @@ def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
     best_void = len(best_key) > 4 and best_key[4] == "V"
     is_counter = (best_tier < worst_tier - 1)
 
-    pos_desc = {"0": "when you lead", "1": "when you play 2nd", "2": "when your partner led", "3": "when you play last"}.get(pos, "")
+    pos_desc = {"0": "when you are the first to play in a trick", "1": "when you are the second player to play in a trick", "2": "when your partner plays first and you follow", "3": "when you are the last player to play in a trick"}.get(pos, "")
     phase_desc = {"1": "early", "2": "first half", "3": "mid-game", "4": "late", "5": "final tricks"}.get(phase, "")
 
     # Build finding + implication based on pattern type.
     if best_trump and not best_follows:
-        finding = f"{pos_desc.capitalize()}, smallest trump outscores all non-trump cards by 3x"
-        implication = "Any trump beats any non-trump regardless of rank, so even a 2 of trump wins the trick"
+        finding = f"{pos_desc.capitalize()}, your smallest trump outscores all non-trump cards by 3x"
+        implication = "Any trump beats any non-trump card regardless of rank, and so even a 2 of trump wins the trick"
     elif best_tier <= 0 and best_follows and worst_tier >= 3:
-        finding = f"{pos_desc.capitalize()}, playing lowest card scores higher than playing Kings or Queens"
-        implication = "Spending high cards on tricks you cannot win wastes them, low cards lose nothing you need"
+        finding = f"{pos_desc.capitalize()}, playing your lowest card scores higher than playing Kings or Queens"
+        implication = "Spending high cards on tricks you cannot win wastes them, and low cards lose nothing you need"
     elif best_tier >= 4 and best_follows and td == "B":
-        finding = f"When behind {pos_desc}, high cards played immediately outscore saving them"
+        finding = f"When your team is behind and {pos_desc}, high cards played immediately outscore saving them"
         implication = "When losing, waiting to use strong cards means they might never get used at all"
     elif best_void:
-        finding = f"{pos_desc.capitalize()}, plays that empty a suit score higher than keeping balanced"
-        implication = "Becoming void in a suit creates a permanent trumping lane for every future trick in that suit"
+        finding = f"{pos_desc.capitalize()}, playing cards that help you become void scores higher than keeping balanced"
+        implication = "Becoming void in a suit creates a permanent trumping opportunity every time that suit is played"
     elif best_trump and best_tier >= 4:
-        finding = f"{pos_desc.capitalize()}, highest trump outscores lower trumps significantly"
-        implication = "Lower trumps risk being over-trumped, top trump guarantees the win"
+        finding = f"{pos_desc.capitalize()}, your highest trump outscores lower trumps significantly"
+        implication = "Lower trumps risk being beaten by an opponent's higher trump, but top trump guarantees the win"
     elif best_trump and best_tier <= 1:
-        finding = f"{pos_desc.capitalize()}, weakest trump scores nearly as well as highest trump"
-        implication = "When no opponent can also trump, any trump wins equally, so save your high ones"
+        finding = f"{pos_desc.capitalize()}, your weakest trump scores nearly as well as your highest trump"
+        implication = "When no opponent can also trump, any trump wins equally, so save your high ones for harder fights"
     elif is_counter:
         finding = f"{pos_desc.capitalize()}, {best_action} outscores {worst_action}"
-        implication = "High cards attract opposition trumps from void opponents, lower cards slip through uncontested"
+        implication = "High cards attract opposition trumps from void opponents, but lower cards slip through uncontested"
     elif td == "W":
-        finding = f"When ahead {pos_desc}, conservative plays outscore aggressive ones"
-        implication = "Protecting a lead is safer than extending it, risks only help the losing team"
+        finding = f"When your team is ahead and {pos_desc}, conservative plays outscore aggressive ones"
+        implication = "Protecting a lead is safer than extending it, and risks only help the losing team"
     elif td == "B":
-        finding = f"When behind {pos_desc}, aggressive plays outscore conservative ones"
-        implication = "Desperation forces sharper decisions, safe play just means losing slowly"
+        finding = f"When your team is behind and {pos_desc}, aggressive plays outscore conservative ones"
+        implication = "Safe play when losing just means losing slowly, and bold moves can change the momentum"
     else:
-        finding = f"{pos_desc.capitalize()}, {best_action} consistently outscores alternatives"
+        finding = f"{pos_desc.capitalize()}, {best_action} consistently outscores the alternatives"
         implication = "This play wins more across thousands of games in this situation"
 
     return f"{finding}. {implication}."
@@ -154,26 +154,26 @@ def _compose_partnership_insight(pos, phase, best_key, is_partner_led) -> str:
 
     if is_partner_led:
         if best_tier <= 1:
-            return (f"When your partner leads a trick and their card looks strong enough to win, "
+            return (f"When your partner plays first in a trick and their card looks strong enough to win, "
                     f"{best_action}. Keep your high cards for tricks where your team needs you to fight.")
         elif best_trump and best_key[1] == "F":
-            return (f"When your partner leads trump, {best_action}. "
-                    f"Together you remove 2 enemy trumps in 1 trick, which helps both of you later.")
+            return (f"When your partner plays trump first, {best_action}. "
+                    f"Together you remove 2 enemy trumps in 1 trick, and that helps both of you later.")
         elif best_tier >= 4:
-            return (f"When your partner leads but their card may not win, {best_action}. "
+            return (f"When your partner plays first but their card may not win, {best_action}. "
                     f"Your high card guarantees the trick stays with your team.")
         else:
-            return (f"When your partner leads, {best_action}. "
+            return (f"When your partner plays first in a trick, {best_action}. "
                     f"This supports their play without wasting your strongest cards.")
     else:
         if best_tier <= 1:
-            return (f"When you lead, start with a low card. "
-                    f"This lets your partner show their strength or tells you which suits are safe.")
+            return (f"When you play first in a trick, start with a low card. "
+                    f"This lets your partner show their strength and tells you which suits are safe.")
         elif best_trump:
-            return (f"When you lead, {best_action}. "
-                    f"Leading trump removes opponents' trumps and helps your partner too.")
+            return (f"When you play first in a trick, {best_action}. "
+                    f"Playing trump first removes opponents' trumps and helps your partner too.")
         else:
-            return (f"When you lead, {best_action}. "
+            return (f"When you play first in a trick, {best_action}. "
                     f"Your choice of suit forces everyone to follow, so pick a suit where your team is strong.")
 
 

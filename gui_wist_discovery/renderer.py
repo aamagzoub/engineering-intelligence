@@ -74,9 +74,8 @@ class Renderer:
         self._render_players(table, state["hands"])
         self._render_trick(table, state["current_trick_cards"], state["last_winner"])
 
-        # Buttons.
-        mode_rect = self._render_mode_btn(state["paused"])
-        reset_rect = self._render_reset_btn()
+        # Buttons (both rendered together now).
+        mode_rect, reset_rect = self._render_mode_btn(state["paused"])
 
         # Right panel (scoreboard + discoveries).
         self._render_right_panel(state)
@@ -87,25 +86,15 @@ class Renderer:
     # ─── Header ─────────────────────────────────────────────────────────────────
 
     def _render_header(self, panel_x, state):
-        """Timer and info text in the header area."""
+        """Timer on the left, title in center."""
         total_sec = state["compute_time"]
         hours = int(total_sec // 3600)
         minutes = int((total_sec % 3600) // 60)
         seconds = int(total_sec % 60)
         timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
         timer_y = (60 - timer_surf.get_height()) // 2
-        self.screen.blit(timer_surf, (panel_x, timer_y))
-
-        info1 = f"Game {state['game_num']} | Shota {state['shota_num']}/5 | Speed: {state['speed']:.1f}x"
-        info2 = f"Score: T1={state['team_scores'][0]:+d} T2={state['team_scores'][1]:+d} | SPACE: pause | ESC: quit"
-        self.screen.blit(
-            self.fonts["small"].render(info1, True, TEXT_WHITE),
-            (panel_x - self.fonts["small"].size(info1)[0] - 10, 15),
-        )
-        self.screen.blit(
-            self.fonts["small"].render(info2, True, TEXT_WHITE),
-            (panel_x - self.fonts["small"].size(info2)[0] - 10, 32),
-        )
+        # Timer aligned to the left edge of the insights box.
+        self.screen.blit(timer_surf, (15, timer_y))
 
     # ─── Players & Cards ────────────────────────────────────────────────────────
 
@@ -174,33 +163,42 @@ class Renderer:
     # ─── Buttons ────────────────────────────────────────────────────────────────
 
     def _render_mode_btn(self, paused):
-        """Stop/Resume button in header."""
-        btn_w, btn_h = 70, 24
-        btn_x = SCREEN_WIDTH - 10 - btn_w - 95
-        btn_y = (60 - btn_h) // 2
-        btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+        """Stop/Resume button + Reset button centered, with labels below."""
+        # Both buttons on one line, centered in header.
+        btn_w, btn_h = 70, 22
+        reset_w, reset_h = 90, 22
+        total_w = btn_w + 10 + reset_w
+        start_x = (SCREEN_WIDTH - total_w) // 2
+        btn_y = 10
 
+        # Stop/Resume button.
+        btn = pygame.Rect(start_x, btn_y, btn_w, btn_h)
         hover = btn.collidepoint(pygame.mouse.get_pos())
         label = "Resume" if paused else "Stop"
         bg = (255, 255, 255) if hover else (240, 240, 240)
         pygame.draw.rect(self.screen, bg, btn, border_radius=5)
         t = self._btn_font.render(label, True, (180, 30, 30))
         self.screen.blit(t, t.get_rect(center=btn.center))
-        return btn
+
+        # Reset button.
+        reset_btn = pygame.Rect(start_x + btn_w + 10, btn_y, reset_w, reset_h)
+        hover2 = reset_btn.collidepoint(pygame.mouse.get_pos())
+        bg2 = (210, 50, 50) if hover2 else (180, 30, 30)
+        pygame.draw.rect(self.screen, bg2, reset_btn, border_radius=5)
+        t2 = self._btn_font_bold.render("RESET Brain", True, (255, 230, 50))
+        self.screen.blit(t2, t2.get_rect(center=reset_btn.center))
+
+        # Labels below buttons, centered.
+        label_text = "SPACE: pause  |  ESC: quit"
+        label_surf = self.fonts["small"].render(label_text, True, TEXT_DIM)
+        label_x = (SCREEN_WIDTH - label_surf.get_width()) // 2
+        self.screen.blit(label_surf, (label_x, btn_y + btn_h + 4))
+
+        return btn, reset_btn
 
     def _render_reset_btn(self):
-        """RESET Brain button in header."""
-        btn_w, btn_h = 90, 24
-        btn_x = SCREEN_WIDTH - 10 - btn_w
-        btn_y = (60 - btn_h) // 2
-        btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
-
-        hover = btn.collidepoint(pygame.mouse.get_pos())
-        bg = (210, 50, 50) if hover else (180, 30, 30)
-        pygame.draw.rect(self.screen, bg, btn, border_radius=5)
-        t = self._btn_font_bold.render("RESET Brain", True, (255, 230, 50))
-        self.screen.blit(t, t.get_rect(center=btn.center))
-        return btn
+        """Dummy — reset is now rendered inside _render_mode_btn."""
+        return pygame.Rect(0, 0, 0, 0)
 
     # ─── Right Panel (Scoreboard + Discoveries) ────────────────────────────────
 
@@ -354,9 +352,9 @@ class Renderer:
 
         y = panel_rect.top + 6
 
-        # Title.
+        # Title with gap after.
         self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
-        y += 20
+        y += 24  # Extra gap after title before chips.
 
         # Category filter chips — after title, tight spacing.
         active_filter = state.get("insight_filter", None)
@@ -392,7 +390,7 @@ class Renderer:
             chip_x += cw + 3
 
         state["_chip_rects"] = chip_rects
-        y = chip_y + ch + 6
+        y = chip_y + ch + 10  # Extra gap after chips.
 
         insights = state.get("insights", [])
         if not insights:
@@ -461,7 +459,8 @@ class Renderer:
                 self.screen.blit(cat_surf, (x_cursor + 4, badge_rect.y + 2))
                 x_cursor += cat_w + 4
 
-            # NEW! badge.
+            # NEW! badge — only for brand new discoveries (confidence == 1).
+            is_new = (isinstance(ins, dict) and ins.get("confidence", 1) == 1)
             if is_new:
                 new_surf = small_font.render("NEW", True, (0, 0, 0))
                 new_w = new_surf.get_width() + 8
