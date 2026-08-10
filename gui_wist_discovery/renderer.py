@@ -169,16 +169,27 @@ class Renderer:
     # ─── Buttons ────────────────────────────────────────────────────────────────
 
     def _render_mode_btn(self, paused):
-        """Stop/Resume + Reset buttons above the scoreboard on the right side."""
+        """Stop/Resume beneath Reset Brain, both right-aligned with scoreboard right edge."""
         px = SCREEN_WIDTH - 270
-        btn_w, btn_h = 70, 22
-        reset_w, reset_h = 90, 22
-        total_w = btn_w + 10 + reset_w
-        start_x = px + (260 - total_w) // 2
-        btn_y = 8
+        panel_w = 260
+        btn_w, btn_h = 90, 22
+        gap = 4
+        # Right-aligned with scoreboard right edge.
+        btn_right = px + panel_w
+        btn_x = btn_right - btn_w
 
-        # Stop/Resume button.
-        btn = pygame.Rect(start_x, btn_y, btn_w, btn_h)
+        # Reset Brain button (top).
+        reset_y = 6
+        reset_btn = pygame.Rect(btn_x, reset_y, btn_w, btn_h)
+        hover2 = reset_btn.collidepoint(pygame.mouse.get_pos())
+        bg2 = (210, 50, 50) if hover2 else (180, 30, 30)
+        pygame.draw.rect(self.screen, bg2, reset_btn, border_radius=5)
+        t2 = self._btn_font_bold.render("RESET Brain", True, (255, 230, 50))
+        self.screen.blit(t2, t2.get_rect(center=reset_btn.center))
+
+        # Stop/Resume button (beneath).
+        stop_y = reset_y + btn_h + gap
+        btn = pygame.Rect(btn_x, stop_y, btn_w, btn_h)
         hover = btn.collidepoint(pygame.mouse.get_pos())
         label = "Resume" if paused else "Stop"
         bg = (255, 255, 255) if hover else (240, 240, 240)
@@ -186,18 +197,11 @@ class Renderer:
         t = self._btn_font.render(label, True, (180, 30, 30))
         self.screen.blit(t, t.get_rect(center=btn.center))
 
-        # Reset button.
-        reset_btn = pygame.Rect(start_x + btn_w + 10, btn_y, reset_w, reset_h)
-        hover2 = reset_btn.collidepoint(pygame.mouse.get_pos())
-        bg2 = (210, 50, 50) if hover2 else (180, 30, 30)
-        pygame.draw.rect(self.screen, bg2, reset_btn, border_radius=5)
-        t2 = self._btn_font_bold.render("RESET Brain", True, (255, 230, 50))
-        self.screen.blit(t2, t2.get_rect(center=reset_btn.center))
-
-        # Labels at bottom-right, aligned with left edge of milestones box.
+        # Labels at bottom-right, aligned with right edge of milestones box.
         label_text = "SPACE: pause  |  ESC: quit"
         label_surf = self.fonts["small"].render(label_text, True, TEXT_WHITE)
-        self.screen.blit(label_surf, (px, SCREEN_HEIGHT - 18))
+        label_x = btn_right - label_surf.get_width()
+        self.screen.blit(label_surf, (label_x, SCREEN_HEIGHT - 18))
 
         return btn, reset_btn
 
@@ -213,7 +217,7 @@ class Renderer:
         panel_w = 260
 
         # Scoreboard box.
-        score_h = 200
+        score_h = 180
         score_rect = pygame.Rect(px, 60, panel_w, score_h)
         pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
