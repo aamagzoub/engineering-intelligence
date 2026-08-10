@@ -57,39 +57,40 @@ _ACTION_DESC = {
 }
 
 def _describe_action(key: str) -> str:
-    """Describe an action key as a simple play instruction in plain language."""
+    """Describe an action key as a simple play instruction in plain language.
+    Uses generalized terms for high cards (not specific ranks)."""
     if len(key) < 3:
         return "play a card"
     tier, follows, trump = key[0], key[1], key[2]
     
-    card_desc = {"A": "Ace", "K": "King", "Q": "Queen", "J": "Jack", "M": "a 9 or 10", "L": "a 7 or 8", "X": "your weakest card (2-6)"}.get(tier, "a card")
-    
     if trump == "T" and follows == "O":
         if tier in ("L", "X"):
             return "play your smallest trump"
-        elif tier in ("A", "K"):
-            return "play your highest trump"
+        elif tier in ("A", "K", "Q"):
+            return "play your strongest trump"
         else:
-            return f"play {card_desc} of trump"
+            return "play a mid-range trump"
     elif trump == "T" and follows == "F":
-        if tier in ("A", "K"):
-            return f"play your {card_desc} of trump"
+        if tier in ("A", "K", "Q"):
+            return "play your strongest trump"
         elif tier in ("L", "X"):
             return "play your smallest trump"
         else:
-            return f"play {card_desc} of trump"
+            return "play a mid-range trump"
     elif follows == "O":
         if tier in ("L", "X"):
             return "play your weakest card from another suit"
+        elif tier in ("A", "K", "Q"):
+            return "play a high card from another suit"
         else:
-            return f"play your {card_desc}"
+            return "play a mid-range card from another suit"
     else:
         if tier in ("L", "X"):
             return "play your lowest card"
-        elif tier in ("A", "K"):
-            return f"play your {card_desc}"
+        elif tier in ("A", "K", "Q"):
+            return "play your strongest card"
         else:
-            return f"play {card_desc}"
+            return "play a mid-range card"
 
 
 def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
@@ -510,7 +511,13 @@ def _mine_bid_patterns(bid_q, episodes) -> list:
             hand_parts.append(f"{voids} void{'s' if voids > 1 else ''}")
         if not hand_parts:
             continue
-        hand_desc = ", ".join(hand_parts)
+        # Proper English joining: "X and Y" or "X, Y, and Z".
+        if len(hand_parts) == 1:
+            hand_desc = hand_parts[0]
+        elif len(hand_parts) == 2:
+            hand_desc = f"{hand_parts[0]} and {hand_parts[1]}"
+        else:
+            hand_desc = ", ".join(hand_parts[:-1]) + f", and {hand_parts[-1]}"
 
         # Action description.
         if best_action == "PASS":
