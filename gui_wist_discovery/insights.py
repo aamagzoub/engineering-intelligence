@@ -113,35 +113,35 @@ def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
 
     # Build finding + implication based on pattern type.
     if best_trump and not best_follows:
-        finding = f"{pos_desc.capitalize()}, your smallest trump outscores all non-trump cards by 3x"
-        implication = "Any trump beats any non-trump card regardless of rank, and so even a 2 of trump wins the trick"
+        finding = f"{pos_desc.capitalize()}, your smallest trump almost always wins against any non-trump card"
+        implication = "Any trump beats any non-trump card regardless of rank, so even a 2 of trump wins the trick"
     elif best_tier <= 0 and best_follows and worst_tier >= 3:
-        finding = f"{pos_desc.capitalize()}, playing your lowest card scores higher than playing Kings or Queens"
+        finding = f"{pos_desc.capitalize()}, playing your lowest card works better than playing high cards you cannot win with"
         implication = "Spending high cards on tricks you cannot win wastes them, and low cards lose nothing you need"
     elif best_tier >= 4 and best_follows and td == "B":
-        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, playing your strongest card immediately outscores saving it"
+        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, playing your strongest card immediately wins more often than saving it"
         implication = "When losing, waiting to use strong cards means they might never get used at all"
     elif best_void:
-        finding = f"{pos_desc.capitalize()}, playing cards that remove all cards from one suit scores higher than keeping cards spread across all suits"
+        finding = f"{pos_desc.capitalize()}, playing cards that remove all cards from one suit works better than keeping cards in all suits"
         implication = "Once you have zero cards in a suit, every time that suit is played you can use trump to win it"
     elif best_trump and best_tier >= 4:
-        finding = f"{pos_desc.capitalize()}, your highest trump outscores lower trumps significantly"
+        finding = f"{pos_desc.capitalize()}, your highest trump almost always wins, while lower trumps sometimes lose"
         implication = "Lower trumps risk being beaten by an opponent's higher trump, but top trump guarantees the win"
     elif best_trump and best_tier <= 1:
-        finding = f"{pos_desc.capitalize()}, your weakest trump scores nearly as well as your highest trump"
+        finding = f"{pos_desc.capitalize()}, your weakest trump wins just as often as your highest trump here"
         implication = "When no opponent can also trump, any trump wins equally, so save your high ones for harder fights"
     elif is_counter:
-        finding = f"{pos_desc.capitalize()}, {best_action} outscores {worst_action}"
+        finding = f"{pos_desc.capitalize()}, {best_action} wins more often than {worst_action}"
         implication = "High cards attract opposition trumps from void opponents, but lower cards slip through uncontested"
     elif td == "W":
-        finding = f"When your team has won more tricks than the opponents and {pos_desc}, conservative plays outscore aggressive ones"
+        finding = f"When your team has won more tricks than the opponents and {pos_desc}, conservative plays win more often than aggressive ones"
         implication = "Protecting a lead is safer than extending it, and risks only help the losing team"
     elif td == "B":
-        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, aggressive plays outscore conservative ones"
+        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, aggressive plays win more often than conservative ones"
         implication = "Safe play when losing just means losing slowly, and bold moves can change the momentum"
     else:
-        finding = f"{pos_desc.capitalize()}, {best_action} consistently outscores the alternatives"
-        implication = "This play wins more across thousands of games in this situation"
+        finding = f"{pos_desc.capitalize()}, {best_action} wins more often than the alternatives"
+        implication = "This play consistently wins in this situation"
 
     return f"{finding}. {implication}."
 
@@ -228,10 +228,17 @@ def generate_insights(agent) -> list:
     # Merge new into accumulated.
     for ins in new_insights:
         if ins["text"] in acc_texts:
-            # Re-confirmed — increment +N.
+            # Re-confirmed — increment +N and refine at milestones.
             for acc in accumulated:
                 if acc["text"] == ins["text"]:
                     acc["confidence"] = acc.get("confidence", 1) + 1
+                    conf = acc["confidence"]
+                    if conf == 5:
+                        acc["why"] = _refine_why(acc.get("why", ""), "works most of the time")
+                    elif conf == 10:
+                        acc["why"] = _refine_why(acc.get("why", ""), "almost always works")
+                    elif conf == 20:
+                        acc["why"] = _refine_why(acc.get("why", ""), "one of the most reliable plays discovered")
                     break
         else:
             # Brand new discovery.
@@ -739,6 +746,16 @@ def _mine_counter_intuitive(play_items, bid_q, episodes) -> list:
             ))
 
     return insights[:8]
+
+
+def _refine_why(current_why: str, addition: str) -> str:
+    """Refine the why text by appending a confidence qualifier."""
+    if not current_why:
+        return addition.capitalize()
+    # Don't duplicate if already refined.
+    if addition.lower() in current_why.lower():
+        return current_why
+    return f"{current_why}. {addition.capitalize()}"
 
 
 # ─── Cache Persistence ───────────────────────────────────────────────────────────
