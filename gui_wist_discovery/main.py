@@ -137,6 +137,9 @@ class WistDiscoveryWatcher:
         self._disc_scroll_offset = 0
         self._insight_scroll_offset = 0
 
+        # Info overlay toggle.
+        self._show_info = False
+
         # Insight category filter (None = show all).
         self._insight_filter = None
         self._insight_chip_rects = {}  # {category: pygame.Rect} — set by renderer.
@@ -606,10 +609,18 @@ class WistDiscoveryWatcher:
                 elif event.key == pygame.K_SPACE:
                     self._toggle_pause()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # If info overlay is showing, any click closes it.
+                if self._show_info:
+                    self._show_info = False
+                    continue
                 if self._mode_btn_rect and self._mode_btn_rect.collidepoint(event.pos):
                     self._toggle_pause()
                 if self._reset_btn_rect and self._reset_btn_rect.collidepoint(event.pos):
                     self._reset_brain()
+                # Check info label click.
+                info_rect = getattr(self, '_info_rect', None)
+                if info_rect and info_rect.collidepoint(event.pos):
+                    self._show_info = True
                 # Check insight category filter chip clicks.
                 for cat, rect in self._insight_chip_rects.items():
                     if rect.collidepoint(event.pos):
@@ -736,12 +747,14 @@ class WistDiscoveryWatcher:
             "confidence_filter": self._confidence_filter,
             "disc_scroll": self._disc_scroll_offset,
             "insight_scroll": self._insight_scroll_offset,
+            "show_info": self._show_info,
         }
 
         self._mode_btn_rect, self._reset_btn_rect = self.renderer.render_frame(render_state)
 
-        # Capture chip rects from renderer for click detection.
+        # Capture chip rects and info rect from renderer for click detection.
         self._insight_chip_rects = render_state.get("_chip_rects", {})
+        self._info_rect = render_state.get("_info_rect")
         self._conf_rects = render_state.get("_conf_rects", {})
 
 

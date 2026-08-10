@@ -80,6 +80,20 @@ class Renderer:
         # Right panel (scoreboard + discoveries).
         self._render_right_panel(state)
 
+        # "Learning Agent Information" clickable label at bottom-left.
+        info_label = self.fonts["small"].render("Learning Agent Information", True, TEXT_WHITE)
+        info_rect = pygame.Rect(15, SCREEN_HEIGHT - 18, info_label.get_width(), info_label.get_height())
+        # Underline effect on hover.
+        if info_rect.collidepoint(pygame.mouse.get_pos()):
+            pygame.draw.line(self.screen, TEXT_WHITE, (15, SCREEN_HEIGHT - 4),
+                             (15 + info_label.get_width(), SCREEN_HEIGHT - 4))
+        self.screen.blit(info_label, (15, SCREEN_HEIGHT - 18))
+        state["_info_rect"] = info_rect
+
+        # Info overlay (if toggled on).
+        if state.get("show_info"):
+            self._render_info_overlay(left_panel_w)
+
         pygame.display.flip()
         return mode_rect, reset_rect
 
@@ -208,6 +222,81 @@ class Renderer:
     def _render_reset_btn(self):
         """Dummy — reset is now rendered inside _render_mode_btn."""
         return pygame.Rect(0, 0, 0, 0)
+
+    # ─── Info Overlay ──────────────────────────────────────────────────────────
+
+    _INFO_TEXT = [
+        ("1. The Environment", True),
+        ("", False),
+        ("There are 4 players in a fixed order.", False),
+        ("Each player gets 13 cards at the start.", False),
+        ("The 4 players are split into 2 teams of 2.", False),
+        ("One player each round has a special role.", False),
+        ("Before playing cards, there is a bidding phase.", False),
+        ("After bidding, players take turns playing one card each, 4 cards per trick.", False),
+        ("There are 13 tricks per round.", False),
+        ("After 13 tricks, a score is calculated.", False),
+        ("A game has 5 rounds.", False),
+        ("The first team to reach 25 points wins.", False),
+        ("If one team wins all 13 tricks, the game ends immediately.", False),
+        ("Cards are dealt randomly each round.", False),
+        ("The special role rotates each round.", False),
+        ("", False),
+        ("2. What the Agent Cannot Do", True),
+        ("", False),
+        ("Play a card not in its hand.", False),
+        ("Play a card from a different suit when it has cards in the led suit.", False),
+        ("Play a non-trump card on the first trick if it won the bid.", False),
+        ("Bid less than 7 or more than 13.", False),
+        ("Bid less than or equal to the current highest bid (unless special role, who can match).", False),
+        ("Bid higher than its longest valid suit count plus 3.", False),
+        ("Open with a bid higher than 11.", False),
+        ("Pass on the 3rd re-deal if it has the special role.", False),
+        ("Use a suit with 8 or more cards as trump.", False),
+        ("", False),
+        ("3. What the Agent Knows", True),
+        ("", False),
+        ("It has cards, each with a number (2-14) and a suit (0-3).", False),
+        ("Each turn, some cards are playable and some are not.", False),
+        ("After 13 tricks, it gets one number (positive or negative).", False),
+        ("During bidding, it can choose a number or pass.", False),
+        ("", False),
+        ("Everything else — trump power, suit following, bidding strategy,", False),
+        ("partnership coordination — must be discovered from that single number.", False),
+        ("", False),
+        ("Click anywhere to close.", False),
+    ]
+
+    def _render_info_overlay(self, left_panel_w):
+        """Render the agent info overlay centered on the table area."""
+        # Semi-transparent dark overlay.
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+
+        # Content area — centered in the table region.
+        content_x = left_panel_w + 30
+        content_w = SCREEN_WIDTH - left_panel_w - 300
+        y = 50
+
+        title_font = self.fonts["large"]
+        body_font = self.fonts["small"]
+
+        for text, is_header in self._INFO_TEXT:
+            if not text:
+                y += 8
+                continue
+            if is_header:
+                surf = title_font.render(text, True, TEXT_GOLD)
+                self.screen.blit(surf, (content_x, y))
+                y += 22
+            else:
+                # Word wrap.
+                y = self._wrap_text(body_font, text, content_x, y, content_w, TEXT_WHITE, SCREEN_HEIGHT - 20)
+                y += 2
+
+            if y > SCREEN_HEIGHT - 30:
+                break
 
     # ─── Right Panel (Scoreboard + Discoveries) ────────────────────────────────
 
