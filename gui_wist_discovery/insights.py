@@ -508,7 +508,10 @@ def _mine_bid_patterns(bid_q, episodes) -> list:
         if highs >= 3:
             hand_parts.append(f"{highs}+ high cards")
         if voids >= 1:
-            hand_parts.append(f"{voids} void{'s' if voids > 1 else ''}")
+            if voids == 1:
+                hand_parts.append("a void suit")
+            else:
+                hand_parts.append(f"{voids} void suits")
         if not hand_parts:
             continue
         # Proper English joining: "X and Y" or "X, Y, and Z".
