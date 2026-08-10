@@ -658,11 +658,13 @@ def _dedup_merge(insights) -> list:
         sig = " ".join(sig_parts)
 
         if sig in seen:
-            existing_conf = seen[sig].get("confidence", 1)
-            new_conf = ins.get("confidence", 1)
-            if new_conf > existing_conf:
-                seen[sig] = ins
+            # Allow up to 2 per core idea (different contexts can coexist).
+            alt_sig = sig + "_alt"
+            if alt_sig not in seen:
+                seen[alt_sig] = ins
             else:
+                # Third duplicate — just increment confidence.
+                existing_conf = seen[sig].get("confidence", 1)
                 seen[sig]["confidence"] = existing_conf + 1
         else:
             seen[sig] = ins

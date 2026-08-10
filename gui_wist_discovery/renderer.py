@@ -94,13 +94,7 @@ class Renderer:
         timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
 
         episodes = state.get("episodes", 0)
-        if episodes >= 1000000:
-            ep_str = f"{episodes / 1000000:.1f}M"
-        elif episodes >= 1000:
-            ep_str = f"{episodes // 1000}K"
-        else:
-            ep_str = str(episodes)
-        shotas_surf = self.fonts["medium"].render(f"Shotas: {ep_str}", True, TEXT_WHITE)
+        shotas_surf = self.fonts["medium"].render(f"Shotas: {episodes:,}", True, TEXT_WHITE)
 
         # Both vertically centered in the 60px header, stacked.
         total_h = timer_surf.get_height() + shotas_surf.get_height() + 2
@@ -202,7 +196,7 @@ class Renderer:
 
         # Labels below buttons.
         label_text = "SPACE: pause  |  ESC: quit"
-        label_surf = self.fonts["small"].render(label_text, True, TEXT_DIM)
+        label_surf = self.fonts["small"].render(label_text, True, TEXT_WHITE)
         label_x = px + (260 - label_surf.get_width()) // 2
         self.screen.blit(label_surf, (label_x, btn_y + btn_h + 3))
 
@@ -376,9 +370,22 @@ class Renderer:
         chip_x = 15
         chip_y = y
 
+        # Count insights per category dynamically.
+        all_insights = state.get("insights", [])
+        cat_counts = {}
+        for cat in categories:
+            if cat == "new":
+                cat_counts[cat] = sum(1 for ins in all_insights
+                                      if isinstance(ins, dict) and ins.get("confidence", 1) < 5)
+            else:
+                cat_counts[cat] = sum(1 for ins in all_insights
+                                      if isinstance(ins, dict) and ins.get("category") == cat
+                                      and ins.get("confidence", 1) >= 5)
+
         for i, cat in enumerate(categories):
             color = self._CAT_COLORS[cat]
-            label = cat.upper()
+            count = cat_counts.get(cat, 0)
+            label = f"{cat.upper()} ({count})"
             is_active = (active_filter == cat)
             bg = color if is_active else (30, 30, 30)
             border = color
@@ -402,7 +409,29 @@ class Renderer:
             chip_x += cw + 3
 
         state["_chip_rects"] = chip_rects
-        y = chip_y + ch + 14  # Gap after chips before insights list.
+        y = chip_y + ch + 8
+
+        # Confidence filter row.
+        conf_filter = state.get("confidence_filter", None)
+        conf_label = small_font.render("Confident:", True, TEXT_WHITE)
+        self.screen.blit(conf_label, (15, y))
+        conf_x = 15 + conf_label.get_width() + 6
+        conf_rects = {}
+        # Show available levels.
+        for level in [5, 10, 20, 50, 100]:
+            is_active = (conf_filter == level)
+            bg = (80, 80, 80) if is_active else (30, 30, 30)
+            level_surf = small_font.render(str(level), True, (255, 255, 255))
+            lw = level_surf.get_width() + 6
+            lh = level_surf.get_height() + 4
+            level_rect = pygame.Rect(conf_x, y, lw, lh)
+            pygame.draw.rect(self.screen, bg, level_rect, border_radius=3)
+            pygame.draw.rect(self.screen, (100, 100, 100), level_rect, width=1, border_radius=3)
+            self.screen.blit(level_surf, (conf_x + 3, y + 2))
+            conf_rects[level] = level_rect
+            conf_x += lw + 3
+        state["_conf_rects"] = conf_rects
+        y += lh + 10
 
         insights = state.get("insights", [])
         if not insights:
@@ -419,6 +448,11 @@ class Renderer:
                 insights = [ins for ins in insights
                             if (isinstance(ins, dict) and ins.get("category") == active_filter
                                 and ins.get("confidence", 1) >= 5)]
+
+        # Filter by confidence level.
+        if conf_filter:
+            insights = [ins for ins in insights
+                        if (isinstance(ins, dict) and ins.get("confidence", 1) >= conf_filter)]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
@@ -491,7 +525,7 @@ class Renderer:
                     x_cursor += cat_w + 4
                 # +N confidence.
                 conf_text = f"+{conf_val - 1}"
-                self.screen.blit(small_font.render(conf_text, True, TEXT_GOLD), (x_cursor, y + 3))
+                self.screen.blit(small_font.render(conf_text, True, (255, 255, 255)), (x_cursor, y + 3))
                 x_cursor += small_font.size(conf_text)[0] + 4
 
             y += 18

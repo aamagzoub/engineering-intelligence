@@ -134,6 +134,7 @@ class WistDiscoveryWatcher:
         # Insight category filter (None = show all).
         self._insight_filter = None
         self._insight_chip_rects = {}  # {category: pygame.Rect} — set by renderer.
+        self._confidence_filter = None  # Minimum confidence to show (None = no filter).
 
         # Background training.
         self._bg_active = False
@@ -601,6 +602,15 @@ class WistDiscoveryWatcher:
                             self._insight_filter = cat  # Toggle on.
                         self._insight_scroll_offset = 0
                         break
+                # Check confidence filter clicks.
+                for level, rect in getattr(self, '_conf_rects', {}).items():
+                    if rect.collidepoint(event.pos):
+                        if self._confidence_filter == level:
+                            self._confidence_filter = None
+                        else:
+                            self._confidence_filter = level
+                        self._insight_scroll_offset = 0
+                        break
             elif event.type == pygame.MOUSEWHEEL:
                 mx, _my = pygame.mouse.get_pos()
                 right_panel_x = SCREEN_WIDTH - 290
@@ -694,6 +704,7 @@ class WistDiscoveryWatcher:
             "milestones_list": self._milestones_list,
             "insights": self._cached_insights,
             "insight_filter": self._insight_filter,
+            "confidence_filter": self._confidence_filter,
             "disc_scroll": self._disc_scroll_offset,
             "insight_scroll": self._insight_scroll_offset,
         }
@@ -702,6 +713,7 @@ class WistDiscoveryWatcher:
 
         # Capture chip rects from renderer for click detection.
         self._insight_chip_rects = render_state.get("_chip_rects", {})
+        self._conf_rects = render_state.get("_conf_rects", {})
 
 
 def main():
