@@ -163,13 +163,13 @@ class Renderer:
     # ─── Buttons ────────────────────────────────────────────────────────────────
 
     def _render_mode_btn(self, paused):
-        """Stop/Resume button + Reset button centered, with labels below."""
-        # Both buttons on one line, centered in header.
+        """Stop/Resume + Reset buttons above the scoreboard on the right side."""
+        px = SCREEN_WIDTH - 270
         btn_w, btn_h = 70, 22
         reset_w, reset_h = 90, 22
         total_w = btn_w + 10 + reset_w
-        start_x = (SCREEN_WIDTH - total_w) // 2
-        btn_y = 10
+        start_x = px + (260 - total_w) // 2
+        btn_y = 8
 
         # Stop/Resume button.
         btn = pygame.Rect(start_x, btn_y, btn_w, btn_h)
@@ -188,11 +188,11 @@ class Renderer:
         t2 = self._btn_font_bold.render("RESET Brain", True, (255, 230, 50))
         self.screen.blit(t2, t2.get_rect(center=reset_btn.center))
 
-        # Labels below buttons, centered.
+        # Labels below buttons.
         label_text = "SPACE: pause  |  ESC: quit"
         label_surf = self.fonts["small"].render(label_text, True, TEXT_DIM)
-        label_x = (SCREEN_WIDTH - label_surf.get_width()) // 2
-        self.screen.blit(label_surf, (label_x, btn_y + btn_h + 4))
+        label_x = px + (260 - label_surf.get_width()) // 2
+        self.screen.blit(label_surf, (label_x, btn_y + btn_h + 3))
 
         return btn, reset_btn
 
@@ -332,6 +332,7 @@ class Renderer:
 
     # Category colors for badges.
     _CAT_COLORS = {
+        "new": (220, 160, 0),
         "bidding": (60, 130, 200),
         "trump": (200, 80, 80),
         "timing": (180, 150, 50),
@@ -354,7 +355,7 @@ class Renderer:
 
         # Title with gap after.
         self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
-        y += 24  # Extra gap after title before chips.
+        y += 28  # Gap after title before chips.
 
         # Category filter chips — after title, tight spacing.
         active_filter = state.get("insight_filter", None)
@@ -390,7 +391,7 @@ class Renderer:
             chip_x += cw + 3
 
         state["_chip_rects"] = chip_rects
-        y = chip_y + ch + 10  # Extra gap after chips.
+        y = chip_y + ch + 14  # Gap after chips before insights list.
 
         insights = state.get("insights", [])
         if not insights:
@@ -400,8 +401,13 @@ class Renderer:
 
         # Filter insights by category if a filter is active.
         if active_filter:
-            insights = [ins for ins in insights
-                        if (isinstance(ins, dict) and ins.get("category") == active_filter)]
+            if active_filter == "new":
+                insights = [ins for ins in insights
+                            if (isinstance(ins, dict) and ins.get("confidence", 1) <= 1)]
+            else:
+                insights = [ins for ins in insights
+                            if (isinstance(ins, dict) and ins.get("category") == active_filter
+                                and ins.get("confidence", 1) >= 2)]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
@@ -447,21 +453,12 @@ class Renderer:
             self.screen.blit(num_font.render(num_str, True, num_color), (x_cursor, y))
             x_cursor += num_font.size(num_str)[0]
 
-            # Category badge.
-            if category:
-                cat_color = self._CAT_COLORS.get(category, (120, 120, 120))
-                cat_text = category.upper()
-                cat_surf = small_font.render(cat_text, True, (255, 255, 255))
-                cat_w = cat_surf.get_width() + 8
-                cat_h = cat_surf.get_height() + 4
-                badge_rect = pygame.Rect(x_cursor, y + (18 - cat_h) // 2, cat_w, cat_h)
-                pygame.draw.rect(self.screen, cat_color, badge_rect, border_radius=3)
-                self.screen.blit(cat_surf, (x_cursor + 4, badge_rect.y + 2))
-                x_cursor += cat_w + 4
-
-            # NEW! badge — only for brand new discoveries (confidence == 1).
-            is_new = (isinstance(ins, dict) and ins.get("confidence", 1) == 1)
-            if is_new:
+            # Category badge OR NEW badge (not both).
+            # confidence 0 or 1 (first detection): show NEW badge only.
+            # confidence 2+ (confirmed): show category badge + confidence number.
+            conf_val = ins.get("confidence", 1) if isinstance(ins, dict) else 1
+            if conf_val <= 1:
+                # NEW badge — first ever detection.
                 new_surf = small_font.render("NEW", True, (0, 0, 0))
                 new_w = new_surf.get_width() + 8
                 new_h = new_surf.get_height() + 4
@@ -469,11 +466,22 @@ class Renderer:
                 pygame.draw.rect(self.screen, (220, 160, 0), new_rect, border_radius=3)
                 self.screen.blit(new_surf, (x_cursor + 4, new_rect.y + 2))
                 x_cursor += new_w + 4
+            else:
+                # Category badge.
+                if category:
+                    cat_color = self._CAT_COLORS.get(category, (120, 120, 120))
+                    cat_text = category.upper()
+                    cat_surf = small_font.render(cat_text, True, (255, 255, 255))
+                    cat_w = cat_surf.get_width() + 8
+                    cat_h = cat_surf.get_height() + 4
+                    badge_rect = pygame.Rect(x_cursor, y + (18 - cat_h) // 2, cat_w, cat_h)
+                    pygame.draw.rect(self.screen, cat_color, badge_rect, border_radius=3)
+                    self.screen.blit(cat_surf, (x_cursor + 4, badge_rect.y + 2))
+                    x_cursor += cat_w + 4
 
-            # Confidence as +N number.
-            conf_val = ins.get("confidence", 1) if isinstance(ins, dict) else 1
-            if isinstance(conf_val, int) and conf_val > 0:
-                conf_text = f"+{conf_val}"
+            # Confidence number (only for confirmed: 2+).
+            if conf_val >= 2:
+                conf_text = f"+{conf_val - 1}"
                 self.screen.blit(small_font.render(conf_text, True, TEXT_GOLD), (x_cursor, y + 3))
                 x_cursor += small_font.size(conf_text)[0] + 4
 
