@@ -262,7 +262,7 @@ class Renderer:
                 "Play non-trump first trick if it bid",
                 "Bid less than 7 or more than 13",
                 "Bid equal/less than current highest",
-                "Bid more than longest suit + 3",
+                "Bid lower than longest valid suit + 3",
                 "Open higher than 11",
                 "Pass on 3rd re-deal if special role",
                 "Use a suit with 8+ cards as trump",
