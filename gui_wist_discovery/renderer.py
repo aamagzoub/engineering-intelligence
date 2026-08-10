@@ -230,49 +230,48 @@ class Renderer:
         # Full black background.
         self.screen.fill((0, 0, 0))
 
-        # Use medium font for body (15px) and large for headers.
-        title_font = self.fonts["large"]
-        body_font = self.fonts["medium"]
-        line_h = 18
-        header_h = 26
-        gap_h = 6
+        # Use larger non-bold font for body, bold for headers only.
+        title_font = self.fonts["title"]
+        if not hasattr(self, '_info_body_font'):
+            self._info_body_font = pygame.font.SysFont("Segoe UI", 17)
+        body_font = self._info_body_font
+        line_h = 24
+        header_h = 32
+        gap_h = 4
 
         # Column content.
         col_data = [
-            ("1. The Environment", [
-                "There are 4 players in a fixed order.",
-                "Each player gets 13 cards at the start.",
-                "The 4 players are split into 2 teams of 2.",
-                "One player each round has a special role.",
-                "Before playing cards, there is a bidding phase.",
-                "After bidding, players take turns playing one card each, 4 cards per trick.",
-                "There are 13 tricks per round.",
-                "After 13 tricks, a score is calculated.",
-                "A game has 5 rounds.",
-                "The first team to reach 25 points wins.",
-                "If one team wins all 13 tricks, the game ends immediately.",
-                "Cards are dealt randomly each round.",
-                "The special role rotates each round.",
+            ("The Environment", [
+                "4 players in a fixed order",
+                "Each player gets 13 cards",
+                "4 players split into 2 teams of 2",
+                "One player each round has a special role",
+                "Before playing, there is a bidding phase",
+                "Players play one card each, 4 per trick",
+                "There are 13 tricks per round",
+                "After 13 tricks, a score is calculated",
+                "A game has 5 rounds",
+                "First team to reach 25 points wins",
+                "All 13 tricks won = game ends immediately",
+                "Cards are dealt randomly each round",
+                "The special role rotates each round",
             ]),
-            ("2. What the Agent Cannot Do", [
-                "Play a card not in its hand.",
-                "Play a card from a different suit when it has cards in the led suit.",
-                "Play a non-trump card on the first trick if it won the bid.",
-                "Bid less than 7 or more than 13.",
-                "Bid less than or equal to the current highest bid (unless special role, who can match).",
-                "Bid higher than its longest valid suit count plus 3.",
-                "Open with a bid higher than 11.",
-                "Pass on the 3rd re-deal if it has the special role.",
-                "Use a suit with 8 or more cards as trump.",
+            ("What the Agent Cannot Do", [
+                "Play a card not in its hand",
+                "Play off-suit when it has the led suit",
+                "Play non-trump first trick if it bid",
+                "Bid less than 7 or more than 13",
+                "Bid equal/less than current highest",
+                "Bid more than longest suit + 3",
+                "Open higher than 11",
+                "Pass on 3rd re-deal if special role",
+                "Use a suit with 8+ cards as trump",
             ]),
-            ("3. What the Agent Knows", [
-                "It has cards, each with a number (2-14) and a suit (0-3).",
-                "Each turn, some cards are playable and some are not.",
-                "After 13 tricks, it gets one number (positive or negative).",
-                "During bidding, it can choose a number or pass.",
-                "",
-                "Everything else — trump power, suit following, bidding strategy, "
-                "partnership coordination — must be discovered from that single number.",
+            ("What the Agent Knows", [
+                "Cards with a number (2-14) and suit (0-3)",
+                "Each turn, some cards are playable",
+                "The 13-tricks shota score (+/-)",
+                "During bidding, choose a number or pass",
             ]),
         ]
 
@@ -295,19 +294,29 @@ class Renderer:
             x = col_x[col_idx]
             y = start_y
 
-            # Header.
-            self.screen.blit(title_font.render(title, True, TEXT_GOLD), (x, y))
+            # Header — centered in column.
+            title_surf = title_font.render(title, True, TEXT_GOLD)
+            title_x = x + (col_w - title_surf.get_width()) // 2
+            self.screen.blit(title_surf, (title_x, y))
             y += header_h
 
-            # Body lines.
+            # Body lines — each on one line, centered under title.
             for line in lines:
                 if not line:
                     y += 10
                     continue
-                y = self._wrap_text(body_font, line, x, y, col_w, TEXT_WHITE, SCREEN_HEIGHT - 40)
-                y += gap_h
+                if y > SCREEN_HEIGHT - 40:
+                    break
+                line_surf = body_font.render(line, True, TEXT_WHITE)
+                lx = x + (col_w - line_surf.get_width()) // 2
+                self.screen.blit(line_surf, (lx, y))
+                y += line_h + gap_h
 
-        # "Click anywhere to close" centered beneath all columns.
+        # "Everything else..." and "Click anywhere to close" centered at the bottom.
+        motto_surf = body_font.render("Everything else must be observed, discovered, learned and applied.", True, TEXT_WHITE)
+        motto_x = (SCREEN_WIDTH - motto_surf.get_width()) // 2
+        self.screen.blit(motto_surf, (motto_x, SCREEN_HEIGHT - 55))
+
         close_surf = body_font.render("Click anywhere to close", True, TEXT_DIM)
         close_x = (SCREEN_WIDTH - close_surf.get_width()) // 2
         self.screen.blit(close_surf, (close_x, SCREEN_HEIGHT - 30))
