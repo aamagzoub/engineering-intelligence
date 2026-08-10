@@ -225,78 +225,89 @@ class Renderer:
 
     # ─── Info Overlay ──────────────────────────────────────────────────────────
 
-    _INFO_TEXT = [
-        ("1. The Environment", True),
-        ("", False),
-        ("There are 4 players in a fixed order.", False),
-        ("Each player gets 13 cards at the start.", False),
-        ("The 4 players are split into 2 teams of 2.", False),
-        ("One player each round has a special role.", False),
-        ("Before playing cards, there is a bidding phase.", False),
-        ("After bidding, players take turns playing one card each, 4 cards per trick.", False),
-        ("There are 13 tricks per round.", False),
-        ("After 13 tricks, a score is calculated.", False),
-        ("A game has 5 rounds.", False),
-        ("The first team to reach 25 points wins.", False),
-        ("If one team wins all 13 tricks, the game ends immediately.", False),
-        ("Cards are dealt randomly each round.", False),
-        ("The special role rotates each round.", False),
-        ("", False),
-        ("2. What the Agent Cannot Do", True),
-        ("", False),
-        ("Play a card not in its hand.", False),
-        ("Play a card from a different suit when it has cards in the led suit.", False),
-        ("Play a non-trump card on the first trick if it won the bid.", False),
-        ("Bid less than 7 or more than 13.", False),
-        ("Bid less than or equal to the current highest bid (unless special role, who can match).", False),
-        ("Bid higher than its longest valid suit count plus 3.", False),
-        ("Open with a bid higher than 11.", False),
-        ("Pass on the 3rd re-deal if it has the special role.", False),
-        ("Use a suit with 8 or more cards as trump.", False),
-        ("", False),
-        ("3. What the Agent Knows", True),
-        ("", False),
-        ("It has cards, each with a number (2-14) and a suit (0-3).", False),
-        ("Each turn, some cards are playable and some are not.", False),
-        ("After 13 tricks, it gets one number (positive or negative).", False),
-        ("During bidding, it can choose a number or pass.", False),
-        ("", False),
-        ("Everything else — trump power, suit following, bidding strategy,", False),
-        ("partnership coordination — must be discovered from that single number.", False),
-        ("", False),
-        ("Click anywhere to close.", False),
-    ]
-
     def _render_info_overlay(self, left_panel_w):
-        """Render the agent info overlay centered on the table area."""
-        # Semi-transparent dark overlay.
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))
-        self.screen.blit(overlay, (0, 0))
+        """Render the agent info overlay — 3 columns, readable font, full black background."""
+        # Full black background.
+        self.screen.fill((0, 0, 0))
 
-        # Content area — centered in the table region.
-        content_x = left_panel_w + 30
-        content_w = SCREEN_WIDTH - left_panel_w - 300
-        y = 50
-
+        # Use medium font for body (15px) and large for headers.
         title_font = self.fonts["large"]
-        body_font = self.fonts["small"]
+        body_font = self.fonts["medium"]
 
-        for text, is_header in self._INFO_TEXT:
-            if not text:
-                y += 8
+        # 3 columns layout.
+        margin = 20
+        gap = 15
+        col_w = (SCREEN_WIDTH - 2 * margin - 2 * gap) // 3
+
+        col_x = [margin, margin + col_w + gap, margin + 2 * (col_w + gap)]
+        start_y = 30
+
+        # Column 1: The Environment.
+        y = start_y
+        self.screen.blit(title_font.render("1. The Environment", True, TEXT_GOLD), (col_x[0], y))
+        y += 26
+        env_lines = [
+            "There are 4 players in a fixed order.",
+            "Each player gets 13 cards at the start.",
+            "The 4 players are split into 2 teams of 2.",
+            "One player each round has a special role.",
+            "Before playing cards, there is a bidding phase.",
+            "After bidding, players take turns playing one card each, 4 cards per trick.",
+            "There are 13 tricks per round.",
+            "After 13 tricks, a score is calculated.",
+            "A game has 5 rounds.",
+            "The first team to reach 25 points wins.",
+            "If one team wins all 13 tricks, the game ends immediately.",
+            "Cards are dealt randomly each round.",
+            "The special role rotates each round.",
+        ]
+        for line in env_lines:
+            y = self._wrap_text(body_font, line, col_x[0], y, col_w, TEXT_WHITE, SCREEN_HEIGHT - 40)
+            y += 4
+
+        # Column 2: What the Agent Cannot Do.
+        y = start_y
+        self.screen.blit(title_font.render("2. What the Agent Cannot Do", True, TEXT_GOLD), (col_x[1], y))
+        y += 26
+        cannot_lines = [
+            "Play a card not in its hand.",
+            "Play a card from a different suit when it has cards in the led suit.",
+            "Play a non-trump card on the first trick if it won the bid.",
+            "Bid less than 7 or more than 13.",
+            "Bid less than or equal to the current highest bid (unless special role, who can match).",
+            "Bid higher than its longest valid suit count plus 3.",
+            "Open with a bid higher than 11.",
+            "Pass on the 3rd re-deal if it has the special role.",
+            "Use a suit with 8 or more cards as trump.",
+        ]
+        for line in cannot_lines:
+            y = self._wrap_text(body_font, line, col_x[1], y, col_w, TEXT_WHITE, SCREEN_HEIGHT - 40)
+            y += 4
+
+        # Column 3: What the Agent Knows.
+        y = start_y
+        self.screen.blit(title_font.render("3. What the Agent Knows", True, TEXT_GOLD), (col_x[2], y))
+        y += 26
+        knows_lines = [
+            "It has cards, each with a number (2-14) and a suit (0-3).",
+            "Each turn, some cards are playable and some are not.",
+            "After 13 tricks, it gets one number (positive or negative).",
+            "During bidding, it can choose a number or pass.",
+            "",
+            "Everything else — trump power, suit following, bidding strategy, "
+            "partnership coordination — must be discovered from that single number.",
+        ]
+        for line in knows_lines:
+            if not line:
+                y += 10
                 continue
-            if is_header:
-                surf = title_font.render(text, True, TEXT_GOLD)
-                self.screen.blit(surf, (content_x, y))
-                y += 22
-            else:
-                # Word wrap.
-                y = self._wrap_text(body_font, text, content_x, y, content_w, TEXT_WHITE, SCREEN_HEIGHT - 20)
-                y += 2
+            y = self._wrap_text(body_font, line, col_x[2], y, col_w, TEXT_WHITE, SCREEN_HEIGHT - 40)
+            y += 4
 
-            if y > SCREEN_HEIGHT - 30:
-                break
+        # "Click anywhere to close" centered at the bottom.
+        close_surf = body_font.render("Click anywhere to close", True, TEXT_DIM)
+        close_x = (SCREEN_WIDTH - close_surf.get_width()) // 2
+        self.screen.blit(close_surf, (close_x, SCREEN_HEIGHT - 25))
 
     # ─── Right Panel (Scoreboard + Discoveries) ────────────────────────────────
 
