@@ -57,40 +57,39 @@ _ACTION_DESC = {
 }
 
 def _describe_action(key: str) -> str:
-    """Describe an action key as a simple play instruction."""
+    """Describe an action key as a simple play instruction in plain language."""
     if len(key) < 3:
         return "play a card"
     tier, follows, trump = key[0], key[1], key[2]
     
-    # Card range description.
     card_desc = {"A": "Ace", "K": "King", "Q": "Queen", "J": "Jack", "M": "a 9 or 10", "L": "a 7 or 8", "X": "your weakest card (2-6)"}.get(tier, "a card")
     
     if trump == "T" and follows == "O":
         if tier in ("L", "X"):
-            return "trump with your smallest trump"
+            return "play your smallest trump"
         elif tier in ("A", "K"):
-            return "trump with your highest trump"
+            return "play your highest trump"
         else:
-            return f"trump with {card_desc}"
+            return f"play {card_desc} of trump"
     elif trump == "T" and follows == "F":
         if tier in ("A", "K"):
-            return f"follow with your {card_desc} of trump"
+            return f"play your {card_desc} of trump"
         elif tier in ("L", "X"):
-            return "follow with your smallest trump"
+            return "play your smallest trump"
         else:
-            return f"follow trump with {card_desc}"
+            return f"play {card_desc} of trump"
     elif follows == "O":
         if tier in ("L", "X"):
-            return "discard your weakest card from another suit"
+            return "play your weakest card from another suit"
         else:
-            return f"discard your {card_desc}"
+            return f"play your {card_desc}"
     else:
         if tier in ("L", "X"):
-            return "follow with your lowest card"
+            return "play your lowest card"
         elif tier in ("A", "K"):
-            return f"follow with your {card_desc}"
+            return f"play your {card_desc}"
         else:
-            return f"follow with {card_desc}"
+            return f"play {card_desc}"
 
 
 def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
@@ -119,11 +118,11 @@ def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
         finding = f"{pos_desc.capitalize()}, playing your lowest card scores higher than playing Kings or Queens"
         implication = "Spending high cards on tricks you cannot win wastes them, and low cards lose nothing you need"
     elif best_tier >= 4 and best_follows and td == "B":
-        finding = f"When your team is behind and {pos_desc}, high cards played immediately outscore saving them"
+        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, high cards played immediately outscore saving them"
         implication = "When losing, waiting to use strong cards means they might never get used at all"
     elif best_void:
-        finding = f"{pos_desc.capitalize()}, playing cards that help you become void scores higher than keeping balanced"
-        implication = "Becoming void in a suit creates a permanent trumping opportunity every time that suit is played"
+        finding = f"{pos_desc.capitalize()}, playing cards that remove all cards from one suit scores higher than keeping cards spread across all suits"
+        implication = "Once you have zero cards in a suit, every time that suit is played you can use trump to win it"
     elif best_trump and best_tier >= 4:
         finding = f"{pos_desc.capitalize()}, your highest trump outscores lower trumps significantly"
         implication = "Lower trumps risk being beaten by an opponent's higher trump, but top trump guarantees the win"
@@ -134,10 +133,10 @@ def _compose_play_insight(pos, phase, td, best_key, worst_key, spread) -> str:
         finding = f"{pos_desc.capitalize()}, {best_action} outscores {worst_action}"
         implication = "High cards attract opposition trumps from void opponents, but lower cards slip through uncontested"
     elif td == "W":
-        finding = f"When your team is ahead and {pos_desc}, conservative plays outscore aggressive ones"
+        finding = f"When your team has won more tricks than the opponents and {pos_desc}, conservative plays outscore aggressive ones"
         implication = "Protecting a lead is safer than extending it, and risks only help the losing team"
     elif td == "B":
-        finding = f"When your team is behind and {pos_desc}, aggressive plays outscore conservative ones"
+        finding = f"When your team has won fewer tricks than the opponents and {pos_desc}, aggressive plays outscore conservative ones"
         implication = "Safe play when losing just means losing slowly, and bold moves can change the momentum"
     else:
         finding = f"{pos_desc.capitalize()}, {best_action} consistently outscores the alternatives"

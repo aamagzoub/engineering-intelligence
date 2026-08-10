@@ -403,11 +403,11 @@ class Renderer:
         if active_filter:
             if active_filter == "new":
                 insights = [ins for ins in insights
-                            if (isinstance(ins, dict) and ins.get("confidence", 1) <= 1)]
+                            if (isinstance(ins, dict) and ins.get("confidence", 1) < 5)]
             else:
                 insights = [ins for ins in insights
                             if (isinstance(ins, dict) and ins.get("category") == active_filter
-                                and ins.get("confidence", 1) >= 2)]
+                                and ins.get("confidence", 1) >= 5)]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
@@ -453,12 +453,12 @@ class Renderer:
             self.screen.blit(num_font.render(num_str, True, num_color), (x_cursor, y))
             x_cursor += num_font.size(num_str)[0]
 
-            # Category badge OR NEW badge (not both).
-            # confidence 0 or 1 (first detection): show NEW badge only.
-            # confidence 2+ (confirmed): show category badge + confidence number.
+            # Badge logic:
+            # Confidence 1-4: NEW badge only (no category, no +N)
+            # Confidence 5+: Category badge + +N (no NEW)
             conf_val = ins.get("confidence", 1) if isinstance(ins, dict) else 1
-            if conf_val <= 1:
-                # NEW badge — first ever detection.
+            if conf_val < 5:
+                # NEW badge only.
                 new_surf = small_font.render("NEW", True, (0, 0, 0))
                 new_w = new_surf.get_width() + 8
                 new_h = new_surf.get_height() + 4
@@ -478,9 +478,7 @@ class Renderer:
                     pygame.draw.rect(self.screen, cat_color, badge_rect, border_radius=3)
                     self.screen.blit(cat_surf, (x_cursor + 4, badge_rect.y + 2))
                     x_cursor += cat_w + 4
-
-            # Confidence number (only for confirmed: 2+).
-            if conf_val >= 2:
+                # +N confidence.
                 conf_text = f"+{conf_val - 1}"
                 self.screen.blit(small_font.render(conf_text, True, TEXT_GOLD), (x_cursor, y + 3))
                 x_cursor += small_font.size(conf_text)[0] + 4
