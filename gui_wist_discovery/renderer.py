@@ -194,11 +194,10 @@ class Renderer:
         t2 = self._btn_font_bold.render("RESET Brain", True, (255, 230, 50))
         self.screen.blit(t2, t2.get_rect(center=reset_btn.center))
 
-        # Labels below buttons.
+        # Labels at bottom-right, aligned with left edge of milestones box.
         label_text = "SPACE: pause  |  ESC: quit"
         label_surf = self.fonts["small"].render(label_text, True, TEXT_WHITE)
-        label_x = px + (260 - label_surf.get_width()) // 2
-        self.screen.blit(label_surf, (label_x, btn_y + btn_h + 3))
+        self.screen.blit(label_surf, (px, SCREEN_HEIGHT - 18))
 
         return btn, reset_btn
 
@@ -214,7 +213,7 @@ class Renderer:
         panel_w = 260
 
         # Scoreboard box.
-        score_h = 175
+        score_h = 200
         score_rect = pygame.Rect(px, 60, panel_w, score_h)
         pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
@@ -257,11 +256,10 @@ class Renderer:
 
         y += 8
         stats_lines = [
-            f"Team 1: {state.get('team1_wins', 0)} games won",
-            f"Team 2: {state.get('team2_wins', 0)} games won",
-            f"Seeks: {state['seeks_achieved']}",
-            f"Bids met: {state['bids_met']}/{state['bids_met'] + state['bids_failed']}",
-            f"Epsilon: {state['epsilon']:.3f}  |  Stage: {state['opponent_stage']}",
+            f"Stage: {state['opponent_stage']}",
+            f"Games won: {state.get('team1_wins', 0)}/{state.get('team2_wins', 0)}",
+            f"Bids met: {state.get('bids_met_t1', 0)}/{state.get('bids_met_t2', 0)}",
+            f"Seeks: {state.get('seeks_t1', 0)}/{state.get('seeks_t2', 0)}",
         ]
         for line in stats_lines:
             self.screen.blit(self.fonts["medium"].render(line, True, TEXT_LIGHT), (px + 10, y))

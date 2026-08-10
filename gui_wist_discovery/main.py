@@ -115,6 +115,10 @@ class WistDiscoveryWatcher:
         self._score_at_shota3 = None
         self._team1_wins = 0
         self._team2_wins = 0
+        self._bids_met_t1 = 0
+        self._bids_met_t2 = 0
+        self._seeks_t1 = 0
+        self._seeks_t2 = 0
 
         # Auto-discovery stats.
         self._auto_stats = create_auto_stats()
@@ -248,14 +252,21 @@ class WistDiscoveryWatcher:
         if res.playing_team_id == 0:
             if bid_met:
                 self.bids_met += 1
+                self._bids_met_t1 += 1
                 self._bids_met_streak += 1
             else:
                 self.bids_failed += 1
                 self._bids_met_streak = 0
             self._bid_history.append(res.winning_bid_value)
+        else:
+            if bid_met:
+                self._bids_met_t2 += 1
 
-        if tt[0] == 13 or tt[1] == 13:
+        if tt[0] == 13:
             self.seeks_achieved += 1
+            self._seeks_t1 += 1
+        if tt[1] == 13:
+            self._seeks_t2 += 1
 
         if s0 > self._best_score:
             self._best_score = s0
@@ -660,6 +671,10 @@ class WistDiscoveryWatcher:
         self._best_score = -999
         self._team1_wins = 0
         self._team2_wins = 0
+        self._bids_met_t1 = 0
+        self._bids_met_t2 = 0
+        self._seeks_t1 = 0
+        self._seeks_t2 = 0
 
         self._accumulated_compute = 0.0
         self._app_start_time = time.monotonic()
@@ -709,6 +724,10 @@ class WistDiscoveryWatcher:
             "bids_failed": self.bids_failed,
             "team1_wins": self._team1_wins,
             "team2_wins": self._team2_wins,
+            "bids_met_t1": self._bids_met_t1,
+            "bids_met_t2": self._bids_met_t2,
+            "seeks_t1": self._seeks_t1 + self._auto_stats.get("total_seeks", 0),
+            "seeks_t2": self._seeks_t2,
             "epsilon": self.discovery.epsilon,
             "opponent_stage": self._opponent_stage,
             "milestones_list": self._milestones_list,
