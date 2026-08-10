@@ -599,55 +599,71 @@ def _mine_partnership_patterns(play_items, episodes) -> list:
 
 def _dedup_merge(insights) -> list:
     """
-    Merge similar insights into one. If insights describe the same
-    position + same type of action (high card, low card, trump, void),
-    merge them regardless of specific rank.
+    Aggressively merge insights by CORE IDEA — ignoring position.
+    One insight per concept, regardless of which seat it applies to.
     """
-    seen = {}  # signature -> insight
+    seen = {}
 
     for ins in insights:
-        text = ins.get("text", "")
+        text = ins.get("text", "").lower()
         cat = ins.get("category", "")
-        words = text.lower().split()
 
-        # Build structural signature: position + action TYPE (not specific rank).
+        # Extract CORE IDEA — ignore position details entirely.
         sig_parts = [cat]
 
-        # Position keywords.
-        if "first to play" in text.lower():
-            sig_parts.append("pos0")
-        elif "second player" in text.lower():
-            sig_parts.append("pos1")
-        elif "partner" in text.lower() and "follow" in text.lower():
-            sig_parts.append("pos2")
-        elif "last player" in text.lower():
-            sig_parts.append("pos3")
-
-        # Action TYPE (generalized, not specific rank).
-        if "trump" in text.lower() and ("smallest" in text.lower() or "weakest" in text.lower()):
-            sig_parts.append("trump_low")
-        elif "trump" in text.lower() and ("highest" in text.lower() or "ace" in text.lower() or "king" in text.lower()):
-            sig_parts.append("trump_high")
-        elif "trump" in text.lower():
-            sig_parts.append("trump")
-        elif any(w in text.lower() for w in ("ace", "king", "queen", "jack", "highest", "high card")):
-            sig_parts.append("high_card")
-        elif any(w in text.lower() for w in ("lowest", "weakest", "2-6", "7 or 8")):
-            sig_parts.append("low_card")
-        elif "void" in text.lower() or "remove all cards" in text.lower():
-            sig_parts.append("void")
-
-        # Game state.
-        if "fewer tricks" in text.lower() or "behind" in text.lower():
+        if "trump" in text and ("smallest" in text or "weakest" in text) and "non-trump" in text:
+            sig_parts.append("small_trump_wins")
+        elif "trump" in text and ("strongest" in text or "highest" in text):
+            sig_parts.append("high_trump")
+        elif "trump" in text and "non-trump" in text:
+            sig_parts.append("trump_beats_nontrump")
+        elif "void" in text or "remove all cards from one suit" in text or "become void" in text:
+            sig_parts.append("void_creation")
+        elif "strongest card" in text and "partner" not in text:
+            sig_parts.append("play_high")
+        elif ("lowest" in text or "weakest" in text) and "trump" not in text:
+            sig_parts.append("play_low")
+        elif "pass" in text and "defend" in text:
+            sig_parts.append("pass_defend")
+        elif "bid" in text and "bid" in cat:
+            if "5-card" in text:
+                sig_parts.append("bid_5card")
+            elif "6-card" in text:
+                sig_parts.append("bid_6card")
+            elif "7-card" in text:
+                sig_parts.append("bid_7card")
+            else:
+                sig_parts.append("bid_general")
+        elif "partner" in text and ("strongest" in text or "high" in text):
+            sig_parts.append("partner_high")
+        elif "partner" in text and ("lowest" in text or "low" in text):
+            sig_parts.append("partner_low")
+        elif "partner" in text and "trump" in text:
+            sig_parts.append("partner_trump")
+        elif "partner" in text:
+            sig_parts.append("partner_general")
+        elif "fewer tricks" in text:
             sig_parts.append("behind")
-        elif "more tricks" in text.lower() or "ahead" in text.lower():
+        elif "more tricks" in text:
             sig_parts.append("ahead")
+        elif "high cards" in text and ("length" in text or "doesn" in text):
+            sig_parts.append("high_cards_trap")
+        elif "low cards" in text and ("waste" not in text):
+            sig_parts.append("low_cards_value")
+        else:
+            words = [w for w in text.split() if len(w) > 4 and w not in
+                     ("when", "your", "that", "this", "from", "than", "with", "play")]
+            sig_parts.append("_".join(words[:3]))
 
         sig = " ".join(sig_parts)
 
         if sig in seen:
-            # Duplicate structure — increment confidence of existing.
-            seen[sig]["confidence"] = seen[sig].get("confidence", 1) + 1
+            existing_conf = seen[sig].get("confidence", 1)
+            new_conf = ins.get("confidence", 1)
+            if new_conf > existing_conf:
+                seen[sig] = ins
+            else:
+                seen[sig]["confidence"] = existing_conf + 1
         else:
             seen[sig] = ins
 
