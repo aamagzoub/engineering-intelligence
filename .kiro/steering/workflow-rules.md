@@ -15,10 +15,11 @@ These rules apply to ALL interactions in this workspace:
 
 ## Exe Versioning
 
-- Every "go do" creates NEW version-numbered exe files (e.g., v2.6.0, v2.7.0).
+- Every "go do" creates a NEW version WistDiscovery exe only.
+- Every "go do 2" creates NEW versions of BOTH WistDiscovery AND SudaneseWist exes.
 - Old versions stay in dist/ — never overwrite them.
-- Both `WistDiscovery.exe` and `SudaneseWist_vX.Y.Z.exe` are built.
-- A new `.spec` file is created for each new gameplay version.
+- A new `.spec` file is created for each new version.
+- Version format: x.y.z — patch (z) increments first, then minor (y), then major (x).
 
 ## Git Rules
 

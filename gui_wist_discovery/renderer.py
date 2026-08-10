@@ -362,6 +362,11 @@ class Renderer:
         self.screen.blit(self.fonts["large"].render("Strategic Insights", True, TEXT_GOLD), (15, y))
         y += 28  # Gap after title before chips.
 
+        # Font references used throughout.
+        small_font = self.fonts["small"]
+        body_font = self.fonts["medium"]
+        num_font = self.fonts["large"]
+
         # Category filter chips — after title, tight spacing.
         active_filter = state.get("insight_filter", None)
         chip_rects = {}
@@ -457,9 +462,6 @@ class Renderer:
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
         text_w = panel_w - 35
-        body_font = self.fonts["medium"]
-        small_font = self.fonts["small"]
-        num_font = self.fonts["large"]
 
         for i in range(insight_scroll, total):
             if y + 20 > panel_rect.bottom - 15:
