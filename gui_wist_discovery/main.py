@@ -115,19 +115,17 @@ class WistDiscoveryWatcher:
         self._total_paused_time = 0.0
         self._pause_start = None
 
-        # Stats.
-        self.shotas_played = 0
-        self.seeks_achieved = 0
-        self.bids_met = 0
-        self.bids_failed = 0
+        # Stats — loaded from session_stats (persist across close/open).
+        self.shotas_played = session_stats.get("shotas_played", 0)
+        self.seeks_achieved = session_stats.get("seeks_achieved", 0)
+        self.bids_met = session_stats.get("bids_met", 0)
+        self.bids_failed = session_stats.get("bids_failed", 0)
         self._wist_win_history = []
         self._last_score = None
-        self._best_score = -999
-        self._bids_met_streak = 0
+        self._best_score = session_stats.get("best_score", -999)
+        self._bids_met_streak = session_stats.get("bids_met_streak", 0)
         self._bid_history = []
         self._score_at_shota3 = None
-        # team1_wins, team2_wins, bids_met_t1/t2, seeks_t1/t2, opponent_stage
-        # are loaded from session_stats above — not reset here.
 
         # Auto-discovery stats.
         self._auto_stats = create_auto_stats()
@@ -621,6 +619,12 @@ class WistDiscoveryWatcher:
             "daks_t2": self._daks_t2,
             "shotas_won_t1": self._shotas_won_t1,
             "shotas_won_t2": self._shotas_won_t2,
+            "shotas_played": self.shotas_played,
+            "seeks_achieved": self.seeks_achieved,
+            "bids_met": self.bids_met,
+            "bids_failed": self.bids_failed,
+            "bids_met_streak": self._bids_met_streak,
+            "best_score": self._best_score,
         }
 
     # ─── Main Loop ──────────────────────────────────────────────────────────────
@@ -787,7 +791,7 @@ class WistDiscoveryWatcher:
             "team2_wins": self._team2_wins,
             "bids_met_t1": self._bids_met_t1,
             "bids_met_t2": self._bids_met_t2,
-            "seeks_t1": self._seeks_t1 + self._auto_stats.get("total_seeks", 0),
+            "seeks_t1": self._seeks_t1,
             "seeks_t2": self._seeks_t2,
             "daks_t1": self._daks_t1,
             "daks_t2": self._daks_t2,
