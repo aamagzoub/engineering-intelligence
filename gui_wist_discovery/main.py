@@ -91,11 +91,20 @@ class WistDiscoveryWatcher:
         self._event_log = []
 
         # Milestones.
-        achieved, milestones_list, accumulated_compute = load_milestones()
+        achieved, milestones_list, accumulated_compute, session_stats = load_milestones()
         self._milestones_achieved = achieved
         self._milestones_list = milestones_list
         self._accumulated_compute = accumulated_compute
         self._last_discovery_compute = None
+
+        # Restore session stats (persist across close/open).
+        self._team1_wins = session_stats.get("team1_wins", 0)
+        self._team2_wins = session_stats.get("team2_wins", 0)
+        self._bids_met_t1 = session_stats.get("bids_met_t1", 0)
+        self._bids_met_t2 = session_stats.get("bids_met_t2", 0)
+        self._seeks_t1 = session_stats.get("seeks_t1", 0)
+        self._seeks_t2 = session_stats.get("seeks_t2", 0)
+        self._opponent_stage = session_stats.get("opponent_stage", 1)
 
         # Timing.
         self._app_start_time = time.monotonic()
@@ -113,18 +122,14 @@ class WistDiscoveryWatcher:
         self._bids_met_streak = 0
         self._bid_history = []
         self._score_at_shota3 = None
-        self._team1_wins = 0
-        self._team2_wins = 0
-        self._bids_met_t1 = 0
-        self._bids_met_t2 = 0
-        self._seeks_t1 = 0
-        self._seeks_t2 = 0
+        # team1_wins, team2_wins, bids_met_t1/t2, seeks_t1/t2, opponent_stage
+        # are loaded from session_stats above — not reset here.
 
         # Auto-discovery stats.
         self._auto_stats = create_auto_stats()
 
         # Opponent curriculum.
-        self._opponent_stage = 1
+        # _opponent_stage is loaded from session_stats above.
         self._last_discovery_episode_for_stage = 0
         self._frozen_snapshot = None
         self._best_snapshot = None
@@ -530,7 +535,8 @@ class WistDiscoveryWatcher:
             try:
                 self.discovery.save(self.model_path)
                 save_milestones(self._milestones_achieved, self._milestones_list,
-                                self._accumulated_compute + self._get_compute_time())
+                                self._accumulated_compute + self._get_compute_time(),
+                                self._get_session_stats())
             except Exception:
                 pass
 
@@ -585,6 +591,18 @@ class WistDiscoveryWatcher:
             return f"{seconds / 60:.1f}m"
         return f"{seconds / 3600:.1f}h"
 
+    def _get_session_stats(self) -> dict:
+        """Build session stats dict for persistence."""
+        return {
+            "team1_wins": self._team1_wins,
+            "team2_wins": self._team2_wins,
+            "bids_met_t1": self._bids_met_t1,
+            "bids_met_t2": self._bids_met_t2,
+            "seeks_t1": self._seeks_t1,
+            "seeks_t2": self._seeks_t2,
+            "opponent_stage": self._opponent_stage,
+        }
+
     # ─── Main Loop ──────────────────────────────────────────────────────────────
 
     def run(self):
@@ -596,7 +614,8 @@ class WistDiscoveryWatcher:
 
         self.discovery.save(self.model_path)
         save_milestones(self._milestones_achieved, self._milestones_list,
-                        self._accumulated_compute + self._get_compute_time())
+                        self._accumulated_compute + self._get_compute_time(),
+                        self._get_session_stats())
         pygame.quit()
 
     def _handle_events(self):
@@ -693,7 +712,8 @@ class WistDiscoveryWatcher:
         self._pause_start = None
         self._last_discovery_compute = None
 
-        save_milestones(self._milestones_achieved, self._milestones_list, 0.0)
+        save_milestones(self._milestones_achieved, self._milestones_list, 0.0,
+                        self._get_session_stats())
         self._log("  BRAIN RESET -- starting from zero.")
 
     def _update(self):

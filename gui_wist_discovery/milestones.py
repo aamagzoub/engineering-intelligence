@@ -14,14 +14,16 @@ from collections import deque, Counter
 MILESTONES_PATH = "agents/wist_discovery/milestones.json"
 
 
-def save_milestones(achieved, milestones_list, compute_time):
-    """Persist milestones and compute time to disk."""
+def save_milestones(achieved, milestones_list, compute_time, session_stats=None):
+    """Persist milestones, compute time, and session stats to disk."""
     try:
         data = {
             "achieved": list(achieved),
             "list": milestones_list,
             "total_compute_sec": compute_time,
         }
+        if session_stats:
+            data["session_stats"] = session_stats
         with open(MILESTONES_PATH, "w") as f:
             json.dump(data, f)
     except Exception:
@@ -29,7 +31,7 @@ def save_milestones(achieved, milestones_list, compute_time):
 
 
 def load_milestones():
-    """Load previously saved milestones. Returns (achieved_set, milestones_list, compute_sec)."""
+    """Load previously saved milestones. Returns (achieved_set, milestones_list, compute_sec, session_stats)."""
     try:
         with open(MILESTONES_PATH, "r") as f:
             data = json.load(f)
@@ -38,9 +40,10 @@ def load_milestones():
             tuple(x) if isinstance(x, list) else x for x in data.get("list", [])
         ]
         compute_sec = data.get("total_compute_sec", 0.0)
-        return achieved, milestones_list, compute_sec
+        session_stats = data.get("session_stats", {})
+        return achieved, milestones_list, compute_sec, session_stats
     except (FileNotFoundError, Exception):
-        return set(), [], 0.0
+        return set(), [], 0.0, {}
 
 
 # ─── Milestone Detection ────────────────────────────────────────────────────────
