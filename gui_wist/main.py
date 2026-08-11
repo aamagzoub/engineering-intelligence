@@ -142,6 +142,13 @@ class WistApp:
             self._load_ai_model()
             return
 
+        # Dismiss AI model [X] button.
+        dismiss_rect = getattr(self, '_menu_dismiss_rect', None)
+        if dismiss_rect and dismiss_rect.collidepoint(pos):
+            self.game_screen._dismiss_discovery_model()
+            self._menu_dismiss_rect = None
+            return
+
         # How to Play link (text area).
         help_font = self.fonts["medium"]
         help_surf = help_font.render("How to Play", True, TEXT_LIGHT)
@@ -303,11 +310,43 @@ class WistApp:
             pygame.draw.rect(self.screen, (80, 160, 220), model_rect, width=1, border_radius=6)
         model_text = self.fonts["medium"].render("Load AI Model", True, TEXT_LIGHT)
         self.screen.blit(model_text, model_text.get_rect(center=model_rect.center))
+        # Show model status beneath button.
         if self.game_screen._ai_model_path:
             import os
             model_name = os.path.basename(self.game_screen._ai_model_path)
             loaded_surf = self.fonts["medium"].render(f"Loaded: {model_name[:25]}", True, TEXT_GREEN)
             self.screen.blit(loaded_surf, loaded_surf.get_rect(centerx=cx, y=208))
+        elif self.game_screen._ai_mode == "discovery":
+            ep = 0
+            if self.game_screen._ai_gameplay_agent:
+                ep = getattr(self.game_screen._ai_gameplay_agent, 'episodes_trained', 0)
+            if ep >= 1000000:
+                ep_str = f"{ep / 1000000:.1f}M"
+            elif ep >= 1000:
+                ep_str = f"{ep // 1000}K"
+            else:
+                ep_str = str(ep)
+            status_surf = self.fonts["medium"].render(f"AI-Brain is already Loaded (Expertise based on {ep_str} shotas)", True, (220, 180, 50))
+            status_rect = status_surf.get_rect(centerx=cx, y=208)
+            self.screen.blit(status_surf, status_rect)
+            # Dismiss button — small red circle with white X centered.
+            circle_r = 8
+            circle_x = status_rect.right + 12
+            circle_y = 208 + status_surf.get_height() // 2
+            pygame.draw.circle(self.screen, (180, 40, 40), (circle_x, circle_y), circle_r)
+            # Draw X as two crossing lines for perfect centering.
+            offset = 4
+            pygame.draw.line(self.screen, (255, 255, 255),
+                             (circle_x - offset, circle_y - offset),
+                             (circle_x + offset, circle_y + offset), 2)
+            pygame.draw.line(self.screen, (255, 255, 255),
+                             (circle_x + offset, circle_y - offset),
+                             (circle_x - offset, circle_y + offset), 2)
+            self._menu_dismiss_rect = pygame.Rect(circle_x - circle_r, circle_y - circle_r, circle_r * 2, circle_r * 2)
+        else:
+            status_surf = self.fonts["medium"].render("No model (Basic Rule-based AI)", True, (180, 180, 180))
+            self.screen.blit(status_surf, status_surf.get_rect(centerx=cx, y=208))
+            self._menu_dismiss_rect = None
 
         # Fanned cards.
         for i, card_surf in enumerate(self._menu_cards):
