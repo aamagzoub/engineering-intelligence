@@ -376,51 +376,48 @@ class WistDiscoveryAgent(Agent):
     def _act_bid(self, obs: BiddingObservation) -> Action:
         """Bid or pass — learned from reward only.
 
-        Bid rules:
-          Regular player:
-            min_bid = max(7, trump_count + 3)   [1-4 trump → 7, 5→8, 6→9, 7→10]
-            max_bid = 11 if opening bid, else 13
-            must exceed current highest bid if one exists
+        Correct bid rules:
+          - Min bid is always 7.
+          - Max bid is 11 for opening bid, 13 otherwise.
+          - Must exceed current highest bid (unless Sahib Al-Qabool, who can match).
+          - After winning bid, agent chooses trump suit where suit_count ≤ (bid - 3).
+          - Sahib Al-Qabool: no opening cap, can match current highest bid.
 
-          Sahib Al-Qabool:
-            min_bid (no one bid) = max(7, trump_count + 3)   [same as regular]
-            min_bid (someone bid, matching) = max(7, trump_count + 2)  [one card advantage]
-            max_bid = 13 always (no opening cap)
-            can match current highest bid (not required to exceed)
+        The constraint bid→trump is: chosen trump suit must have ≤ (bid_value - 3) cards.
+        The agent doesn't pick trump here — it's picked after winning (determine_trump_suit).
+        But the agent CAN'T bid if no valid trump suit exists for that bid level.
         """
         hand = obs.hand
         suit_counts = Counter(c.suit for c in hand)
 
-        # Valid trump suits: 1–7 cards (8+ = Dak, cannot be trump).
-        valid_trump_suits = [s for s, count in suit_counts.items() if 1 <= count <= 7]
-        if not valid_trump_suits:
+        # Check if bidding is possible at all (need at least one suit with 1-7 cards).
+        valid_suits = [s for s, count in suit_counts.items() if 1 <= count <= 7]
+        if not valid_suits:
             return PassAction(player_id=obs.player_id)
 
-        longest_trump_count = max(suit_counts[s] for s in valid_trump_suits)
+        # Determine which bid levels are possible given hand.
+        # For bid N, need a suit with ≤ (N-3) cards and ≤ 7 cards.
+        min_suit_count = min(suit_counts[s] for s in valid_suits)
 
-        # Min bid is driven by trump count (floor of what you can responsibly bid).
-        trump_floor = max(7, longest_trump_count + 3)  # 1-4 trump→7, 5→8, 6→9, 7→10
+        # Minimum bid = the lowest bid where we have a valid trump suit.
+        # bid - 3 >= min_suit_count  →  bid >= min_suit_count + 3
+        bid_floor = max(7, min_suit_count + 3)
 
         if obs.is_sahib_al_qabool:
-            # Max is always 13 for Qabool — no opening cap.
             max_bid = 13
             if obs.current_highest_bid:
-                # Matching advantage: Qabool's floor drops by 1 (trump+2 instead of trump+3).
-                match_floor = max(7, longest_trump_count + 2)
-                # Must bid at least the current highest (to match), and at least own floor.
-                min_bid = max(match_floor, obs.current_highest_bid)
+                # Qabool can match (not exceed).
+                min_bid = max(bid_floor, obs.current_highest_bid)
             else:
-                # All others passed — standard floor, free range up to 13.
-                min_bid = trump_floor
+                min_bid = bid_floor
         else:
-            # Regular player.
-            min_bid = trump_floor
+            min_bid = bid_floor
             if obs.is_opening_bid:
-                max_bid = 11           # Opening bid capped at 11.
+                max_bid = 11
             else:
-                max_bid = 13           # Not opening — can go up to 13.
+                max_bid = 13
             if obs.current_highest_bid:
-                min_bid = max(min_bid, obs.current_highest_bid + 1)  # Must exceed.
+                min_bid = max(min_bid, obs.current_highest_bid + 1)
 
         # Safety clamp.
         max_bid = min(max_bid, 13)

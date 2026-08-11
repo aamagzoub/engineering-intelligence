@@ -189,7 +189,7 @@ class WistGame:
                     f"Shota {shota_number}: Third pass-based Dak attempt. "
                     f"Forcing Sahib Al-Qabool (Player {self.sahib_al_qabool_id + 1}) to play."
                 )
-                trump = determine_trump_suit(self.players[self.sahib_al_qabool_id].hand)
+                trump = determine_trump_suit(self.players[self.sahib_al_qabool_id].hand, 7)
                 tasmiya_result = TasmiyaResult(
                     winning_bidder_id=self.sahib_al_qabool_id,
                     winning_bid_value=7,

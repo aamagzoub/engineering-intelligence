@@ -38,46 +38,60 @@ class TasmiyaResult:
             object.__setattr__(self, "bid_history", [])
 
 
-def determine_trump_suit(hand: list[Card]) -> Suit:
+def determine_trump_suit(hand: list[Card], bid_value: int = 7) -> Suit:
     """
     Determine the trump suit from a player's hand (AI heuristic).
 
-    The player can choose any suit as trump (as long as it has ≤7 cards).
-    As a strategy, the AI picks the longest suit (most cards = strongest trump).
+    The player can choose any suit as trump where suit_count ≤ (bid_value - 3).
+    As a strategy, the AI picks the longest valid suit (most cards = strongest trump).
+
+    Args:
+        hand: The player's cards.
+        bid_value: The bid level (7-13). Trump suit must have ≤ (bid - 3) cards.
     """
-
     suit_counts = Counter(card.suit for card in hand)
+    max_trump_len = bid_value - 3  # bid 7→4, bid 8→5, bid 9→6, bid 10→7
 
-    # Pick the longest suit as trump (AI strategy — not a rule requirement).
-    longest_suit = max(suit_counts, key=suit_counts.get)
+    # Valid trump suits: 1 to max_trump_len cards.
+    valid_suits = [s for s, count in suit_counts.items() if 1 <= count <= min(max_trump_len, 7)]
 
-    return longest_suit
+    if not valid_suits:
+        # Fallback: pick shortest suit that's ≤ 7.
+        valid_suits = [s for s, count in suit_counts.items() if 1 <= count <= 7]
+        if not valid_suits:
+            return list(suit_counts.keys())[0]
+
+    # Pick the longest valid suit as trump (AI heuristic — not a rule).
+    return max(valid_suits, key=lambda s: suit_counts[s])
 
 
 def max_bid_for_hand(hand: list[Card]) -> int:
     """
-    Determine the minimum bid floor for a hand (used to check if bidding is possible).
+    Determine the maximum bid possible for a hand.
 
     Rules:
-    - Trump suit must have 1–7 cards (8+ = Dak, cannot bid).
-    - Min bid = max(7, trump_count + 3):
-        1–4 cards → min 7
-        5 cards   → min 8
-        6 cards   → min 9
-        7 cards   → min 10
-    - Max bid = 11 (opening) or 13 (not opening) — always higher than the floor.
+    - Min bid is always 7.
+    - Trump suit must have ≤ (bid - 3) cards and ≤ 7 cards.
+    - So: bid 7 needs a suit ≤ 4, bid 8 needs ≤ 5, etc.
+    - If no suit has 1-4 cards, can't bid 7. If no suit has 1-5, can't bid 8. Etc.
+    - Returns 0 if cannot bid at all (all suits 8+ = Dak).
 
-    Returns the minimum bid floor based on longest valid trump suit.
-    Returns 0 if no valid trump suit exists (all suits 8+ = Dak).
+    Actually: any hand with at least one suit of 1-7 cards can bid 7 (since 7-3=4,
+    and any suit ≤ 4 works). If shortest valid suit is 5, min bid is 8, etc.
+
+    Returns the MINIMUM bid the hand can make (floor).
+    Returns 0 if no valid trump suit exists (Dak).
     """
     suit_counts = Counter(card.suit for card in hand)
-    valid_counts = [c for c in suit_counts.values() if 1 <= c <= 7]
+    valid_counts = sorted([c for c in suit_counts.values() if 1 <= c <= 7])
 
     if not valid_counts:
         return 0  # All suits have 8+ cards — Dak.
 
-    longest_valid = max(valid_counts)
-    return max(7, longest_valid + 3)
+    # The shortest valid suit determines the minimum bid:
+    # shortest suit count ≤ bid - 3  →  bid ≥ shortest + 3
+    shortest_valid = valid_counts[0]
+    return max(7, shortest_valid + 3)
 
 
 def tasmiya_order(sahib_al_qabool_id: int) -> list[int]:
@@ -353,7 +367,7 @@ class TasmiyaEngine:
                 bid_history.append((sahib_al_qabool_id, None))
                 winning_bid = bidding_engine.highest_bid
                 winning_player = players[winning_bid.player_id]
-                trump = determine_trump_suit(winning_player.hand)
+                trump = determine_trump_suit(winning_player.hand, winning_bid.value)
 
                 playing_team_id = winning_player.team_id
                 defending_team_id = 1 if playing_team_id == 0 else 0
@@ -390,7 +404,7 @@ class TasmiyaEngine:
             bid_history.append((sahib_al_qabool_id, qabool_action.value))
 
             # Sahib Al-Qabool's team plays.
-            trump = determine_trump_suit(qabool_player.hand)
+            trump = determine_trump_suit(qabool_player.hand, qabool_action.value)
             playing_team_id = qabool_player.team_id
             defending_team_id = 1 if playing_team_id == 0 else 0
 

@@ -246,10 +246,10 @@ class Renderer:
             ("What the Agent Cannot Do", [
                 "Play a card not in its hand",
                 "Play off-suit when it has the led suit",
-                "Play non-trump first trick if it bid",
+                "Must lead from chosen trump suit on first trick",
                 "Bid less than 7 or more than 13",
                 "Bid equal/less than current highest",
-                "Bid lower than longest valid suit + 3",
+                "Trump suit must have ≤ (bid - 3) cards",
                 "Open higher than 11",
                 "Pass on 3rd re-deal if special role",
                 "Use a suit with 8+ cards as trump",
@@ -315,8 +315,9 @@ class Renderer:
         px = SCREEN_WIDTH - 270
         panel_w = 260
 
-        # Scoreboard box — taller to fit all stats.
-        score_h = 270
+        # Scoreboard box — draw background first with estimated height, then content.
+        # Content: timer(20) + header(14) + sep(3) + 2 rows(32) + gap(6) + 7 stats(126) + padding = ~210
+        score_h = 225
         score_rect = pygame.Rect(px, 60, panel_w, score_h)
         pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
@@ -365,20 +366,36 @@ class Renderer:
             y += 16
 
         y += 6
-        # Stats lines — all per-team as team1/team2.
+        # Stats lines — medium font, keys white, team1 gold, team2 white.
         episodes = state.get("episodes", 0)
-        stats_lines = [
-            (f"Shotas played: {episodes:,}", TEXT_WHITE),
-            (f"Shotas dakked: {state.get('daks_t1', 0)}/{state.get('daks_t2', 0)}", TEXT_LIGHT),
-            (f"Shotas won: {state.get('shotas_won_t1', 0)}/{state.get('shotas_won_t2', 0)}", TEXT_LIGHT),
-            (f"Bids met: {state.get('bids_met_t1', 0)}/{state.get('bids_met_t2', 0)}", TEXT_LIGHT),
-            (f"Seeks: {state.get('seeks_t1', 0)}/{state.get('seeks_t2', 0)}", TEXT_LIGHT),
-            (f"Games won: {state.get('team1_wins', 0)}/{state.get('team2_wins', 0)}", TEXT_LIGHT),
-            (f"Stage: {state['opponent_stage']}", TEXT_LIGHT),
-        ]
-        for line, color in stats_lines:
-            self.screen.blit(self.fonts["small"].render(line, True, color), (px + 10, y))
-            y += 16
+        med_font = self.fonts["medium"]
+
+        def _render_stat(label, val1, val2=None, y_pos=y):
+            """Render: 'label: val1/val2' with label+val2 white, val1 gold."""
+            label_surf = med_font.render(f"{label}: ", True, TEXT_WHITE)
+            self.screen.blit(label_surf, (px + 10, y_pos))
+            x = px + 10 + label_surf.get_width()
+            v1_surf = med_font.render(str(val1), True, TEXT_GOLD)
+            self.screen.blit(v1_surf, (x, y_pos))
+            if val2 is not None:
+                x += v1_surf.get_width()
+                slash_surf = med_font.render(f"/{val2}", True, TEXT_WHITE)
+                self.screen.blit(slash_surf, (x, y_pos))
+
+        _render_stat("Stage", state['opponent_stage'], y_pos=y)
+        y += 18
+        _render_stat("Shotas played", f"{episodes:,}", y_pos=y)
+        y += 18
+        _render_stat("Shotas dakked", state.get('daks_t1', 0), state.get('daks_t2', 0), y)
+        y += 18
+        _render_stat("Shotas won", state.get('shotas_won_t1', 0), state.get('shotas_won_t2', 0), y)
+        y += 18
+        _render_stat("Bids met", state.get('bids_met_t1', 0), state.get('bids_met_t2', 0), y)
+        y += 18
+        _render_stat("Seeks", state.get('seeks_t1', 0), state.get('seeks_t2', 0), y)
+        y += 18
+        _render_stat("Games won", state.get('team1_wins', 0), state.get('team2_wins', 0), y)
+        y += 18
 
         # Milestones box.
         disc_top = 60 + score_h + 8
@@ -532,7 +549,7 @@ class Renderer:
         y = chip_y + ch + 8
 
         # Confidence filter — scrollable number picker.
-        conf_filter = state.get("confidence_filter", 0)
+        conf_filter = state.get("confidence_filter", 0) or 0
         conf_label = small_font.render("Min confidence:", True, TEXT_WHITE)
         self.screen.blit(conf_label, (15, y))
         conf_x = 15 + conf_label.get_width() + 6
