@@ -95,10 +95,19 @@ Everything else — trump power, bid accuracy, partner cooperation, void strateg
 
 - 4 players, 2 teams, 52 cards dealt equally (13 each)
 - Bidding phase (Al-Tasmiya): players bid 7-13, highest bidder's team must deliver
-- Trump revealed by first card played by the winning bidder
+- Bid constraint: chosen trump suit must have AT MOST (bid - 3) cards
+  - Bid 7 → trump suit ≤ 4 cards
+  - Bid 8 → trump suit ≤ 5 cards
+  - Bid 9 → trump suit ≤ 6 cards
+  - Bid 10 → trump suit ≤ 7 cards
+- Trump suit is a strategic choice by the winning bidder (not automatically longest)
+- Opening bid capped at 11 (except Sahib Al-Qabool who has no cap)
+- Sahib Al-Qabool can match the current highest bid (others must exceed)
 - Must follow suit; if void, play anything (including trump = "whipping")
+- Winning bidder must lead from their chosen trump suit on the first trick
 - Seek: winning all 13 tricks ends the game immediately
 - Scoring: meet bid = score tricks won; fail bid = lose bid amount as penalty
+- A suit with 8+ cards triggers Dak (re-deal)
 
 ---
 

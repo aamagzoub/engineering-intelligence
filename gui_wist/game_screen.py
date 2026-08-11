@@ -216,13 +216,17 @@ class GameScreen:
         # Feature 21: ESC quit overlay.
         self._show_quit_overlay = False
 
-        # Feature 22: Loaded AI model path.
+        # Feature 22: AI model — auto-load discovery model by default.
         self._ai_model_path: str | None = None
-        self._ai_advisor: object | None = None  # Loaded agent for recommendations.
-        self._ai_advisor_type: str | None = None  # "learning" or "discovery"
-        self._ai_gameplay_agent: object | None = None  # Loaded agent for actual gameplay.
-        self._ai_recommendation: str = ""  # Current recommendation text.
-        self._ai_rec_card: tuple | None = None  # (rank, suit) of recommended card.
+        self._ai_advisor: object | None = None
+        self._ai_advisor_type: str | None = None
+        self._ai_gameplay_agent: object | None = None
+        self._ai_recommendation: str = ""
+        self._ai_rec_card: tuple | None = None
+        self._ai_mode = "discovery"  # "discovery" or "basic"
+        self._ai_mode_label = ""     # Display label.
+        self._ai_dismiss_rect: pygame.Rect | None = None  # X button rect.
+        self._auto_load_discovery_model()
 
         # Animation state.
         self._trick_played: dict[int, tuple[str, str]] = {}
@@ -420,6 +424,41 @@ class GameScreen:
             pts = -5
         self._player_points += pts
         self._save_player_stats()
+
+    def _auto_load_discovery_model(self):
+        """Auto-load discovery model on startup. Falls back to basic if not found."""
+        from pathlib import Path
+        discovery_path = Path("agents/wist_discovery/wist_discovery_model.json")
+        if discovery_path.exists():
+            try:
+                from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
+                agent = WistDiscoveryAgent(training=True)
+                agent.epsilon = 0  # Play best moves, no exploration.
+                agent.load(str(discovery_path))
+                self._ai_gameplay_agent = agent
+                self._ai_mode = "discovery"
+                ep = agent.episodes_trained
+                if ep >= 1000000:
+                    ep_str = f"{ep / 1000000:.1f}M"
+                elif ep >= 1000:
+                    ep_str = f"{ep // 1000}K"
+                else:
+                    ep_str = str(ep)
+                self._ai_mode_label = f"Discovery AI ({ep_str} shotas)"
+                return
+            except Exception:
+                pass
+        # Fallback.
+        self._ai_mode = "basic"
+        self._ai_mode_label = "Basic Rule-based AI"
+        self._ai_gameplay_agent = None
+
+    def _dismiss_discovery_model(self):
+        """User clicked X — switch to basic rule-based AI."""
+        self._ai_mode = "basic"
+        self._ai_mode_label = "Basic Rule-based AI"
+        self._ai_gameplay_agent = None
+        self._ai_advisor = None
 
     def _load_ai_advisor(self):
         """Load the AI model file for recommendations. Supports LearningAgent and Discovery agent formats."""
@@ -675,8 +714,8 @@ class GameScreen:
         self._log_game_event("=== NEW GAME ===")
         self._show_quit_overlay = False
 
-        # Recommendation visibility — toggled per game, once hidden stays hidden.
-        self._rec_visible = True
+        # Recommendation visibility — hidden by default, user must click Show.
+        self._rec_visible = False
         self._rec_hidden_permanently = False
 
         # Player evaluation — track moves vs AI recommendations.
@@ -829,7 +868,7 @@ class GameScreen:
     def _get_gameplay_agent(self):
         """
         Get the best available AI agent for gameplay.
-        Priority: user-loaded model > trained LearningAgent > Discovery agent > RuleBasedAgent.
+        If discovery model is loaded, use it. Otherwise rule-based.
         """
         if self._ai_gameplay_agent is not None:
             return self._ai_gameplay_agent
@@ -839,39 +878,7 @@ class GameScreen:
             self._ai_gameplay_agent = self._ai_advisor
             return self._ai_advisor
 
-        from pathlib import Path
-
-        # Try to load a trained LearningAgent model.
-        model_path = Path("agents/wist_learning/wist_model.json")
-        if model_path.exists():
-            try:
-                from agents.wist_learning.learning_agent import LearningAgent
-                agent = LearningAgent.load(model_path, training=False)
-                # Only use if it has meaningful training (at least 1000 episodes).
-                if agent.episodes_trained >= 1000:
-                    self._ai_gameplay_agent = agent
-                    self._log_game_event(
-                        f"AI: Learning Agent ({agent.episodes_trained} episodes trained)")
-                    return agent
-            except Exception:
-                pass
-
-        # Try to load a Discovery agent model.
-        discovery_path = Path("agents/wist_discovery/wist_discovery_model.json")
-        if discovery_path.exists():
-            try:
-                from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
-                agent = WistDiscoveryAgent(training=False)
-                agent.load(str(discovery_path))
-                if agent.episodes_trained >= 1000:
-                    self._ai_gameplay_agent = agent
-                    self._log_game_event(
-                        f"AI: Discovery Agent ({agent.episodes_trained} episodes trained)")
-                    return agent
-            except Exception:
-                pass
-
-        # Fallback to rule-based.
+        # If mode is basic or no model available, use rule-based.
         return RuleBasedAgent()
 
     def _handle_card_dak_continue(self):
@@ -1917,6 +1924,11 @@ class GameScreen:
 
     def _handle_click(self, pos):
         """Handle mouse click — bidding or card selection."""
+        # AI mode dismiss button.
+        if self._ai_dismiss_rect and self._ai_dismiss_rect.collidepoint(pos):
+            self._dismiss_discovery_model()
+            return
+
         # Recommendation toggle button.
         toggle_rect = getattr(self, '_rec_toggle_rect', None)
         if toggle_rect and toggle_rect.collidepoint(pos):
@@ -2403,6 +2415,27 @@ class GameScreen:
         # Victory confetti.
         self._render_confetti()
 
+        # AI mode label (bottom-left of table area).
+        self._render_ai_mode_label()
+
+    def _render_ai_mode_label(self):
+        """Render the AI mode indicator at bottom-left with dismiss X."""
+        font = self.fonts["small"]
+        label = self._ai_mode_label or ("Discovery AI" if self._ai_mode == "discovery" else "Basic Rule-based AI")
+        label_surf = font.render(label, True, (200, 200, 200))
+        lx, ly = 15, SCREEN_HEIGHT - 20
+        self.screen.blit(label_surf, (lx, ly))
+
+        # X button to dismiss (only if discovery mode).
+        if self._ai_mode == "discovery":
+            x_x = lx + label_surf.get_width() + 6
+            x_surf = font.render("[X]", True, (200, 80, 80))
+            x_rect = pygame.Rect(x_x, ly, x_surf.get_width(), x_surf.get_height())
+            self.screen.blit(x_surf, (x_x, ly))
+            self._ai_dismiss_rect = x_rect
+        else:
+            self._ai_dismiss_rect = None
+
     def _render_bid_labels(self, cx, cy):
         """Render bid badges — uniform size, aligned horizontally for side players,
         vertically for top/bottom players."""
@@ -2571,7 +2604,7 @@ class GameScreen:
         pygame.draw.rect(self.screen, (45, 90, 45), ai_box_rect, width=1, border_radius=8)
 
         # Toggle button — "HIDE" / "SHOW" in top-right of box.
-        rec_visible = getattr(self, '_rec_visible', True)
+        rec_visible = getattr(self, '_rec_visible', False)
         rec_hidden_perm = getattr(self, '_rec_hidden_permanently', False)
         toggle_w = 48
         toggle_h = 20
@@ -2630,7 +2663,7 @@ class GameScreen:
 
         # Recommended card — to the right of user's hand, vertically centered with cards.
         rec_card = getattr(self, '_ai_rec_card', None)
-        rec_visible = getattr(self, '_rec_visible', True)
+        rec_visible = getattr(self, '_rec_visible', False)
         if rec_card and rec_visible:
             r, s = rec_card
             rc_w, rc_h = 50, 72
