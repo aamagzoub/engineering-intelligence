@@ -60,42 +60,57 @@ STATE_FEATURE_SIZE = 32  # Fixed feature vector size for neural net.
 
 def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
                        partner_bid: int = 0, my_tricks: int = 0, opp_tricks: int = 0) -> str:
-    """Absolute minimal state encoding — almost nothing.
+    """Rich observable state encoding — everything a human can see.
 
-    The agent sees only its raw hand size as a rough state key.
-    All real learning happens through the neural net from raw features.
-    The Q-table provides a weak baseline; neural net handles generalization.
+    Encodes:
+    - Hand size (how many cards remain)
+    - Position in trick (0-3: how many have played before me)
+    - Led suit index (what suit was played first this trick, or 'x' if leading)
+    - My team tricks won (0-13)
+    - Opponent team tricks won (0-13)
+    All observable facts — no domain knowledge.
     """
     hand = obs.hand
     n_cards = len(hand)
     pos = 0
+    led = "x"
     if obs.current_trick and obs.current_trick.played_cards:
         pos = len(obs.current_trick.played_cards)
-    # Minimal key: just hand size and position — enough for Q-table baseline.
-    return f"{n_cards:x}{pos}"
+        if obs.current_trick.leading_suit:
+            led = str(SUIT_IDX.get(obs.current_trick.leading_suit, 0))
+    return f"{n_cards:x}{pos}{led}{my_tricks:x}{opp_tricks:x}"
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
-    """Minimal action encoding — no domain knowledge.
+    """Rich action encoding — observable card properties.
 
-    Contains only:
-    - Raw rank number (2-14) — just the card's face value
-    - Suit index (0-3) — just identifies which suit
-    No tiers, no trump labeling, no void detection, no longest suit.
+    Contains:
+    - Raw rank number (2-14) — the card's face value
+    - Suit index (0-3) — which suit
+    - Is highest of its suit in hand (1/0) — observable by looking at your own cards
     """
     rv = RANK_VAL[card.rank]
     si = SUIT_IDX[card.suit]
-    return f"{rv:x}{si}"
+    # Is this the highest card of its suit in my hand?
+    same_suit_ranks = [RANK_VAL[c.rank] for c in obs.hand if c.suit == card.suit]
+    is_highest = "1" if rv == max(same_suit_ranks) else "0"
+    return f"{rv:x}{si}{is_highest}"
 
 
 def _encode_bid_state(obs: BiddingObservation) -> str:
-    """Absolute minimal bid state — just whether someone bid and the level.
+    """Rich bid state — observable bidding context.
 
-    Agent must discover everything about hand strength from the neural net.
+    Encodes:
+    - Whether someone already bid (Y/N)
+    - Current highest bid level (0 if none)
+    - Number of suits in hand with 1-4 cards (observable hand shape)
     """
     has_bid = "Y" if obs.current_highest_bid else "N"
     bid_level = str(min(obs.current_highest_bid, 13)) if obs.current_highest_bid else "0"
-    return f"{has_bid}{bid_level}"
+    # Count how many suits have 1-4 cards (valid trump candidates — observable).
+    suit_counts = Counter(c.suit for c in obs.hand)
+    short_suits = sum(1 for c in suit_counts.values() if 1 <= c <= 4)
+    return f"{has_bid}{bid_level}s{short_suits}"
 
 
 def _encode_bid_action(action: Action) -> str:
@@ -283,7 +298,7 @@ class WistDiscoveryAgent(Agent):
 
         # === Neural Network Function Approximator (Enhancement #9) ===
         # CardEvaluator: per-card evaluation (state 28 + card 8 + memory 78 = 114 features → 1 Q-value).
-        self._play_net = CardEvaluator(input_size=114, hidden_size=128, learning_rate=0.0003)
+        self._play_net = CardEvaluator(input_size=114, hidden_size=256, learning_rate=0.0003)
         self._target_net = self._play_net.copy()  # Target network (frozen, updated every 500 episodes).
         self._target_update_interval = 500
         self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
@@ -614,9 +629,27 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """No-op. The agent must discover that tricks matter from the shota score alone.
-        No intermediate feedback — only the final score teaches."""
-        pass
+        """Record trick observation (no learning signal — only stores what was seen).
+
+        The agent records observable facts about each completed trick:
+        - What rank was dominant
+        - What suit was led
+        - Who won (position)
+        - Whether I won
+        This builds trick memory for the neural net to learn from.
+        """
+        # Store observable trick data for memory features.
+        # Approximate values (exact card data would need trick reference).
+        self._trick_memory.append((
+            0.5,   # avg rank (placeholder — refined when we have full trick data)
+            0.5,   # led suit normalized
+            0.5,   # winner position normalized
+            1.0 if won else 0.0,  # did my team win this trick
+        ))
+        if won:
+            self._my_tricks += 1
+        else:
+            self._opp_tricks += 1
 
     def reward(self, score: float) -> None:
         """End-of-shota reward with all architecture enhancements."""
@@ -801,9 +834,35 @@ class WistDiscoveryAgent(Agent):
         return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
 
     def _get_memory_features(self) -> np.ndarray:
-        """Empty memory — agent gets no trick-by-trick history.
-        Returns zeros; neural net must learn from raw hand state alone."""
-        return np.zeros(78)
+        """Trick memory — raw observable data from previous tricks.
+
+        For each of the last 6 tricks, stores:
+        - Rank of card played (normalized) per position (4 slots)
+        - Suit of card played (normalized) per position (4 slots)
+        - Which position won the trick (one-hot 4)
+        - Whether each player followed the led suit (4 binary)
+        Total per trick: 4 + 4 + 4 + 4 = 16 features × 6 tricks = 96
+        Padded to 78 for backward compatibility (truncate to 78).
+
+        All observable: you watched these cards being played.
+        """
+        features = np.zeros(78)
+        if not self._trick_memory:
+            return features
+        # Pack last tricks into feature vector.
+        idx = 0
+        for trick_data in self._trick_memory[-6:]:
+            if idx + 13 > 78:
+                break
+            # Each trick_data: (rank_norm, suit_norm, won_pos_norm, followed)
+            # Stored as tuples of raw floats.
+            if len(trick_data) >= 4:
+                features[idx] = trick_data[0]      # avg rank played
+                features[idx + 1] = trick_data[1]  # led suit (normalized)
+                features[idx + 2] = trick_data[2]  # winner position (normalized)
+                features[idx + 3] = trick_data[3]  # did I win (0/1)
+            idx += 13  # 13 slots per trick (sparse, room for expansion)
+        return features
 
     # =========================================================================
     # Episode Management

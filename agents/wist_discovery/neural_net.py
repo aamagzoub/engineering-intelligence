@@ -367,12 +367,26 @@ def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=Non
     if obs.current_trick and obs.current_trick.played_cards:
         features[17] = len(obs.current_trick.played_cards) / 4.0
 
-    # 19-22: Cards played per suit globally (card counting — raw).
+    # 19-22: Cards played per suit globally (card counting — raw observable).
     if suits_played:
         for suit_idx in range(4):
             features[18 + suit_idx] = suits_played.get(suit_idx, 0) / 13.0
 
-    # 23-27: Reserved (zeros — available for future raw features).
+    # 23: Number of known opponent voids (observed: they didn't follow suit).
+    features[22] = min(opp_voids, 8) / 8.0
+
+    # 24-27: Which player played each card in current trick (partner vs opponent).
+    # Encode: 0.25=partner, 0.75=opponent, 0=not yet played.
+    if obs.current_trick and obs.current_trick.played_cards:
+        my_pid = getattr(obs, 'player_id', 0)
+        partner_pid = (my_pid + 2) % 4
+        for idx, pc in enumerate(obs.current_trick.played_cards[:4]):
+            if pc.player_id == partner_pid:
+                features[23 + idx] = 0.25  # Partner.
+            else:
+                features[23 + idx] = 0.75  # Opponent.
+
+    # 27: Remaining (pad to 28).
 
     return features
 
