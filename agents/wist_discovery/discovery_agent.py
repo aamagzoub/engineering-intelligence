@@ -51,7 +51,7 @@ RANK_VAL = {
 }
 SUIT_IDX = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
 
-STATE_FEATURE_SIZE = 32  # Fixed feature vector size for neural net.
+STATE_FEATURE_SIZE = 52  # Fixed feature vector size for neural net.
 
 
 # =============================================================================
@@ -297,8 +297,8 @@ class WistDiscoveryAgent(Agent):
         self.bid_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
         # === Neural Network Function Approximator (Enhancement #9) ===
-        # CardEvaluator: per-card evaluation (state 28 + card 8 + memory 78 = 114 features → 1 Q-value).
-        self._play_net = CardEvaluator(input_size=114, hidden_size=256, learning_rate=0.0003)
+        # CardEvaluator: per-card evaluation (state 52 + card 8 + memory 78 = 138 features → 1 Q-value).
+        self._play_net = CardEvaluator(input_size=138, hidden_size=256, learning_rate=0.0003)
         self._target_net = self._play_net.copy()  # Target network (frozen, updated every 500 episodes).
         self._target_update_interval = 500
         self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
@@ -345,8 +345,9 @@ class WistDiscoveryAgent(Agent):
         # === Opponent Modeling ===
         self._known_voids: dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
-        # === Card Counting — track suits played globally ===
-        self._suits_played: dict = {0: 0, 1: 0, 2: 0, 3: 0}  # SUIT_IDX → count of cards played
+        # === Card Counting — track all cards seen and suits played globally ===
+        self._cards_seen: set = set()  # All cards observed being played.
+        self._suits_played: dict = {0: 0, 1: 0, 2: 0, 3: 0}  # SUIT_IDX → count
 
         # === Opponent Prediction ===
         self._opp_predictor = OpponentPredictor()
@@ -540,7 +541,10 @@ class WistDiscoveryAgent(Agent):
             # Store neural net features for this card choice.
             if self._use_neural:
                 s_feat = state_features(obs, self._get_opponent_voids_count(obs),
-                                        rank_value, SUIT_IDX, self._suits_played)
+                                        rank_value, SUIT_IDX, self._suits_played,
+                                        self._known_voids, self._cards_seen,
+                                        self._my_tricks, self._opp_tricks,
+                                        self._partner_bid, 0, 0, 0)
                 c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
                 mem_feat = self._get_memory_features()
                 self._nn_play_features.append(np.concatenate([s_feat, c_feat, mem_feat]))
@@ -591,7 +595,10 @@ class WistDiscoveryAgent(Agent):
         nn_values = {}
         if self._use_neural:
             s_feat = state_features(obs, self._get_opponent_voids_count(obs),
-                                    rank_value, SUIT_IDX, self._suits_played)
+                                    rank_value, SUIT_IDX, self._suits_played,
+                                    self._known_voids, self._cards_seen,
+                                    self._my_tricks, self._opp_tricks,
+                                    self._partner_bid, 0, 0, 0)
             mem_feat = self._get_memory_features()
             for card in playable:
                 c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
@@ -809,7 +816,8 @@ class WistDiscoveryAgent(Agent):
                 continue
             if played_card.card.suit != leading_suit:
                 self._known_voids[pid].add(leading_suit)
-            # Card counting — track how many of each suit played.
+            # Card counting — track exact cards seen + suits played.
+            self._cards_seen.add(played_card.card)
             suit_idx = SUIT_IDX.get(played_card.card.suit, 0)
             self._suits_played[suit_idx] = min(13, self._suits_played.get(suit_idx, 0) + 1)
 
@@ -876,6 +884,7 @@ class WistDiscoveryAgent(Agent):
         self._play_traces.clear()
         self._bid_traces.clear()
         self._known_voids = {0: set(), 1: set(), 2: set(), 3: set()}
+        self._cards_seen = set()
         self._suits_played = {0: 0, 1: 0, 2: 0, 3: 0}
         self._my_tricks = 0
         self._opp_tricks = 0

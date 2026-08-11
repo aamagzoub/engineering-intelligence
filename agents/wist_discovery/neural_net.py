@@ -314,23 +314,23 @@ def card_features(card, obs, playable_cards, rank_val_func, suit_idx_map) -> np.
 
 
 def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=None,
-                   suits_played: dict = None) -> np.ndarray:
+                   suits_played: dict = None, known_voids: dict = None,
+                   cards_seen: set = None, my_tricks: int = 0, opp_tricks: int = 0,
+                   bid_value: int = 0, bidder_team: int = -1, shota_num: int = 0,
+                   game_score_diff: int = 0) -> np.ndarray:
     """
-    Raw state features — NO domain knowledge.
+    Full observable state features — everything a focused human sees.
 
-    Just raw observable facts:
-    - What cards are in the hand (normalized rank per suit slot)
-    - How many cards on the table in this trick
-    - What cards are on the table (rank + suit, normalized)
+    28 original + 24 new = 52 features total.
     """
     hand = obs.hand
     n_cards = len(hand)
-    features = np.zeros(28)
+    features = np.zeros(52)
 
     if rank_val_func is None:
         return features
 
-    # 1-4: How many cards per suit (raw counts, not sorted — preserves suit identity).
+    # 1-4: How many cards per suit in hand.
     suit_counts = [0, 0, 0, 0]
     for c in hand:
         si = suit_idx_map.get(c.suit, 0) if suit_idx_map else 0
@@ -338,10 +338,10 @@ def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=Non
     for i in range(4):
         features[i] = suit_counts[i] / 13.0
 
-    # 5: Total cards in hand (normalized).
+    # 5: Total cards in hand.
     features[4] = n_cards / 13.0
 
-    # 6-9: Average rank per suit (what the hand looks like strength-wise per suit).
+    # 6-9: Average rank per suit.
     suit_rank_sums = [0.0, 0.0, 0.0, 0.0]
     for c in hand:
         si = suit_idx_map.get(c.suit, 0) if suit_idx_map else 0
@@ -349,44 +349,96 @@ def state_features(obs, opp_voids: int = 0, rank_val_func=None, suit_idx_map=Non
     for i in range(4):
         if suit_counts[i] > 0:
             features[5 + i] = (suit_rank_sums[i] / suit_counts[i]) / 14.0
-        else:
-            features[5 + i] = 0.0
 
-    # 10-13: Current trick — cards played (rank normalized, per slot).
+    # 10-13: Current trick cards (rank).
     if obs.current_trick and obs.current_trick.played_cards:
         for idx, pc in enumerate(obs.current_trick.played_cards[:4]):
             features[9 + idx] = rank_val_func(pc.card.rank) / 14.0
 
-    # 14-17: Current trick — suits of played cards (normalized suit index).
+    # 14-17: Current trick cards (suit).
     if obs.current_trick and obs.current_trick.played_cards:
         for idx, pc in enumerate(obs.current_trick.played_cards[:4]):
             si = suit_idx_map.get(pc.card.suit, 0) if suit_idx_map else 0
             features[13 + idx] = (si + 1) / 4.0
 
-    # 18: Number of cards played in this trick (position proxy).
+    # 18: Position in trick.
     if obs.current_trick and obs.current_trick.played_cards:
         features[17] = len(obs.current_trick.played_cards) / 4.0
 
-    # 19-22: Cards played per suit globally (card counting — raw observable).
+    # 19-22: Cards played per suit globally (card counting).
     if suits_played:
         for suit_idx in range(4):
             features[18 + suit_idx] = suits_played.get(suit_idx, 0) / 13.0
 
-    # 23: Number of known opponent voids (observed: they didn't follow suit).
+    # 23: Number of known opponent voids.
     features[22] = min(opp_voids, 8) / 8.0
 
-    # 24-27: Which player played each card in current trick (partner vs opponent).
-    # Encode: 0.25=partner, 0.75=opponent, 0=not yet played.
+    # 24-27: Partner/opponent identity for trick cards.
     if obs.current_trick and obs.current_trick.played_cards:
         my_pid = getattr(obs, 'player_id', 0)
         partner_pid = (my_pid + 2) % 4
         for idx, pc in enumerate(obs.current_trick.played_cards[:4]):
             if pc.player_id == partner_pid:
-                features[23 + idx] = 0.25  # Partner.
+                features[23 + idx] = 0.25
             else:
-                features[23 + idx] = 0.75  # Opponent.
+                features[23 + idx] = 0.75
 
-    # 27: Remaining (pad to 28).
+    # === NEW FEATURES (28-51) ===
+
+    # 28-31: Per-player void flags (is player X void in any observed suit? 0-4 voids each).
+    if known_voids:
+        for pid in range(4):
+            features[27 + pid] = len(known_voids.get(pid, set())) / 4.0
+
+    # 32-35: Highest card remaining per suit (from card counting).
+    # If we've seen all cards above rank X in a suit, our highest IS the highest left.
+    if cards_seen and suit_idx_map:
+        for si in range(4):
+            # Find what's the highest rank in our hand for this suit.
+            my_suit_ranks = [rank_val_func(c.rank) for c in hand
+                             if suit_idx_map.get(c.suit, 0) == si]
+            if my_suit_ranks:
+                features[31 + si] = max(my_suit_ranks) / 14.0
+
+    # 36: My team tricks won (normalized).
+    features[35] = my_tricks / 13.0
+
+    # 37: Opponent tricks won (normalized).
+    features[36] = opp_tricks / 13.0
+
+    # 38: Bid value (normalized 7-13 → 0-1).
+    features[37] = (bid_value - 7) / 6.0 if bid_value >= 7 else 0.0
+
+    # 39: Who has bid obligation (0.5 = my team, -0.5 = opponent, 0 = unknown).
+    if bidder_team == 0:
+        features[38] = 0.5
+    elif bidder_team == 1:
+        features[38] = -0.5
+
+    # 40: Shota number (1-5 normalized).
+    features[39] = shota_num / 5.0
+
+    # 41: Game score difference (my team - opponent, clamped and normalized).
+    features[40] = max(-1.0, min(1.0, game_score_diff / 25.0))
+
+    # 42-45: How many cards of each suit have been seen (full card counting).
+    if cards_seen and suit_idx_map:
+        seen_per_suit = [0, 0, 0, 0]
+        for card in cards_seen:
+            si = suit_idx_map.get(card.suit, 0) if hasattr(card, 'suit') else 0
+            seen_per_suit[si] += 1
+        for i in range(4):
+            features[41 + i] = seen_per_suit[i] / 13.0
+
+    # 46-49: Highest rank per suit in hand (observable).
+    if suit_idx_map:
+        for si in range(4):
+            ranks_in_suit = [rank_val_func(c.rank) for c in hand
+                             if suit_idx_map.get(c.suit, 0) == si]
+            if ranks_in_suit:
+                features[45 + si] = max(ranks_in_suit) / 14.0
+
+    # 50-51: Reserved.
 
     return features
 
