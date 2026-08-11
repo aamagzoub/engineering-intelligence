@@ -17,7 +17,7 @@ from environments.wist.trick import Trick
 
 # ─── Opponent Curriculum ────────────────────────────────────────────────────────
 
-STAGE_STAGNATION_THRESHOLD = 5000  # Episodes without discovery to trigger graduation.
+STAGE_STAGNATION_THRESHOLD = 500000  # Episodes without discovery to trigger graduation.
 
 # 15-stage curriculum graduation conditions.
 STAGE_CONFIG = {

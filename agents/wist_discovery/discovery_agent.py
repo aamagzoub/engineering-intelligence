@@ -941,8 +941,15 @@ class WistDiscoveryAgent(Agent):
                 pass  # Save with whatever we got.
 
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
+        # Atomic save: write to temp file then rename (prevents corruption on crash).
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(data, f)
+        import os
+        if os.path.exists(path):
+            os.replace(tmp_path, path)
+        else:
+            os.rename(tmp_path, path)
 
     def load(self, path: str) -> None:
         with open(path, "r") as f:

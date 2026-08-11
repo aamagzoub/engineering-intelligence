@@ -517,6 +517,7 @@ class WistDiscoveryWatcher:
                 }
                 auto_discover(self._auto_stats, context, self._trigger)
                 # Track per-team stats from background training.
+                self.shotas_played += 1
                 if scores.get(0, 0) > 0:
                     self._shotas_won_t1 += 1
                 if scores.get(1, 0) > 0:
@@ -641,6 +642,14 @@ class WistDiscoveryWatcher:
             self._update()
             self._render()
             self.clock.tick(FPS)
+
+        # Sync from background agent before exit to capture latest progress.
+        if self._bg_agent:
+            self.discovery.episodes_trained = max(
+                self.discovery.episodes_trained, self._bg_agent.episodes_trained)
+            self.discovery.total_updates = max(
+                self.discovery.total_updates, self._bg_agent.total_updates)
+            self.discovery.epsilon = self._bg_agent.epsilon
 
         self.discovery.save(self.model_path)
         save_milestones(self._milestones_achieved, self._milestones_list,
@@ -771,6 +780,8 @@ class WistDiscoveryWatcher:
 
         bg_agent = self._bg_agent
         episodes = bg_agent.episodes_trained if bg_agent else self.discovery.episodes_trained
+        # Ensure counter never goes backwards (use max with persisted value).
+        episodes = max(episodes, self.shotas_played)
 
         render_state = {
             "paused": self.paused,
