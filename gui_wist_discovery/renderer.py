@@ -100,21 +100,8 @@ class Renderer:
     # ─── Header ─────────────────────────────────────────────────────────────────
 
     def _render_header(self, panel_x, state):
-        """Timer and shotas learned on the left, vertically centered."""
-        total_sec = state["compute_time"]
-        hours = int(total_sec // 3600)
-        minutes = int((total_sec % 3600) // 60)
-        seconds = int(total_sec % 60)
-        timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
-
-        episodes = state.get("episodes", 0)
-        shotas_surf = self.fonts["medium"].render(f"Shotas: {episodes:,}", True, TEXT_WHITE)
-
-        # Both vertically centered in the 60px header, stacked.
-        total_h = timer_surf.get_height() + shotas_surf.get_height() + 2
-        start_y = (60 - total_h) // 2
-        self.screen.blit(timer_surf, (15, start_y))
-        self.screen.blit(shotas_surf, (15, start_y + timer_surf.get_height() + 2))
+        """No longer renders anything — timer moved to scoreboard."""
+        pass
 
     # ─── Players & Cards ────────────────────────────────────────────────────────
 
@@ -328,15 +315,22 @@ class Renderer:
         px = SCREEN_WIDTH - 270
         panel_w = 260
 
-        # Scoreboard box.
-        score_h = 180
+        # Scoreboard box — taller to fit all stats.
+        score_h = 270
         score_rect = pygame.Rect(px, 60, panel_w, score_h)
         pygame.draw.rect(self.screen, PANEL_DARK, score_rect, border_radius=10)
         pygame.draw.rect(self.screen, (40, 60, 40), score_rect, width=1, border_radius=10)
 
-        y = score_rect.top + 10
-        self.screen.blit(self.fonts["large"].render("Scoreboard", True, TEXT_WHITE), (px + 10, y))
-        y += 22
+        y = score_rect.top + 8
+
+        # Timer in yellow.
+        total_sec = state["compute_time"]
+        hours = int(total_sec // 3600)
+        minutes = int((total_sec % 3600) // 60)
+        seconds = int(total_sec % 60)
+        timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
+        self.screen.blit(timer_surf, (px + 10, y))
+        y += 20
 
         # Table header.
         col_name_w, col_shota_w, col_total_w = 55, 30, 38
@@ -347,9 +341,9 @@ class Renderer:
                              (header_x + col_name_w + s * col_shota_w, y))
         self.screen.blit(self.fonts["small"].render("Total", True, TEXT_DIM),
                          (header_x + col_name_w + 5 * col_shota_w, y))
-        y += 16
+        y += 14
         pygame.draw.line(self.screen, (80, 80, 100), (px + 10, y), (px + panel_w - 10, y))
-        y += 4
+        y += 3
 
         # Team rows.
         team_names = ["Team 1", "Team 2"]
@@ -368,18 +362,23 @@ class Renderer:
             tc = (100, 255, 100) if total_val > 0 else (255, 100, 100) if total_val < 0 else TEXT_LIGHT
             self.screen.blit(self.fonts["small"].render(f"{total_val:+d}", True, tc),
                              (header_x + col_name_w + 5 * col_shota_w, y))
-            y += 18
+            y += 16
 
-        y += 8
+        y += 6
+        # Stats lines — all per-team as team1/team2.
+        episodes = state.get("episodes", 0)
         stats_lines = [
-            f"Stage: {state['opponent_stage']}",
-            f"Games won: {state.get('team1_wins', 0)}/{state.get('team2_wins', 0)}",
-            f"Bids met: {state.get('bids_met_t1', 0)}/{state.get('bids_met_t2', 0)}",
-            f"Seeks: {state.get('seeks_t1', 0)}/{state.get('seeks_t2', 0)}",
+            (f"Shotas played: {episodes:,}", TEXT_WHITE),
+            (f"Shotas dakked: {state.get('daks_t1', 0)}/{state.get('daks_t2', 0)}", TEXT_LIGHT),
+            (f"Shotas won: {state.get('shotas_won_t1', 0)}/{state.get('shotas_won_t2', 0)}", TEXT_LIGHT),
+            (f"Bids met: {state.get('bids_met_t1', 0)}/{state.get('bids_met_t2', 0)}", TEXT_LIGHT),
+            (f"Seeks: {state.get('seeks_t1', 0)}/{state.get('seeks_t2', 0)}", TEXT_LIGHT),
+            (f"Games won: {state.get('team1_wins', 0)}/{state.get('team2_wins', 0)}", TEXT_LIGHT),
+            (f"Stage: {state['opponent_stage']}", TEXT_LIGHT),
         ]
-        for line in stats_lines:
-            self.screen.blit(self.fonts["medium"].render(line, True, TEXT_LIGHT), (px + 10, y))
-            y += 18
+        for line, color in stats_lines:
+            self.screen.blit(self.fonts["small"].render(line, True, color), (px + 10, y))
+            y += 16
 
         # Milestones box.
         disc_top = 60 + score_h + 8
@@ -414,10 +413,10 @@ class Renderer:
 
                 is_latest = (i == 0 and disc_scroll == 0)
 
-                # Number in bold gold/white.
+                # Number in white (same for all).
                 num_str = f"{num}. "
                 num_w = num_font.size(num_str)[0]
-                num_color = TEXT_GOLD if is_latest else (255, 255, 255)
+                num_color = (255, 255, 255)
                 self.screen.blit(num_font.render(num_str, True, num_color), (px + 10, y))
 
                 # Title on first line.
@@ -532,26 +531,40 @@ class Renderer:
         state["_chip_rects"] = chip_rects
         y = chip_y + ch + 8
 
-        # Confidence filter row.
-        conf_filter = state.get("confidence_filter", None)
-        conf_label = small_font.render("Confident:", True, TEXT_WHITE)
+        # Confidence filter — scrollable number picker.
+        conf_filter = state.get("confidence_filter", 0)
+        conf_label = small_font.render("Min confidence:", True, TEXT_WHITE)
         self.screen.blit(conf_label, (15, y))
         conf_x = 15 + conf_label.get_width() + 6
-        conf_rects = {}
-        # Show available levels.
-        for level in [5, 10, 20, 50, 100]:
-            is_active = (conf_filter == level)
-            bg = (80, 80, 80) if is_active else (30, 30, 30)
-            level_surf = small_font.render(str(level), True, (255, 255, 255))
-            lw = level_surf.get_width() + 6
-            lh = level_surf.get_height() + 4
-            level_rect = pygame.Rect(conf_x, y, lw, lh)
-            pygame.draw.rect(self.screen, bg, level_rect, border_radius=3)
-            pygame.draw.rect(self.screen, (100, 100, 100), level_rect, width=1, border_radius=3)
-            self.screen.blit(level_surf, (conf_x + 3, y + 2))
-            conf_rects[level] = level_rect
-            conf_x += lw + 3
-        state["_conf_rects"] = conf_rects
+
+        # Left arrow "<".
+        left_surf = small_font.render("<", True, (255, 255, 255))
+        lw = left_surf.get_width() + 6
+        lh = left_surf.get_height() + 4
+        left_rect = pygame.Rect(conf_x, y, lw, lh)
+        pygame.draw.rect(self.screen, (50, 50, 50), left_rect, border_radius=3)
+        pygame.draw.rect(self.screen, (100, 100, 100), left_rect, width=1, border_radius=3)
+        self.screen.blit(left_surf, (conf_x + 3, y + 2))
+        conf_x += lw + 2
+
+        # Current value.
+        val_text = str(conf_filter) if conf_filter > 0 else "All"
+        val_surf = small_font.render(val_text, True, (255, 255, 255))
+        vw = max(val_surf.get_width() + 8, 28)
+        val_rect = pygame.Rect(conf_x, y, vw, lh)
+        pygame.draw.rect(self.screen, (60, 60, 60), val_rect, border_radius=3)
+        self.screen.blit(val_surf, (conf_x + (vw - val_surf.get_width()) // 2, y + 2))
+        conf_x += vw + 2
+
+        # Right arrow ">".
+        right_surf = small_font.render(">", True, (255, 255, 255))
+        rw = right_surf.get_width() + 6
+        right_rect = pygame.Rect(conf_x, y, rw, lh)
+        pygame.draw.rect(self.screen, (50, 50, 50), right_rect, border_radius=3)
+        pygame.draw.rect(self.screen, (100, 100, 100), right_rect, width=1, border_radius=3)
+        self.screen.blit(right_surf, (conf_x + 3, y + 2))
+
+        state["_conf_rects"] = {"left": left_rect, "right": right_rect}
         y += lh + 10
 
         insights = state.get("insights", [])

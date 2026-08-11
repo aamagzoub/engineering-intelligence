@@ -105,6 +105,10 @@ class WistDiscoveryWatcher:
         self._seeks_t1 = session_stats.get("seeks_t1", 0)
         self._seeks_t2 = session_stats.get("seeks_t2", 0)
         self._opponent_stage = session_stats.get("opponent_stage", 1)
+        self._daks_t1 = session_stats.get("daks_t1", 0)
+        self._daks_t2 = session_stats.get("daks_t2", 0)
+        self._shotas_won_t1 = session_stats.get("shotas_won_t1", 0)
+        self._shotas_won_t2 = session_stats.get("shotas_won_t2", 0)
 
         # Timing.
         self._app_start_time = time.monotonic()
@@ -198,6 +202,12 @@ class WistDiscoveryWatcher:
             # Dak — doesn't count as a played shota. Decrement back.
             self.shota_num -= 1
             self.discovery.reset_episode()
+            # Track Dak per team (alternate based on qabool rotation).
+            qabool_id = (self.shota_num) % 4
+            if qabool_id in (0, 2):
+                self._daks_t1 += 1
+            else:
+                self._daks_t2 += 1
             self.state = "scoring"
             self.last_action_time = pygame.time.get_ticks()
             return
@@ -275,6 +285,12 @@ class WistDiscoveryWatcher:
             self._seeks_t1 += 1
         if tt[1] == 13:
             self._seeks_t2 += 1
+
+        # Track shotas won per team (team that won more tricks in this shota).
+        if tt[0] > tt[1]:
+            self._shotas_won_t1 += 1
+        elif tt[1] > tt[0]:
+            self._shotas_won_t2 += 1
 
         if s0 > self._best_score:
             self._best_score = s0
@@ -601,6 +617,10 @@ class WistDiscoveryWatcher:
             "seeks_t1": self._seeks_t1,
             "seeks_t2": self._seeks_t2,
             "opponent_stage": self._opponent_stage,
+            "daks_t1": self._daks_t1,
+            "daks_t2": self._daks_t2,
+            "shotas_won_t1": self._shotas_won_t1,
+            "shotas_won_t2": self._shotas_won_t2,
         }
 
     # ─── Main Loop ──────────────────────────────────────────────────────────────
@@ -649,13 +669,19 @@ class WistDiscoveryWatcher:
                             self._insight_filter = cat  # Toggle on.
                         self._insight_scroll_offset = 0
                         break
-                # Check confidence filter clicks.
-                for level, rect in getattr(self, '_conf_rects', {}).items():
+                # Check confidence filter clicks (left/right arrows).
+                for key, rect in getattr(self, '_conf_rects', {}).items():
                     if rect.collidepoint(event.pos):
-                        if self._confidence_filter == level:
-                            self._confidence_filter = None
-                        else:
-                            self._confidence_filter = level
+                        if key == "left":
+                            # Decrease: step down by 1 (min 0 = show all).
+                            current = self._confidence_filter or 0
+                            self._confidence_filter = max(0, current - 1)
+                            if self._confidence_filter == 0:
+                                self._confidence_filter = None
+                        elif key == "right":
+                            # Increase: step up by 1.
+                            current = self._confidence_filter or 0
+                            self._confidence_filter = current + 1
                         self._insight_scroll_offset = 0
                         break
             elif event.type == pygame.MOUSEWHEEL:
@@ -705,6 +731,10 @@ class WistDiscoveryWatcher:
         self._bids_met_t2 = 0
         self._seeks_t1 = 0
         self._seeks_t2 = 0
+        self._daks_t1 = 0
+        self._daks_t2 = 0
+        self._shotas_won_t1 = 0
+        self._shotas_won_t2 = 0
 
         self._accumulated_compute = 0.0
         self._app_start_time = time.monotonic()
@@ -759,6 +789,10 @@ class WistDiscoveryWatcher:
             "bids_met_t2": self._bids_met_t2,
             "seeks_t1": self._seeks_t1 + self._auto_stats.get("total_seeks", 0),
             "seeks_t2": self._seeks_t2,
+            "daks_t1": self._daks_t1,
+            "daks_t2": self._daks_t2,
+            "shotas_won_t1": self._shotas_won_t1,
+            "shotas_won_t2": self._shotas_won_t2,
             "epsilon": self.discovery.epsilon,
             "opponent_stage": self._opponent_stage,
             "milestones_list": self._milestones_list,
