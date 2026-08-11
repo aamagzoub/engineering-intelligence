@@ -711,6 +711,9 @@ class Renderer:
             full_text = text
             if why:
                 full_text = f"{text}. {why}"
+            # Capitalize after every dot.
+            import re
+            full_text = re.sub(r'(\. )([a-z])', lambda m: m.group(1) + m.group(2).upper(), full_text)
             episode = ins.get("episode", 0) if isinstance(ins, dict) else 0
             if episode > 0:
                 full_text += f" (at {episode:,} shotas)"
