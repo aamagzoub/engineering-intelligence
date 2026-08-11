@@ -32,7 +32,7 @@ from gui_wist_discovery.milestones import (
 from gui_wist_discovery.insights import generate_insights
 from gui_wist_discovery.training import (
     snapshot_brain, create_opponent, create_training_clone,
-    run_background_training, STAGE_STAGNATION_THRESHOLD,
+    run_background_training, STAGE_STAGNATION_THRESHOLD, STAGE_CONFIG,
 )
 from gui_wist_discovery.renderer import Renderer
 
@@ -444,62 +444,46 @@ class WistDiscoveryWatcher:
     # ─── Curriculum ─────────────────────────────────────────────────────────────
 
     def _check_stage_transition(self):
-        """Graduate to next opponent curriculum stage if conditions are met."""
+        """Graduate to next opponent curriculum stage (1-15) if conditions are met."""
+        if self._opponent_stage >= 15:
+            # Stage 15 is infinite — just update best snapshot.
+            if len(self._wist_win_history) >= 10:
+                if sum(self._wist_win_history[-10:]) / 10 >= 0.7:
+                    self._best_snapshot = snapshot_brain(self.discovery)
+            return
+
         episodes = self.discovery.episodes_trained
         stagnated = (episodes - self._last_discovery_episode_for_stage) > STAGE_STAGNATION_THRESHOLD
 
-        if self._opponent_stage == 1:
-            has_90_wr = "auto_wr_90" in self._milestones_achieved
-            if has_90_wr or stagnated:
-                self._opponent_stage = 2
-                self._frozen_snapshot = snapshot_brain(self.discovery)
-                self._log(f"  ** CURRICULUM: Stage 2 — Mixed opponents (episode {episodes}) **")
-                self._trigger("stage_2",
-                              f"CURRICULUM STAGE 2: Graduated to mixed opponents. "
-                              f"{'90% win rate reached' if has_90_wr else 'Stagnation detected'}.")
+        config = STAGE_CONFIG.get(self._opponent_stage, {})
+        required_wr = config.get("win_rate", 0.7)
+        window = config.get("window", 50)
 
-        elif self._opponent_stage == 2:
-            if len(self._wist_win_history) >= 20:
-                mix_wr = sum(self._wist_win_history[-20:]) / 20
-                if mix_wr >= 0.8 or stagnated:
-                    self._opponent_stage = 3
-                    self._best_snapshot = snapshot_brain(self.discovery)
-                    self._log(f"  ** CURRICULUM: Stage 3 — Adversarial (episode {episodes}) **")
-                    self._trigger("stage_3",
-                                  f"CURRICULUM STAGE 3: Graduated to adversarial training. "
-                                  f"Playing against frozen best-ever snapshots.")
-
-        elif self._opponent_stage == 3:
-            if len(self._wist_win_history) >= 10:
-                if sum(self._wist_win_history[-10:]) / 10 >= 0.7:
-                    self._best_snapshot = snapshot_brain(self.discovery)
-                # Graduate to stage 4 after sustained dominance.
-                if len(self._wist_win_history) >= 50:
-                    recent_50 = sum(self._wist_win_history[-50:]) / 50
-                    if recent_50 >= 0.85 or stagnated:
-                        self._opponent_stage = 4
-                        self._best_snapshot = snapshot_brain(self.discovery)
-                        self._log(f"  ** CURRICULUM: Stage 4 — Elite (episode {episodes}) **")
-                        self._trigger("stage_4",
-                                      "CURRICULUM STAGE 4: Graduated to elite training. "
-                                      "Opponents now use zero exploration and play perfectly.")
-
-        elif self._opponent_stage == 4:
-            if len(self._wist_win_history) >= 100:
-                recent_100 = sum(self._wist_win_history[-100:]) / 100
-                if recent_100 >= 0.9 or stagnated:
-                    self._opponent_stage = 5
-                    self._best_snapshot = snapshot_brain(self.discovery)
-                    self._log(f"  ** CURRICULUM: Stage 5 — Grandmaster (episode {episodes}) **")
-                    self._trigger("stage_5",
-                                  "CURRICULUM STAGE 5: Grandmaster level. "
-                                  "Training against population of diverse expert opponents.")
-
-        elif self._opponent_stage == 5:
-            # Keep updating best snapshot — no further graduation, just refinement.
-            if len(self._wist_win_history) >= 10:
-                if sum(self._wist_win_history[-10:]) / 10 >= 0.7:
-                    self._best_snapshot = snapshot_brain(self.discovery)
+        if len(self._wist_win_history) >= window:
+            recent_wr = sum(self._wist_win_history[-window:]) / window
+            if recent_wr >= required_wr or stagnated:
+                self._opponent_stage += 1
+                self._best_snapshot = snapshot_brain(self.discovery)
+                if not self._frozen_snapshot:
+                    self._frozen_snapshot = self._best_snapshot
+                self._last_discovery_episode_for_stage = episodes
+                next_config = STAGE_CONFIG.get(self._opponent_stage, {})
+                stage_name = next_config.get("name", f"Stage {self._opponent_stage}")
+                self._log(f"  ** CURRICULUM: Stage {self._opponent_stage} — {stage_name} (episode {episodes}) **")
+                reason = f"{recent_wr*100:.0f}% win rate" if not stagnated else "Stagnation detected"
+                self._trigger(f"stage_{self._opponent_stage}",
+                              f"CURRICULUM STAGE {self._opponent_stage} ({stage_name}): {reason}.")
+        elif stagnated:
+            self._opponent_stage += 1
+            self._best_snapshot = snapshot_brain(self.discovery)
+            if not self._frozen_snapshot:
+                self._frozen_snapshot = self._best_snapshot
+            self._last_discovery_episode_for_stage = episodes
+            next_config = STAGE_CONFIG.get(self._opponent_stage, {})
+            stage_name = next_config.get("name", f"Stage {self._opponent_stage}")
+            self._log(f"  ** CURRICULUM: Stage {self._opponent_stage} — {stage_name} (episode {episodes}) **")
+            self._trigger(f"stage_{self._opponent_stage}",
+                          f"CURRICULUM STAGE {self._opponent_stage} ({stage_name}): Stagnation detected.")
 
     # ─── Background Training ────────────────────────────────────────────────────
 

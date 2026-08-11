@@ -15,6 +15,10 @@ import json
 import os
 
 _INSIGHTS_CACHE_PATH = "agents/wist_discovery/insights_cache.json"
+_SNAPSHOTS_PATH = "agents/wist_discovery/strategy_snapshots.json"
+
+# Snapshot intervals for comparison-based insights.
+_SNAPSHOT_INTERVALS = [50000, 100000, 500000, 1000000, 2000000, 5000000]
 
 # Rank hex mapping for display.
 _RANK_NAMES = {
@@ -97,6 +101,9 @@ def generate_insights(agent) -> list:
     new_insights.extend(_mine_hand_size_patterns(play_items, episodes))
     new_insights.extend(_mine_bid_patterns(bid_q, episodes))
     new_insights.extend(_mine_counter_intuitive(play_items, episodes))
+
+    # Snapshot comparison insights (at milestones: 50K, 100K, 500K, 1M, etc.).
+    new_insights.extend(_check_and_take_snapshot(agent))
 
     # Dedup by core idea.
     new_insights = _dedup_merge(new_insights)
@@ -654,6 +661,177 @@ def _save_cache(insights):
             json.dump(to_save, f)
     except Exception:
         pass
+
+
+# ─── Snapshot Comparison System ──────────────────────────────────────────────────
+
+
+def _take_snapshot(agent) -> dict:
+    """Take a lightweight snapshot of current strategy preferences."""
+    play_items = list(agent.play_q.items())[:10000]
+    bid_items = list(agent.bid_q.items())[:2000]
+
+    # Aggregate: best action per state context (position, hand size).
+    pos_prefs = defaultdict(lambda: defaultdict(float))  # pos -> tier -> avg Q
+    suit_prefs = defaultdict(float)  # suit -> avg Q
+    bid_prefs = defaultdict(float)   # action -> avg Q
+    rank_prefs = defaultdict(float)  # rank -> avg Q
+    rank_counts = defaultdict(int)
+
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
+            continue
+        n_cards, pos = parsed
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            tier = _rank_tier(rank)
+            pos_prefs[pos][tier] += q
+            suit_prefs[suit] += q
+            rank_prefs[rank] += q
+            rank_counts[rank] += 1
+
+    # Normalize.
+    for rank in rank_prefs:
+        if rank_counts[rank] > 0:
+            rank_prefs[rank] /= rank_counts[rank]
+
+    for state, actions in bid_items:
+        for action, q in actions.items():
+            bid_prefs[action] += q
+
+    return {
+        "pos_prefs": {str(k): dict(v) for k, v in pos_prefs.items()},
+        "suit_prefs": dict(suit_prefs),
+        "bid_prefs": dict(bid_prefs),
+        "rank_prefs": dict(rank_prefs),
+    }
+
+
+def _load_snapshots() -> dict:
+    """Load saved snapshots {episode_str: snapshot_dict}."""
+    try:
+        if os.path.exists(_SNAPSHOTS_PATH):
+            with open(_SNAPSHOTS_PATH, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_snapshots(snapshots: dict):
+    """Save snapshots to disk."""
+    try:
+        with open(_SNAPSHOTS_PATH, "w") as f:
+            json.dump(snapshots, f)
+    except Exception:
+        pass
+
+
+def _check_and_take_snapshot(agent) -> list:
+    """Check if we should take a snapshot, compare with previous, generate insights."""
+    episodes = agent.episodes_trained
+    snapshots = _load_snapshots()
+    new_insights = []
+
+    # Check if we've crossed a snapshot interval.
+    for interval in _SNAPSHOT_INTERVALS:
+        key = str(interval)
+        if episodes >= interval and key not in snapshots:
+            # Take snapshot at this milestone.
+            snap = _take_snapshot(agent)
+            snapshots[key] = snap
+            _save_snapshots(snapshots)
+
+            # Compare with earlier snapshots.
+            new_insights.extend(_compare_snapshots(snapshots, interval, episodes))
+            break  # One snapshot per call.
+
+    return new_insights
+
+
+def _compare_snapshots(snapshots: dict, current_interval: int, episodes: int) -> list:
+    """Compare current snapshot with earlier ones to generate evolution insights."""
+    insights = []
+    current_key = str(current_interval)
+    current = snapshots.get(current_key)
+    if not current:
+        return insights
+
+    # Find the most recent earlier snapshot.
+    earlier_keys = sorted([int(k) for k in snapshots.keys() if int(k) < current_interval])
+    if not earlier_keys:
+        return insights
+
+    prev_key = str(earlier_keys[-1])
+    prev = snapshots[prev_key]
+
+    prev_label = f"{earlier_keys[-1]//1000}K" if earlier_keys[-1] < 1000000 else f"{earlier_keys[-1]//1000000}M"
+    curr_label = f"{current_interval//1000}K" if current_interval < 1000000 else f"{current_interval//1000000}M"
+
+    # Compare rank preferences.
+    prev_ranks = prev.get("rank_prefs", {})
+    curr_ranks = current.get("rank_prefs", {})
+    if prev_ranks and curr_ranks:
+        prev_best = max(prev_ranks, key=prev_ranks.get) if prev_ranks else None
+        curr_best = max(curr_ranks, key=curr_ranks.get) if curr_ranks else None
+        if prev_best and curr_best and prev_best != curr_best:
+            insights.append(_make(
+                f"Strategy shifted: at {prev_label} rank {_RANK_NAMES.get(int(prev_best), prev_best)} was strongest, now at {curr_label} rank {_RANK_NAMES.get(int(curr_best), curr_best)} dominates",
+                "counter-intuitive", 1, episodes,
+                why=f"the agent changed which cards it values most between {prev_label} and {curr_label}"
+            ))
+        elif prev_best and curr_best and prev_best == curr_best:
+            insights.append(_make(
+                f"Stable preference: rank {_RANK_NAMES.get(int(curr_best), curr_best)} has been the best-performing card since {prev_label}",
+                "timing", 1, episodes,
+                why="this card consistently leads to the highest rewards across training"
+            ))
+
+    # Compare suit preferences.
+    prev_suits = prev.get("suit_prefs", {})
+    curr_suits = current.get("suit_prefs", {})
+    if prev_suits and curr_suits:
+        prev_best_s = max(prev_suits, key=prev_suits.get) if prev_suits else None
+        curr_best_s = max(curr_suits, key=curr_suits.get) if curr_suits else None
+        if prev_best_s and curr_best_s and prev_best_s != curr_best_s:
+            insights.append(_make(
+                f"Suit preference changed: {_SUIT_NAMES.get(int(prev_best_s), '?')} was dominant at {prev_label}, now {_SUIT_NAMES.get(int(curr_best_s), '?')} is preferred at {curr_label}",
+                "trump", 1, episodes,
+                why="the agent's understanding of which suit matters most has evolved"
+            ))
+
+    # Compare bid preferences.
+    prev_bids = prev.get("bid_prefs", {})
+    curr_bids = current.get("bid_prefs", {})
+    if prev_bids and curr_bids:
+        prev_best_b = max(prev_bids, key=prev_bids.get) if prev_bids else None
+        curr_best_b = max(curr_bids, key=curr_bids.get) if curr_bids else None
+        if prev_best_b and curr_best_b and prev_best_b != curr_best_b:
+            insights.append(_make(
+                f"Bidding evolved: preferred {prev_best_b} at {prev_label}, now prefers {curr_best_b} at {curr_label}",
+                "bidding", 1, episodes,
+                why="the agent's confidence in hand evaluation has changed its bidding behavior"
+            ))
+
+    # Check for convergence (all suits/ranks getting similar values = matured strategy).
+    if curr_ranks and len(curr_ranks) >= 4:
+        values = list(curr_ranks.values())
+        spread = max(values) - min(values)
+        if prev_ranks:
+            prev_values = list(prev_ranks.values())
+            prev_spread = max(prev_values) - min(prev_values) if prev_values else spread
+            if spread < prev_spread * 0.5 and prev_spread > 0.1:
+                insights.append(_make(
+                    f"Strategy maturing: the gap between best and worst cards is shrinking (was {prev_spread:.2f}, now {spread:.2f})",
+                    "timing", 1, episodes,
+                    why="the agent is learning that card choice depends more on context than raw rank"
+                ))
+
+    return insights
 
 
 # ─── Public Helpers ──────────────────────────────────────────────────────────────

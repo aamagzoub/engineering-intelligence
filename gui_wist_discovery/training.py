@@ -19,6 +19,25 @@ from environments.wist.trick import Trick
 
 STAGE_STAGNATION_THRESHOLD = 5000  # Episodes without discovery to trigger graduation.
 
+# 15-stage curriculum graduation conditions.
+STAGE_CONFIG = {
+    1:  {"name": "Self-Play", "win_rate": 0.60, "window": 20},
+    2:  {"name": "Weak Mix", "win_rate": 0.70, "window": 20},
+    3:  {"name": "Frozen Past", "win_rate": 0.75, "window": 30},
+    4:  {"name": "Adversarial", "win_rate": 0.70, "window": 50},
+    5:  {"name": "Conservative", "win_rate": 0.75, "window": 50},
+    6:  {"name": "Aggressive", "win_rate": 0.70, "window": 50},
+    7:  {"name": "Mixed Styles", "win_rate": 0.75, "window": 50},
+    8:  {"name": "Elite", "win_rate": 0.65, "window": 100},
+    9:  {"name": "Population", "win_rate": 0.70, "window": 100},
+    10: {"name": "Counter-Strategy", "win_rate": 0.60, "window": 100},
+    11: {"name": "Tournament", "win_rate": 0.70, "window": 100},
+    12: {"name": "Pressure", "win_rate": 0.65, "window": 200},
+    13: {"name": "Endurance", "win_rate": 0.70, "window": 500},
+    14: {"name": "Grandmaster", "win_rate": 0.60, "window": 500},
+    15: {"name": "Infinite", "win_rate": 1.0, "window": 1000},  # Never graduates.
+}
+
 
 def snapshot_brain(agent):
     """Take a frozen copy of Q-tables (thread-safe)."""
@@ -35,48 +54,145 @@ def snapshot_brain(agent):
 
 def create_opponent(agent, stage, frozen_snapshot=None, best_snapshot=None):
     """
-    Create an opponent based on current curriculum stage.
-
-    Stage 1: Same brain (self-play).
-    Stage 2: Mixed (50% self + 30% weak snapshot + 20% random).
-    Stage 3: Adversarial (60% frozen best + 20% current + 20% random).
+    Create an opponent based on current curriculum stage (1-15).
     """
     opp = WistDiscoveryAgent(training=False)
 
     if stage == 1:
+        # Self-play: same brain.
         opp.play_q = agent.play_q
         opp.play_q2 = agent.play_q2
         opp.bid_q = agent.bid_q
         opp.bid_q2 = agent.bid_q2
         opp.epsilon = agent.epsilon
-        return opp
-
-    if stage == 2:
-        roll = random.random()
-        if roll < 0.5:
+    elif stage == 2:
+        # Weak mix: 70% self + 30% random.
+        if random.random() < 0.7:
             opp.play_q = agent.play_q
             opp.play_q2 = agent.play_q2
             opp.bid_q = agent.bid_q
             opp.bid_q2 = agent.bid_q2
             opp.epsilon = agent.epsilon
-        elif roll < 0.8 and frozen_snapshot:
-            _load_snapshot(opp, frozen_snapshot, epsilon=0.1)
         else:
             opp.epsilon = 1.0
-        return opp
-
-    # Stage 3: adversarial.
-    roll = random.random()
-    if best_snapshot and roll < 0.6:
-        _load_snapshot(opp, best_snapshot, epsilon=0.05)
-    elif roll < 0.8:
+    elif stage == 3:
+        # Frozen past: 50% self + 50% frozen.
+        if random.random() < 0.5 and frozen_snapshot:
+            _load_snapshot(opp, frozen_snapshot, epsilon=0.08)
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = agent.epsilon
+    elif stage == 4:
+        # Adversarial: 60% best + 40% self.
+        if best_snapshot and random.random() < 0.6:
+            _load_snapshot(opp, best_snapshot, epsilon=0.05)
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = agent.epsilon
+    elif stage == 5:
+        # Conservative: low epsilon opponents.
         opp.play_q = agent.play_q
         opp.play_q2 = agent.play_q2
         opp.bid_q = agent.bid_q
         opp.bid_q2 = agent.bid_q2
-        opp.epsilon = agent.epsilon
-    else:
-        opp.epsilon = 0.8
+        opp.epsilon = max(0.01, agent.epsilon * 0.2)
+    elif stage == 6:
+        # Aggressive: high epsilon opponents.
+        opp.play_q = agent.play_q
+        opp.play_q2 = agent.play_q2
+        opp.bid_q = agent.bid_q
+        opp.bid_q2 = agent.bid_q2
+        opp.epsilon = min(0.5, agent.epsilon * 3.0)
+    elif stage == 7:
+        # Mixed styles: rotate.
+        style = random.choice(["conservative", "aggressive", "wild", "self"])
+        opp.play_q = agent.play_q
+        opp.play_q2 = agent.play_q2
+        opp.bid_q = agent.bid_q
+        opp.bid_q2 = agent.bid_q2
+        if style == "conservative":
+            opp.epsilon = 0.02
+        elif style == "aggressive":
+            opp.epsilon = 0.4
+        elif style == "wild":
+            opp.epsilon = random.uniform(0.3, 0.8)
+        else:
+            opp.epsilon = agent.epsilon
+    elif stage == 8:
+        # Elite: zero exploration.
+        if best_snapshot and random.random() < 0.7:
+            _load_snapshot(opp, best_snapshot, epsilon=0.0)
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = 0.0
+    elif stage == 9:
+        # Population: frozen snapshots rotate.
+        if best_snapshot:
+            _load_snapshot(opp, best_snapshot, epsilon=random.uniform(0.0, 0.1))
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = 0.05
+    elif stage == 10:
+        # Counter-strategy: best snapshot + slight noise.
+        if best_snapshot:
+            _load_snapshot(opp, best_snapshot, epsilon=0.02)
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = 0.02
+    elif stage == 11:
+        # Tournament: mix of all previous strategies.
+        roll = random.random()
+        if roll < 0.3 and best_snapshot:
+            _load_snapshot(opp, best_snapshot, epsilon=0.0)
+        elif roll < 0.5 and frozen_snapshot:
+            _load_snapshot(opp, frozen_snapshot, epsilon=0.05)
+        elif roll < 0.7:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = 0.0
+        else:
+            opp.epsilon = random.uniform(0.0, 0.3)
+    elif stage == 12:
+        # Pressure: best play, tight margins.
+        if best_snapshot:
+            _load_snapshot(opp, best_snapshot, epsilon=0.0)
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = 0.0
+    elif stage >= 13:
+        # Grandmaster/Endurance/Infinite: diverse elite.
+        roll = random.random()
+        if best_snapshot and roll < 0.5:
+            _load_snapshot(opp, best_snapshot, epsilon=0.0)
+        elif frozen_snapshot and roll < 0.7:
+            _load_snapshot(opp, frozen_snapshot, epsilon=0.01)
+        else:
+            opp.play_q = agent.play_q
+            opp.play_q2 = agent.play_q2
+            opp.bid_q = agent.bid_q
+            opp.bid_q2 = agent.bid_q2
+            opp.epsilon = random.choice([0.0, 0.02, 0.05, 0.1])
+
     return opp
 
 
