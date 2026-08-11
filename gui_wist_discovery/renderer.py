@@ -564,33 +564,50 @@ class Renderer:
         state["_chip_rects"] = chip_rects
         y = chip_y + ch + 8
 
-        # Confidence filter — labeled presets, click to cycle.
+        # Confidence filter — range chips (same style as category chips).
         conf_filter = state.get("confidence_filter", 0) or 0
-        _CONF_PRESETS = [
-            (0, "All"),
-            (5, "Confirmed (5+)"),
-            (20, "Reliable (20+)"),
-            (50, "Strong (50+)"),
-            (100, "Proven (100+)"),
-            (500, "Rock-solid (500+)"),
-            (1000, "Fundamental (1000+)"),
+        _CONF_RANGES = [
+            ("NEW", 1, 4),
+            ("CONFIRMED", 5, 19),
+            ("RELIABLE", 20, 49),
+            ("STRONG", 50, 99),
+            ("PROVEN", 100, 499),
+            ("ROCK-SOLID", 500, 999),
+            ("FUNDAMENTAL", 1000, 999999),
         ]
-        # Find current label.
-        current_label = "All"
-        for threshold, label in _CONF_PRESETS:
-            if conf_filter >= threshold:
-                current_label = label
-        conf_surf = small_font.render(current_label, True, (255, 255, 255))
-        cw = conf_surf.get_width() + 12
-        ch = conf_surf.get_height() + 6
-        conf_rect = pygame.Rect(15, y, cw, ch)
-        hover_conf = conf_rect.collidepoint(pygame.mouse.get_pos())
-        bg_conf = (60, 60, 60) if hover_conf else (35, 35, 35)
-        pygame.draw.rect(self.screen, bg_conf, conf_rect, border_radius=4)
-        pygame.draw.rect(self.screen, (100, 100, 100), conf_rect, width=1, border_radius=4)
-        self.screen.blit(conf_surf, (15 + 6, y + 3))
-        state["_conf_rects"] = {"cycle": conf_rect}
-        y += ch + 10
+        conf_rects = {}
+        conf_x = 15
+        conf_y = y
+        all_insights = state.get("insights", [])
+
+        for label, low, high in _CONF_RANGES:
+            count = sum(1 for ins in all_insights
+                        if isinstance(ins, dict) and low <= ins.get("confidence", 1) <= high)
+            chip_label = f"{label} ({count})"
+            is_active = (conf_filter == low)
+            color = (100, 100, 140)
+            bg = color if is_active else (30, 30, 30)
+
+            chip_surf = chip_font.render(chip_label, True, (255, 255, 255))
+            cw = chip_surf.get_width() + 10
+            ch = chip_surf.get_height() + 6
+            chip_rect = pygame.Rect(conf_x, conf_y, cw, ch)
+
+            if conf_x + cw > panel_w - 20:
+                conf_y += ch + 3
+                conf_x = 15
+                chip_rect = pygame.Rect(conf_x, conf_y, cw, ch)
+
+            pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
+            pygame.draw.rect(self.screen, color, chip_rect, width=1, border_radius=4)
+            text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
+            text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
+            self.screen.blit(chip_surf, (text_x, text_y))
+            conf_rects[low] = chip_rect
+            conf_x += cw + 3
+
+        state["_conf_rects"] = conf_rects
+        y = conf_y + ch + 10
 
         insights = state.get("insights", [])
         if not insights:
@@ -608,10 +625,14 @@ class Renderer:
                             if (isinstance(ins, dict) and ins.get("category") == active_filter
                                 and ins.get("confidence", 1) >= 5)]
 
-        # Filter by confidence level.
+        # Filter by confidence range.
         if conf_filter:
+            # conf_filter is the low end of a range. Find the matching range.
+            _CONF_RANGE_MAP = {1: (1, 4), 5: (5, 19), 20: (20, 49), 50: (50, 99),
+                               100: (100, 499), 500: (500, 999), 1000: (1000, 999999)}
+            low, high = _CONF_RANGE_MAP.get(conf_filter, (conf_filter, 999999))
             insights = [ins for ins in insights
-                        if (isinstance(ins, dict) and ins.get("confidence", 1) >= conf_filter)]
+                        if (isinstance(ins, dict) and low <= ins.get("confidence", 1) <= high)]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)

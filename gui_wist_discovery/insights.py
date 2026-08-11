@@ -101,6 +101,7 @@ def generate_insights(agent) -> list:
     new_insights.extend(_mine_hand_size_patterns(play_items, episodes))
     new_insights.extend(_mine_bid_patterns(bid_q, episodes))
     new_insights.extend(_mine_counter_intuitive(play_items, episodes))
+    new_insights.extend(_mine_deep_patterns(play_items, episodes))
 
     # Snapshot comparison insights (at milestones: 50K, 100K, 500K, 1M, etc.).
     new_insights.extend(_check_and_take_snapshot(agent))
@@ -661,6 +662,162 @@ def _save_cache(insights):
             json.dump(to_save, f)
     except Exception:
         pass
+
+
+def _mine_deep_patterns(play_items, episodes) -> list:
+    """Deeper cross-dimensional analysis of the Q-table."""
+    insights = []
+
+    # 1. Position × Rank: does card strength depend on when you play?
+    pos_rank_avg = defaultdict(lambda: defaultdict(list))
+    # 2. Suit × Position: does suit value change by position?
+    pos_suit_avg = defaultdict(lambda: defaultdict(list))
+    # 3. Action diversity: how many good options per state?
+    positive_action_counts = []
+    # 4. Hand size effect on best Q-value.
+    handsize_bestq = defaultdict(list)
+
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
+            continue
+        n_cards, pos = parsed
+
+        # Count positive actions.
+        pos_count = sum(1 for q in actions.values() if q > 0)
+        positive_action_counts.append(pos_count)
+
+        # Best Q per hand size.
+        best_q = max(actions.values())
+        handsize_bestq[n_cards].append(best_q)
+
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            pos_rank_avg[pos][rank].append(q)
+            pos_suit_avg[pos][suit].append(q)
+
+    # Insight 1: Position × Rank interaction.
+    for pos in pos_rank_avg:
+        ranks = pos_rank_avg[pos]
+        rank_avgs = {r: sum(v)/len(v) for r, v in ranks.items() if len(v) >= 5}
+        if len(rank_avgs) < 3:
+            continue
+        best_r = max(rank_avgs, key=rank_avgs.get)
+        worst_r = min(rank_avgs, key=rank_avgs.get)
+        spread = rank_avgs[best_r] - rank_avgs[worst_r]
+        if spread < 0.3:
+            continue
+        pos_name = _POS_NAMES.get(pos, "this position")
+        best_name = _RANK_NAMES.get(best_r, str(best_r))
+        if best_r <= 7 and pos == 0:
+            insights.append(_make(
+                f"When leading a trick, low cards ({best_name}s) actually perform best, the agent uses them to probe safely",
+                "timing", 1, episodes,
+                why="leading low avoids wasting strong cards when you cannot see what opponents will play"
+            ))
+        elif best_r >= 13 and pos == 3:
+            insights.append(_make(
+                f"When playing last, high cards ({best_name}s) are most effective because you already know if they will win",
+                "timing", 1, episodes,
+                why="seeing all other cards before choosing means high cards are never wasted"
+            ))
+        elif best_r >= 13 and pos == 0:
+            insights.append(_make(
+                f"When leading, the agent leads with its strongest cards to seize control of the trick",
+                "timing", 1, episodes,
+                why="a strong opening forces opponents to spend their best cards or lose the trick"
+            ))
+        elif best_r <= 7 and pos == 3:
+            insights.append(_make(
+                f"When playing last, low cards work well because the trick is already decided and high cards are wasted",
+                "counter-intuitive", 1, episodes,
+                why="if your partner already won the trick, play your weakest to save strength for later"
+            ))
+
+    # Insight 2: Suit value changes by position.
+    for pos in pos_suit_avg:
+        suits = pos_suit_avg[pos]
+        suit_avgs = {s: sum(v)/len(v) for s, v in suits.items() if len(v) >= 10}
+        if len(suit_avgs) < 2:
+            continue
+        best_s = max(suit_avgs, key=suit_avgs.get)
+        worst_s = min(suit_avgs, key=suit_avgs.get)
+        spread = suit_avgs[best_s] - suit_avgs[worst_s]
+        if spread < 0.25:
+            continue
+        pos_name = _POS_NAMES.get(pos, "this position")
+        best_suit_name = _SUIT_NAMES.get(best_s, "?")
+        if pos == 0:
+            insights.append(_make(
+                f"When leading, {best_suit_name} cards score highest, the agent prefers to lead from this suit",
+                "trump", 1, episodes,
+                why="leading from your strongest suit forces others into difficult positions"
+            ))
+        elif pos == 3:
+            insights.append(_make(
+                f"When playing last, {best_suit_name} is the most valuable suit to hold",
+                "trump", 1, episodes,
+                why="having cards in the right suit when playing last lets you control outcomes"
+            ))
+
+    # Insight 3: Action diversity — how decisive is the agent?
+    if positive_action_counts and len(positive_action_counts) >= 50:
+        avg_positives = sum(positive_action_counts) / len(positive_action_counts)
+        if avg_positives < 2:
+            insights.append(_make(
+                "In most situations the agent sees only 1-2 good options, it has developed strong preferences",
+                "timing", 1, episodes,
+                why="fewer positive options means the agent clearly knows what works and what does not"
+            ))
+        elif avg_positives > 5:
+            insights.append(_make(
+                "The agent still sees many cards as roughly equal in most situations, strategy is still forming",
+                "timing", 1, episodes,
+                why="many positive options suggests the agent has not yet learned precise card selection"
+            ))
+
+    # Insight 4: Does hand size affect confidence?
+    if handsize_bestq:
+        early_qs = [q for n, qs in handsize_bestq.items() if n >= 10 for q in qs]
+        late_qs = [q for n, qs in handsize_bestq.items() if n <= 4 for q in qs]
+        if early_qs and late_qs and len(early_qs) >= 10 and len(late_qs) >= 10:
+            early_avg = sum(early_qs) / len(early_qs)
+            late_avg = sum(late_qs) / len(late_qs)
+            if late_avg > early_avg + 0.2:
+                insights.append(_make(
+                    "The agent is more confident in late tricks when fewer cards remain, decisions become clearer",
+                    "timing", 1, episodes,
+                    why="with fewer unknowns, the agent can predict outcomes better and chooses more decisively"
+                ))
+            elif early_avg > late_avg + 0.2:
+                insights.append(_make(
+                    "The agent is more confident early when it has a full hand, suggesting strong opening strategy",
+                    "timing", 1, episodes,
+                    why="full hands give more options and the agent has learned which openers work best"
+                ))
+
+    # Insight 5: Suit concentration — does one suit dominate across all positions?
+    overall_suit = defaultdict(list)
+    for pos in pos_suit_avg:
+        for suit, qs in pos_suit_avg[pos].items():
+            overall_suit[suit].extend(qs)
+    if overall_suit:
+        suit_totals = {s: sum(v)/len(v) for s, v in overall_suit.items() if len(v) >= 20}
+        if len(suit_totals) >= 3:
+            sorted_suits = sorted(suit_totals.items(), key=lambda x: -x[1])
+            top = sorted_suits[0]
+            bottom = sorted_suits[-1]
+            if top[1] - bottom[1] > 0.3:
+                insights.append(_make(
+                    f"{_SUIT_NAMES.get(top[0], '?').capitalize()} is the agent's strongest suit overall while {_SUIT_NAMES.get(bottom[0], '?')} is weakest, possibly reflecting trump awareness",
+                    "trump", 1, episodes,
+                    why="one suit consistently scoring higher across all positions suggests the agent knows which suit is trump"
+                ))
+
+    return insights[:15]  # Cap to avoid flooding.
 
 
 # ─── Snapshot Comparison System ──────────────────────────────────────────────────

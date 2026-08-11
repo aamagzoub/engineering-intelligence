@@ -657,20 +657,13 @@ class WistDiscoveryWatcher:
                             self._insight_filter = cat  # Toggle on.
                         self._insight_scroll_offset = 0
                         break
-                # Check confidence filter clicks (cycle presets).
+                # Check confidence filter clicks (range chips).
                 for key, rect in getattr(self, '_conf_rects', {}).items():
                     if rect.collidepoint(event.pos):
-                        _CONF_THRESHOLDS = [0, 5, 20, 50, 100, 500, 1000]
-                        current = self._confidence_filter or 0
-                        # Find next threshold in cycle.
-                        try:
-                            idx = _CONF_THRESHOLDS.index(current)
-                            next_idx = (idx + 1) % len(_CONF_THRESHOLDS)
-                        except ValueError:
-                            next_idx = 0
-                        self._confidence_filter = _CONF_THRESHOLDS[next_idx]
-                        if self._confidence_filter == 0:
-                            self._confidence_filter = None
+                        if self._confidence_filter == key:
+                            self._confidence_filter = None  # Toggle off.
+                        else:
+                            self._confidence_filter = key  # Toggle on (key = low end of range).
                         self._insight_scroll_offset = 0
                         break
             elif event.type == pygame.MOUSEWHEEL:
