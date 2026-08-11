@@ -3,7 +3,7 @@ Sudanese Wist -- Discovery Watcher
 
 Watch a Discovery AI learn Wist from scratch with only:
 - Environment (there's a game)
-- Legal moves (what cards/bids are allowed)
+- Legal moves (what cards/bids are allowed)team2 
 - Score signal (end-of-shota points)
 
 Usage:
@@ -232,7 +232,7 @@ class WistDiscoveryWatcher:
         """Play a single trick."""
         trick_cards, winner, winner_team = play_trick(
             self._round, self._env, self._agents_list,
-            self._players, self.discovery, use_mcts=True,
+            self._players, self.discovery, use_mcts=False,
         )
 
         self._team_tricks[self._players[winner].team_id] += 1
@@ -514,11 +514,31 @@ class WistDiscoveryWatcher:
                     "wist_win_history": self._wist_win_history,
                 }
                 auto_discover(self._auto_stats, context, self._trigger)
+                # Track per-team stats from background training.
+                if tt[0] > tt[1]:
+                    self._shotas_won_t1 += 1
+                elif tt[1] > tt[0]:
+                    self._shotas_won_t2 += 1
+                if playing_team == 0 and bid_met:
+                    self._bids_met_t1 += 1
+                elif playing_team == 1 and bid_met:
+                    self._bids_met_t2 += 1
+                if tt[0] == 13:
+                    self._seeks_t1 += 1
+                if tt[1] == 13:
+                    self._seeks_t2 += 1
 
-            win_history = run_background_training(agent, opp, num_shotas=10000,
+            win_history = run_background_training(agent, opp, num_shotas=5000,
                                                   milestone_callback=milestone_cb,
                                                   should_pause=lambda: self.paused)
             self._wist_win_history.extend(win_history)
+
+            # Track games won from background training.
+            for won in win_history:
+                if won:
+                    self._team1_wins += 1
+                else:
+                    self._team2_wins += 1
 
             # Cap win history to avoid unbounded memory growth.
             if len(self._wist_win_history) > 5000:
