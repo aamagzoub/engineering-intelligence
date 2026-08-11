@@ -127,6 +127,14 @@ def generate_insights(agent) -> list:
             accumulated.append(ins)
             acc_texts.add(ins["text"])
 
+    # Fix capitalization after dots in all texts.
+    for ins in accumulated:
+        if isinstance(ins, dict):
+            if ins.get("text"):
+                ins["text"] = _capitalize_after_dots(ins["text"])
+            if ins.get("why"):
+                ins["why"] = _capitalize_after_dots(ins["why"])
+
     _save_cache(accumulated)
     return accumulated
 
@@ -642,6 +650,12 @@ def _load_cache() -> list:
     except Exception:
         pass
     return []
+
+
+def _capitalize_after_dots(text: str) -> str:
+    """Ensure every sentence starts with a capital letter."""
+    import re
+    return re.sub(r'(\. )([a-z])', lambda m: m.group(1) + m.group(2).upper(), text)
 
 
 def _save_cache(insights):
