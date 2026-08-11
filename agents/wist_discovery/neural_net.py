@@ -17,19 +17,38 @@ from collections import Counter
 
 class CardEvaluator:
     """
-    Neural network that evaluates a single card in context.
-    
-    3 hidden layers × 128 neurons. Larger capacity for complex patterns.
-    Supports batch training for stable gradients.
+    Neural network with self-attention that evaluates a single card in context.
+
+    Architecture:
+    1. Self-attention layer — learns which input features matter for this decision
+    2. 3 hidden layers × hidden_size neurons — standard feedforward
+    3. Single output — Q-value for this card
+
+    The attention layer groups inputs into chunks and computes importance weights
+    dynamically. This lets the network focus on "what matters now" rather than
+    treating all 138 inputs equally.
     """
 
-    def __init__(self, input_size: int = 84, hidden_size: int = 128,
-                 learning_rate: float = 0.001):
+    def __init__(self, input_size: int = 138, hidden_size: int = 256,
+                 learning_rate: float = 0.001, n_heads: int = 4):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.lr = learning_rate
+        self.n_heads = n_heads
 
-        # Xavier initialization — 3 hidden layers.
+        # === Self-Attention Layer ===
+        # Query, Key, Value projections (simplified single-layer attention).
+        # Groups input into n_heads chunks and computes attention weights.
+        self.head_dim = input_size // n_heads
+        # Attention weights: project input to attention scores.
+        sa = np.sqrt(2.0 / input_size)
+        self.w_attn = np.random.randn(input_size, n_heads) * sa  # → attention logits per head.
+        self.b_attn = np.zeros(n_heads)
+        # Value projection: transform input per head.
+        self.w_val = np.random.randn(input_size, input_size) * sa
+        self.b_val = np.zeros(input_size)
+
+        # === Feedforward Layers ===
         s1 = np.sqrt(2.0 / input_size)
         s2 = np.sqrt(2.0 / hidden_size)
         s3 = np.sqrt(2.0 / hidden_size)
@@ -49,16 +68,38 @@ class CardEvaluator:
         self._batch_y: list = []
         self._batch_size = 32
 
+    def _attend(self, x: np.ndarray) -> np.ndarray:
+        """Apply self-attention: compute importance weights and re-weight input."""
+        # Attention scores (n_heads values).
+        attn_logits = x @ self.w_attn + self.b_attn  # (n_heads,)
+        # Softmax over heads.
+        attn_exp = np.exp(attn_logits - attn_logits.max())
+        attn_weights = attn_exp / (attn_exp.sum() + 1e-8)  # (n_heads,)
+        # Value projection.
+        values = np.maximum(0, x @ self.w_val + self.b_val)  # (input_size,)
+        # Weighted combination: scale input chunks by attention.
+        chunk_size = self.input_size // self.n_heads
+        attended = np.zeros(self.input_size)
+        for h in range(self.n_heads):
+            start = h * chunk_size
+            end = start + chunk_size
+            attended[start:end] = values[start:end] * attn_weights[h]
+        # Residual connection: original + attended.
+        return x + attended
+
     def predict(self, x: np.ndarray) -> float:
-        """Forward pass — returns single Q-value."""
-        h1 = np.maximum(0, x @ self.w1 + self.b1)
+        """Forward pass with attention — returns single Q-value."""
+        x_att = self._attend(x)
+        h1 = np.maximum(0, x_att @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
         h3 = np.maximum(0, h2 @ self.w3 + self.b3)
         return float((h3 @ self.w4 + self.b4)[0])
 
     def predict_batch(self, batch: np.ndarray) -> np.ndarray:
-        """Evaluate multiple feature vectors at once."""
-        h1 = np.maximum(0, batch @ self.w1 + self.b1)
+        """Evaluate multiple feature vectors at once (with attention)."""
+        # Apply attention per sample.
+        attended = np.array([self._attend(x) for x in batch])
+        h1 = np.maximum(0, attended @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
         h3 = np.maximum(0, h2 @ self.w3 + self.b3)
         return (h3 @ self.w4 + self.b4).flatten()
@@ -71,11 +112,10 @@ class CardEvaluator:
             self._flush_batch()
 
     def _flush_batch(self):
-        """Train on accumulated batch — more stable gradients."""
+        """Train on accumulated batch with attention — more stable gradients."""
         if not self._batch_x:
             return
 
-        # Snapshot and clear atomically to avoid race conditions with concurrent writes.
         batch_x_list = self._batch_x
         batch_y_list = self._batch_y
         self._batch_x = []
@@ -85,30 +125,28 @@ class CardEvaluator:
         batch_y = np.array(batch_y_list)
         n = len(batch_x)
 
-        # Validate shapes match (defensive against concurrent modification).
         if len(batch_y) != n:
             return
 
-        # Forward pass (batch).
-        h1 = np.maximum(0, batch_x @ self.w1 + self.b1)
+        # Apply attention (per sample — simpler backprop).
+        attended = np.array([self._attend(x) for x in batch_x])
+
+        # Forward pass (batch) through feedforward layers.
+        h1 = np.maximum(0, attended @ self.w1 + self.b1)
         h2 = np.maximum(0, h1 @ self.w2 + self.b2)
         h3 = np.maximum(0, h2 @ self.w3 + self.b3)
         predictions = (h3 @ self.w4 + self.b4).flatten()
 
-        # Validate prediction shape matches batch.
         if predictions.shape[0] != n:
             return
 
-        # Error.
-        errors = batch_y - predictions  # (n,)
-
-        # Backprop (averaged over batch).
-        d_out = (-2.0 / n) * errors.reshape(-1, 1)  # (n, 1)
+        errors = batch_y - predictions
+        d_out = (-2.0 / n) * errors.reshape(-1, 1)
 
         # Layer 4.
-        d_w4 = h3.T @ d_out  # (hidden, 1)
+        d_w4 = h3.T @ d_out
         d_b4 = d_out.sum(axis=0)
-        d_h3 = d_out @ self.w4.T  # (n, hidden)
+        d_h3 = d_out @ self.w4.T
         d_h3[h3 <= 0] = 0
 
         # Layer 3.
@@ -124,17 +162,26 @@ class CardEvaluator:
         d_h1[h1 <= 0] = 0
 
         # Layer 1.
-        d_w1 = batch_x.T @ d_h1
+        d_w1 = attended.T @ d_h1
         d_b1 = d_h1.sum(axis=0)
+
+        # Backprop through attention (simplified: update w_val and w_attn).
+        d_attended = d_h1 @ self.w1.T  # Gradient flowing back to attention output.
+        # Update value projection weights.
+        d_w_val = batch_x.T @ d_attended
+        d_b_val = d_attended.sum(axis=0)
+        # Update attention weights (approximate: use mean gradient signal).
+        attn_grad = np.mean(d_attended * batch_x, axis=0).reshape(-1, 1) @ np.ones((1, self.n_heads))
+        d_w_attn = batch_x.T @ (d_attended @ self.w_attn) * 0.1  # Scaled down for stability.
 
         # Gradient clipping.
         max_norm = 5.0
-        for grad in [d_w1, d_w2, d_w3, d_w4]:
+        for grad in [d_w1, d_w2, d_w3, d_w4, d_w_val, d_w_attn]:
             norm = np.linalg.norm(grad)
             if norm > max_norm:
                 grad *= max_norm / norm
 
-        # SGD step.
+        # SGD step — feedforward layers.
         self.w1 -= self.lr * d_w1
         self.b1 -= self.lr * d_b1
         self.w2 -= self.lr * d_w2
@@ -144,13 +191,21 @@ class CardEvaluator:
         self.w4 -= self.lr * d_w4
         self.b4 -= self.lr * d_b4
 
-        # Clear batch.
+        # SGD step — attention layers.
+        self.w_val -= self.lr * d_w_val
+        self.b_val -= self.lr * d_b_val
+        self.w_attn -= self.lr * 0.1 * d_w_attn  # Lower LR for attention stability.
+
         self._batch_x.clear()
         self._batch_y.clear()
 
     def copy(self) -> "CardEvaluator":
         """Create a frozen copy (for target network)."""
-        clone = CardEvaluator(self.input_size, self.hidden_size, self.lr)
+        clone = CardEvaluator(self.input_size, self.hidden_size, self.lr, self.n_heads)
+        clone.w_attn = self.w_attn.copy()
+        clone.b_attn = self.b_attn.copy()
+        clone.w_val = self.w_val.copy()
+        clone.b_val = self.b_val.copy()
         clone.w1 = self.w1.copy()
         clone.b1 = self.b1.copy()
         clone.w2 = self.w2.copy()
@@ -161,23 +216,30 @@ class CardEvaluator:
         clone.b4 = self.b4.copy()
         return clone
 
-        return error ** 2
-
     def to_dict(self) -> dict:
         return {
+            "w_attn": self.w_attn.tolist(), "b_attn": self.b_attn.tolist(),
+            "w_val": self.w_val.tolist(), "b_val": self.b_val.tolist(),
             "w1": self.w1.tolist(), "b1": self.b1.tolist(),
             "w2": self.w2.tolist(), "b2": self.b2.tolist(),
             "w3": self.w3.tolist(), "b3": self.b3.tolist(),
             "w4": self.w4.tolist(), "b4": self.b4.tolist(),
             "input_size": self.input_size,
             "hidden_size": self.hidden_size, "lr": self.lr,
+            "n_heads": self.n_heads,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "CardEvaluator":
         net = cls(input_size=data["input_size"],
                   hidden_size=data["hidden_size"],
-                  learning_rate=data.get("lr", 0.001))
+                  learning_rate=data.get("lr", 0.001),
+                  n_heads=data.get("n_heads", 4))
+        if "w_attn" in data:
+            net.w_attn = np.array(data["w_attn"])
+            net.b_attn = np.array(data["b_attn"])
+            net.w_val = np.array(data["w_val"])
+            net.b_val = np.array(data["b_val"])
         net.w1 = np.array(data["w1"])
         net.b1 = np.array(data["b1"])
         net.w2 = np.array(data["w2"])
