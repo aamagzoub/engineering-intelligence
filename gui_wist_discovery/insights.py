@@ -17,8 +17,8 @@ import os
 _INSIGHTS_CACHE_PATH = "agents/wist_discovery/insights_cache.json"
 _SNAPSHOTS_PATH = "agents/wist_discovery/strategy_snapshots.json"
 
-# Snapshot intervals for comparison-based insights.
-_SNAPSHOT_INTERVALS = [50000, 100000, 500000, 1000000, 2000000, 5000000]
+# Snapshot intervals for comparison-based insights (recurring).
+_SNAPSHOT_INTERVALS = [50000, 100000, 500000, 1000000]
 
 # Rank hex mapping for display.
 _RANK_NAMES = {
@@ -732,104 +732,128 @@ def _save_snapshots(snapshots: dict):
 
 
 def _check_and_take_snapshot(agent) -> list:
-    """Check if we should take a snapshot, compare with previous, generate insights."""
+    """
+    Recurring snapshot system. At every interval boundary, take a snapshot
+    and compare with the previous snapshot at that same interval.
+
+    E.g., at episode 150000:
+    - 50K interval: snapshot #3 (compare with snapshot #2 at 100K)
+    - 100K interval: snapshot #1 (first at this interval, no comparison yet)
+
+    Snapshots stored as: {interval: {slot_number: snapshot_data}}
+    """
     episodes = agent.episodes_trained
     snapshots = _load_snapshots()
     new_insights = []
 
-    # Check if we've crossed a snapshot interval.
     for interval in _SNAPSHOT_INTERVALS:
-        key = str(interval)
-        if episodes >= interval and key not in snapshots:
-            # Take snapshot at this milestone.
-            snap = _take_snapshot(agent)
-            snapshots[key] = snap
-            _save_snapshots(snapshots)
+        # Which slot are we at? E.g., episodes=150000, interval=50000 → slot 3.
+        current_slot = episodes // interval
+        if current_slot < 1:
+            continue
 
-            # Compare with earlier snapshots.
-            new_insights.extend(_compare_snapshots(snapshots, interval, episodes))
-            break  # One snapshot per call.
+        interval_key = str(interval)
+        if interval_key not in snapshots:
+            snapshots[interval_key] = {}
+
+        slot_key = str(current_slot)
+        if slot_key in snapshots[interval_key]:
+            continue  # Already have this snapshot.
+
+        # Take snapshot for this slot.
+        snap = _take_snapshot(agent)
+        snapshots[interval_key][slot_key] = snap
+
+        # Compare with previous slot if it exists.
+        prev_slot_key = str(current_slot - 1)
+        if prev_slot_key in snapshots[interval_key]:
+            prev = snapshots[interval_key][prev_slot_key]
+            # Label: e.g., "1.9M→2.0M" or "100K→150K"
+            prev_ep = (current_slot - 1) * interval
+            curr_ep = current_slot * interval
+            prev_label = _format_ep(prev_ep)
+            curr_label = _format_ep(curr_ep)
+            interval_label = _format_ep(interval)
+
+            new_insights.extend(
+                _compare_two_snapshots(prev, snap, prev_label, curr_label, interval_label, episodes)
+            )
+
+        _save_snapshots(snapshots)
 
     return new_insights
 
 
-def _compare_snapshots(snapshots: dict, current_interval: int, episodes: int) -> list:
-    """Compare current snapshot with earlier ones to generate evolution insights."""
+def _format_ep(ep: int) -> str:
+    """Format episode count as readable string."""
+    if ep >= 1000000:
+        return f"{ep / 1000000:.1f}M"
+    elif ep >= 1000:
+        return f"{ep // 1000}K"
+    return str(ep)
+
+
+def _compare_two_snapshots(prev, current, prev_label, curr_label, interval_label, episodes) -> list:
+    """Compare two snapshots and generate insights about what changed."""
     insights = []
-    current_key = str(current_interval)
-    current = snapshots.get(current_key)
-    if not current:
-        return insights
-
-    # Find the most recent earlier snapshot.
-    earlier_keys = sorted([int(k) for k in snapshots.keys() if int(k) < current_interval])
-    if not earlier_keys:
-        return insights
-
-    prev_key = str(earlier_keys[-1])
-    prev = snapshots[prev_key]
-
-    prev_label = f"{earlier_keys[-1]//1000}K" if earlier_keys[-1] < 1000000 else f"{earlier_keys[-1]//1000000}M"
-    curr_label = f"{current_interval//1000}K" if current_interval < 1000000 else f"{current_interval//1000000}M"
 
     # Compare rank preferences.
     prev_ranks = prev.get("rank_prefs", {})
     curr_ranks = current.get("rank_prefs", {})
     if prev_ranks and curr_ranks:
-        prev_best = max(prev_ranks, key=prev_ranks.get) if prev_ranks else None
-        curr_best = max(curr_ranks, key=curr_ranks.get) if curr_ranks else None
-        if prev_best and curr_best and prev_best != curr_best:
+        prev_best = max(prev_ranks, key=prev_ranks.get)
+        curr_best = max(curr_ranks, key=curr_ranks.get)
+        if prev_best != curr_best:
             insights.append(_make(
-                f"Strategy shifted: at {prev_label} rank {_RANK_NAMES.get(int(prev_best), prev_best)} was strongest, now at {curr_label} rank {_RANK_NAMES.get(int(curr_best), curr_best)} dominates",
+                f"Between {prev_label} and {curr_label}: strongest card shifted from {_RANK_NAMES.get(int(prev_best), prev_best)} to {_RANK_NAMES.get(int(curr_best), curr_best)}",
                 "counter-intuitive", 1, episodes,
-                why=f"the agent changed which cards it values most between {prev_label} and {curr_label}"
-            ))
-        elif prev_best and curr_best and prev_best == curr_best:
-            insights.append(_make(
-                f"Stable preference: rank {_RANK_NAMES.get(int(curr_best), curr_best)} has been the best-performing card since {prev_label}",
-                "timing", 1, episodes,
-                why="this card consistently leads to the highest rewards across training"
+                why=f"over {interval_label} episodes the agent changed which card rank it values most"
             ))
 
     # Compare suit preferences.
     prev_suits = prev.get("suit_prefs", {})
     curr_suits = current.get("suit_prefs", {})
     if prev_suits and curr_suits:
-        prev_best_s = max(prev_suits, key=prev_suits.get) if prev_suits else None
-        curr_best_s = max(curr_suits, key=curr_suits.get) if curr_suits else None
-        if prev_best_s and curr_best_s and prev_best_s != curr_best_s:
+        prev_best_s = max(prev_suits, key=prev_suits.get)
+        curr_best_s = max(curr_suits, key=curr_suits.get)
+        if prev_best_s != curr_best_s:
             insights.append(_make(
-                f"Suit preference changed: {_SUIT_NAMES.get(int(prev_best_s), '?')} was dominant at {prev_label}, now {_SUIT_NAMES.get(int(curr_best_s), '?')} is preferred at {curr_label}",
+                f"Between {prev_label} and {curr_label}: dominant suit changed from {_SUIT_NAMES.get(int(prev_best_s), '?')} to {_SUIT_NAMES.get(int(curr_best_s), '?')}",
                 "trump", 1, episodes,
-                why="the agent's understanding of which suit matters most has evolved"
+                why=f"the agent's suit preference evolved over {interval_label} episodes"
             ))
 
     # Compare bid preferences.
     prev_bids = prev.get("bid_prefs", {})
     curr_bids = current.get("bid_prefs", {})
     if prev_bids and curr_bids:
-        prev_best_b = max(prev_bids, key=prev_bids.get) if prev_bids else None
-        curr_best_b = max(curr_bids, key=curr_bids.get) if curr_bids else None
-        if prev_best_b and curr_best_b and prev_best_b != curr_best_b:
+        prev_best_b = max(prev_bids, key=prev_bids.get)
+        curr_best_b = max(curr_bids, key=curr_bids.get)
+        if prev_best_b != curr_best_b:
             insights.append(_make(
-                f"Bidding evolved: preferred {prev_best_b} at {prev_label}, now prefers {curr_best_b} at {curr_label}",
+                f"Between {prev_label} and {curr_label}: bidding preference changed from {prev_best_b} to {curr_best_b}",
                 "bidding", 1, episodes,
-                why="the agent's confidence in hand evaluation has changed its bidding behavior"
+                why=f"bidding strategy evolved over {interval_label} episodes of play"
             ))
 
-    # Check for convergence (all suits/ranks getting similar values = matured strategy).
-    if curr_ranks and len(curr_ranks) >= 4:
-        values = list(curr_ranks.values())
-        spread = max(values) - min(values)
-        if prev_ranks:
-            prev_values = list(prev_ranks.values())
-            prev_spread = max(prev_values) - min(prev_values) if prev_values else spread
-            if spread < prev_spread * 0.5 and prev_spread > 0.1:
-                insights.append(_make(
-                    f"Strategy maturing: the gap between best and worst cards is shrinking (was {prev_spread:.2f}, now {spread:.2f})",
-                    "timing", 1, episodes,
-                    why="the agent is learning that card choice depends more on context than raw rank"
-                ))
+    # Check for convergence or divergence in rank values.
+    if curr_ranks and prev_ranks and len(curr_ranks) >= 4 and len(prev_ranks) >= 4:
+        curr_values = list(curr_ranks.values())
+        prev_values = list(prev_ranks.values())
+        curr_spread = max(curr_values) - min(curr_values)
+        prev_spread = max(prev_values) - min(prev_values)
+        if prev_spread > 0.1 and curr_spread < prev_spread * 0.5:
+            insights.append(_make(
+                f"Between {prev_label} and {curr_label}: card values are converging, context matters more than raw rank now",
+                "timing", 1, episodes,
+                why=f"the agent learned that WHEN to play matters more than WHAT to play"
+            ))
+        elif curr_spread > prev_spread * 1.5 and prev_spread > 0.05:
+            insights.append(_make(
+                f"Between {prev_label} and {curr_label}: card rank differences are widening, the agent is more decisive about which cards are best",
+                "timing", 1, episodes,
+                why=f"stronger opinions forming about card strength hierarchy"
+            ))
 
     return insights
 
