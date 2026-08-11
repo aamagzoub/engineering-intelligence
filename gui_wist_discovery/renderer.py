@@ -548,41 +548,33 @@ class Renderer:
         state["_chip_rects"] = chip_rects
         y = chip_y + ch + 8
 
-        # Confidence filter — scrollable number picker.
+        # Confidence filter — labeled presets, click to cycle.
         conf_filter = state.get("confidence_filter", 0) or 0
-        conf_label = small_font.render("Min confidence:", True, TEXT_WHITE)
-        self.screen.blit(conf_label, (15, y))
-        conf_x = 15 + conf_label.get_width() + 6
-
-        # Left arrow "<".
-        left_surf = small_font.render("<", True, (255, 255, 255))
-        lw = left_surf.get_width() + 6
-        lh = left_surf.get_height() + 4
-        left_rect = pygame.Rect(conf_x, y, lw, lh)
-        pygame.draw.rect(self.screen, (50, 50, 50), left_rect, border_radius=3)
-        pygame.draw.rect(self.screen, (100, 100, 100), left_rect, width=1, border_radius=3)
-        self.screen.blit(left_surf, (conf_x + 3, y + 2))
-        conf_x += lw + 2
-
-        # Current value.
-        val_text = str(conf_filter) if conf_filter > 0 else "All"
-        val_surf = small_font.render(val_text, True, (255, 255, 255))
-        vw = max(val_surf.get_width() + 8, 28)
-        val_rect = pygame.Rect(conf_x, y, vw, lh)
-        pygame.draw.rect(self.screen, (60, 60, 60), val_rect, border_radius=3)
-        self.screen.blit(val_surf, (conf_x + (vw - val_surf.get_width()) // 2, y + 2))
-        conf_x += vw + 2
-
-        # Right arrow ">".
-        right_surf = small_font.render(">", True, (255, 255, 255))
-        rw = right_surf.get_width() + 6
-        right_rect = pygame.Rect(conf_x, y, rw, lh)
-        pygame.draw.rect(self.screen, (50, 50, 50), right_rect, border_radius=3)
-        pygame.draw.rect(self.screen, (100, 100, 100), right_rect, width=1, border_radius=3)
-        self.screen.blit(right_surf, (conf_x + 3, y + 2))
-
-        state["_conf_rects"] = {"left": left_rect, "right": right_rect}
-        y += lh + 10
+        _CONF_PRESETS = [
+            (0, "All"),
+            (5, "Confirmed (5+)"),
+            (20, "Reliable (20+)"),
+            (50, "Strong (50+)"),
+            (100, "Proven (100+)"),
+            (500, "Rock-solid (500+)"),
+            (1000, "Fundamental (1000+)"),
+        ]
+        # Find current label.
+        current_label = "All"
+        for threshold, label in _CONF_PRESETS:
+            if conf_filter >= threshold:
+                current_label = label
+        conf_surf = small_font.render(current_label, True, (255, 255, 255))
+        cw = conf_surf.get_width() + 12
+        ch = conf_surf.get_height() + 6
+        conf_rect = pygame.Rect(15, y, cw, ch)
+        hover_conf = conf_rect.collidepoint(pygame.mouse.get_pos())
+        bg_conf = (60, 60, 60) if hover_conf else (35, 35, 35)
+        pygame.draw.rect(self.screen, bg_conf, conf_rect, border_radius=4)
+        pygame.draw.rect(self.screen, (100, 100, 100), conf_rect, width=1, border_radius=4)
+        self.screen.blit(conf_surf, (15 + 6, y + 3))
+        state["_conf_rects"] = {"cycle": conf_rect}
+        y += ch + 10
 
         insights = state.get("insights", [])
         if not insights:
