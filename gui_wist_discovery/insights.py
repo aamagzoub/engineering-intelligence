@@ -794,7 +794,7 @@ def _format_ep(ep: int) -> str:
 
 
 def _compare_two_snapshots(prev, current, prev_label, curr_label, interval_label, episodes) -> list:
-    """Compare two snapshots and generate insights about what changed."""
+    """Compare two snapshots and generate insights about what changed. Plain English, no episode labels."""
     insights = []
 
     # Compare rank preferences.
@@ -804,10 +804,12 @@ def _compare_two_snapshots(prev, current, prev_label, curr_label, interval_label
         prev_best = max(prev_ranks, key=prev_ranks.get)
         curr_best = max(curr_ranks, key=curr_ranks.get)
         if prev_best != curr_best:
+            prev_name = _RANK_NAMES.get(int(prev_best), prev_best)
+            curr_name = _RANK_NAMES.get(int(curr_best), curr_best)
             insights.append(_make(
-                f"Between {prev_label} and {curr_label}: strongest card shifted from {_RANK_NAMES.get(int(prev_best), prev_best)} to {_RANK_NAMES.get(int(curr_best), curr_best)}",
+                f"The agent shifted from valuing {prev_name}s most to preferring {curr_name}s, suggesting a change in how it evaluates card strength",
                 "counter-intuitive", 1, episodes,
-                why=f"over {interval_label} episodes the agent changed which card rank it values most"
+                why=f"the highest-reward card changed, indicating the agent discovered a new pattern about which cards win"
             ))
 
     # Compare suit preferences.
@@ -817,10 +819,12 @@ def _compare_two_snapshots(prev, current, prev_label, curr_label, interval_label
         prev_best_s = max(prev_suits, key=prev_suits.get)
         curr_best_s = max(curr_suits, key=curr_suits.get)
         if prev_best_s != curr_best_s:
+            prev_s = _SUIT_NAMES.get(int(prev_best_s), '?')
+            curr_s = _SUIT_NAMES.get(int(curr_best_s), '?')
             insights.append(_make(
-                f"Between {prev_label} and {curr_label}: dominant suit changed from {_SUIT_NAMES.get(int(prev_best_s), '?')} to {_SUIT_NAMES.get(int(curr_best_s), '?')}",
+                f"The dominant suit changed from {prev_s} to {curr_s}, the agent may be adapting to different trump patterns",
                 "trump", 1, episodes,
-                why=f"the agent's suit preference evolved over {interval_label} episodes"
+                why="suit preference shifts reveal the agent learning which suit controls each game"
             ))
 
     # Compare bid preferences.
@@ -830,11 +834,34 @@ def _compare_two_snapshots(prev, current, prev_label, curr_label, interval_label
         prev_best_b = max(prev_bids, key=prev_bids.get)
         curr_best_b = max(curr_bids, key=curr_bids.get)
         if prev_best_b != curr_best_b:
-            insights.append(_make(
-                f"Between {prev_label} and {curr_label}: bidding preference changed from {prev_best_b} to {curr_best_b}",
-                "bidding", 1, episodes,
-                why=f"bidding strategy evolved over {interval_label} episodes of play"
-            ))
+            if prev_best_b == "PASS" and curr_best_b.startswith("B"):
+                bid_val = curr_best_b[1:]
+                insights.append(_make(
+                    f"The agent became more confident, now preferring to bid {bid_val} rather than passing and defending",
+                    "bidding", 1, episodes,
+                    why="shifting from passive to active bidding means the agent trusts its hand reading more"
+                ))
+            elif prev_best_b.startswith("B") and curr_best_b == "PASS":
+                insights.append(_make(
+                    "The agent became more cautious, now preferring to pass rather than commit to a bid",
+                    "defense", 1, episodes,
+                    why="shifting to defense suggests the agent learned that failed bids are costly"
+                ))
+            elif prev_best_b.startswith("B") and curr_best_b.startswith("B"):
+                prev_val = prev_best_b[1:]
+                curr_val = curr_best_b[1:]
+                if int(curr_val) > int(prev_val):
+                    insights.append(_make(
+                        f"Bidding became bolder, moving from bid {prev_val} to bid {curr_val}, the agent is finding more winning potential in its hands",
+                        "bidding", 1, episodes,
+                        why="higher bids indicate the agent discovered it can win more tricks than it previously thought"
+                    ))
+                else:
+                    insights.append(_make(
+                        f"Bidding became more conservative, dropping from bid {prev_val} to bid {curr_val}, learning that over-promising leads to penalties",
+                        "bidding", 1, episodes,
+                        why="lower bids suggest the agent learned to be more realistic about hand strength"
+                    ))
 
     # Check for convergence or divergence in rank values.
     if curr_ranks and prev_ranks and len(curr_ranks) >= 4 and len(prev_ranks) >= 4:
@@ -844,15 +871,15 @@ def _compare_two_snapshots(prev, current, prev_label, curr_label, interval_label
         prev_spread = max(prev_values) - min(prev_values)
         if prev_spread > 0.1 and curr_spread < prev_spread * 0.5:
             insights.append(_make(
-                f"Between {prev_label} and {curr_label}: card values are converging, context matters more than raw rank now",
+                "The agent now treats all card ranks more equally, meaning context and timing matter more than raw card power",
                 "timing", 1, episodes,
-                why=f"the agent learned that WHEN to play matters more than WHAT to play"
+                why="converging values show the agent learned that WHEN to play matters more than WHAT to play"
             ))
         elif curr_spread > prev_spread * 1.5 and prev_spread > 0.05:
             insights.append(_make(
-                f"Between {prev_label} and {curr_label}: card rank differences are widening, the agent is more decisive about which cards are best",
+                "The agent is developing stronger opinions about which cards are powerful, becoming more decisive in card selection",
                 "timing", 1, episodes,
-                why=f"stronger opinions forming about card strength hierarchy"
+                why="widening value gaps show a clearer internal hierarchy of card strength forming"
             ))
 
     return insights

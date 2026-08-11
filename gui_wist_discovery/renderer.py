@@ -382,7 +382,23 @@ class Renderer:
                 slash_surf = med_font.render(f"/{val2}", True, TEXT_WHITE)
                 self.screen.blit(slash_surf, (x, y_pos))
 
-        _render_stat("Stage", state['opponent_stage'], y_pos=y)
+        _STAGE_NAMES = {
+            1: "Self-Play", 2: "Weak Mix", 3: "Frozen Past", 4: "Adversarial",
+            5: "Conservative", 6: "Aggressive", 7: "Mixed Styles", 8: "Elite",
+            9: "Population", 10: "Counter-Strategy", 11: "Tournament",
+            12: "Pressure", 13: "Endurance", 14: "Grandmaster", 15: "Infinite",
+        }
+        stage_num = state['opponent_stage']
+        stage_name = _STAGE_NAMES.get(stage_num, "?")
+        # Render Stage manually: label white, number gold, bracket white.
+        label_surf = med_font.render("Stage: ", True, TEXT_WHITE)
+        self.screen.blit(label_surf, (px + 10, y))
+        sx = px + 10 + label_surf.get_width()
+        num_surf = med_font.render(str(stage_num), True, TEXT_GOLD)
+        self.screen.blit(num_surf, (sx, y))
+        sx += num_surf.get_width()
+        bracket_surf = med_font.render(f" ({stage_name})", True, TEXT_WHITE)
+        self.screen.blit(bracket_surf, (sx, y))
         y += 18
         _render_stat("Shotas played", f"{episodes:,}", y_pos=y)
         y += 18
