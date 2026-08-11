@@ -284,10 +284,12 @@ class WistDiscoveryWatcher:
         if tt[1] == 13:
             self._seeks_t2 += 1
 
-        # Track shotas won per team (team that won more tricks in this shota).
-        if tt[0] > tt[1]:
+        # Track shotas won per team (team that scored positive points).
+        s0 = scores.get(0, 0)
+        s1 = scores.get(1, 0)
+        if s0 > 0:
             self._shotas_won_t1 += 1
-        elif tt[1] > tt[0]:
+        if s1 > 0:
             self._shotas_won_t2 += 1
 
         if s0 > self._best_score:
@@ -515,9 +517,9 @@ class WistDiscoveryWatcher:
                 }
                 auto_discover(self._auto_stats, context, self._trigger)
                 # Track per-team stats from background training.
-                if tt[0] > tt[1]:
+                if scores.get(0, 0) > 0:
                     self._shotas_won_t1 += 1
-                elif tt[1] > tt[0]:
+                if scores.get(1, 0) > 0:
                     self._shotas_won_t2 += 1
                 if playing_team == 0 and bid_met:
                     self._bids_met_t1 += 1
