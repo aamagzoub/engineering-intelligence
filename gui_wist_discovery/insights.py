@@ -97,6 +97,31 @@ def _rank_tier(rank: int) -> str:
         return "low"    # 2-7
 
 
+def _spread_desc(spread: float) -> str:
+    """Convert Q-value spread to plain English relative description."""
+    if spread >= 2.0:
+        return "dramatically"
+    elif spread >= 1.0:
+        return "significantly"
+    elif spread >= 0.5:
+        return "clearly"
+    else:
+        return "slightly"
+
+
+def _spread_desc(spread: float) -> str:
+    """Convert a Q-value spread to plain English intensity."""
+    if spread >= 2.0:
+        return "dramatically"
+    elif spread >= 1.0:
+        return "significantly"
+    elif spread >= 0.5:
+        return "clearly"
+    elif spread >= 0.3:
+        return "noticeably"
+    return "slightly"
+
+
 # ─── Main Entry Point ────────────────────────────────────────────────────────────
 
 
@@ -1044,7 +1069,7 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
         suit_name = _SUIT_NAMES.get(suit, "?")
         ratio = best_q / max(second_q, 0.01)
         insights.append(_make(
-            f"On trick {trick_num}, when {pos_name}, the {rank_name} of {suit_name} scores {ratio:.1f}x better than the next best option out of {n_options} choices",
+            f"On trick {trick_num}, when {pos_name}, the {rank_name} of {suit_name} is the clear best choice out of {n_options} options",
             "timing", 1, episodes,
             why=f"This specific card in this exact situation is a discovered dominant play"
         ))
@@ -1075,7 +1100,7 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
         suit_name = _SUIT_NAMES.get(suit, "?")
         margin = low_q - high_q
         insights.append(_make(
-            f"Counter-intuitive: on trick {trick_num} when {pos_name}, the {rank_name} of {suit_name} outscores all high cards by {margin:.2f} points",
+            f"Counter-intuitive: on trick {trick_num} when {pos_name}, the {rank_name} of {suit_name} outperforms all high cards in this situation",
             "counter-intuitive", 1, episodes,
             why="The agent discovered that in this specific situation, playing low wins more than playing high"
         ))
@@ -1110,7 +1135,7 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
         best_name = _SUIT_NAMES.get(best_s, "?")
         worst_name = _SUIT_NAMES.get(worst_s, "?")
         insights.append(_make(
-            f"On trick {trick_num} when {pos_name}, {best_name} cards score {spread:.2f} points higher than {worst_name} cards",
+            f"On trick {trick_num} when {pos_name}, {best_name} cards are {_spread_desc(spread)} better than {worst_name} cards",
             "trump", 1, episodes,
             why="The agent found that suit choice matters enormously in this context"
         ))
@@ -1135,7 +1160,7 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
         if diff > 0.3:
             trick_num = 14 - n_cards
             insights.append(_make(
-                f"On trick {trick_num}, being {_POS_NAMES.get(best_p, '?')} gives {diff:.2f} more points than being {_POS_NAMES.get(worst_p, '?')}",
+                f"On trick {trick_num}, being {_POS_NAMES.get(best_p, '?')} is {_spread_desc(diff)} better than being {_POS_NAMES.get(worst_p, '?')}",
                 "timing", 1, episodes,
                 why="Position advantage changes throughout the game as information accumulates"
             ))
@@ -1155,7 +1180,7 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
                 worst_bid, worst_bq = sorted_bids[-1]
                 if best_bq - worst_bq > 0.2:
                     insights.append(_make(
-                        f"The most successful bidding action is {best_bid} (avg score {best_bq:.2f}) while {worst_bid} scores worst ({worst_bq:.2f})",
+                        f"The most successful bidding action is {best_bid} while {worst_bid} performs worst",
                         "bidding", 1, episodes,
                         why="The agent discovered which bid levels consistently lead to better outcomes"
                     ))
@@ -1164,7 +1189,7 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
                 if action.startswith("B"):
                     val = action[1:]
                     insights.append(_make(
-                        f"Bid {val} averages {avg:.2f} reward across all hand contexts the agent has seen",
+                        f"Bid {val} is consistently one of the best-performing bid levels the agent has found",
                         "bidding", 1, episodes,
                         why=f"After hundreds of thousands of games, bid {val} is a learned sweet spot"
                     ))
@@ -1209,28 +1234,33 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
         trick_num = 14 - n_cards
 
         if best_suit != worst_suit and best_rank <= 7 and worst_rank >= 12:
+            desc = _spread_desc(spread)
             text = (f"Trick {trick_num}, {pos_name}: a low {best_sn} ({best_name}) "
-                    f"scores {spread:.1f} better than a high {worst_sn} ({worst_name})")
+                    f"{desc} outperforms a high {worst_sn} ({worst_name})")
             cat = "counter-intuitive"
             why = "Suit choice matters more than rank in this situation"
         elif best_rank >= 13 and pos == 3:
+            desc = _spread_desc(spread)
             text = (f"Trick {trick_num}, playing last: {best_name} of {best_sn} "
-                    f"wins by {spread:.1f} points with full visibility")
+                    f"{desc} wins with full visibility of the trick")
             cat = "timing"
             why = "Seeing all cards before choosing makes high cards safe bets"
         elif best_rank <= 5 and pos == 0:
+            desc = _spread_desc(spread)
             text = (f"Trick {trick_num}, leading: the agent leads with {best_name} "
-                    f"of {best_sn}, a low card, with {spread:.1f} advantage")
+                    f"of {best_sn}, a low card that {desc} outperforms higher options")
             cat = "counter-intuitive"
             why = "Leading low probes safely and saves high cards for following"
         elif best_suit != worst_suit:
-            text = (f"Trick {trick_num}, {pos_name}: {best_sn} cards outperform "
-                    f"{worst_sn} by {spread:.1f} points")
+            desc = _spread_desc(spread)
+            text = (f"Trick {trick_num}, {pos_name}: {best_sn} cards {desc} "
+                    f"outperform {worst_sn} cards")
             cat = "trump"
             why = "One suit is clearly stronger than another in this context"
         else:
+            desc = _spread_desc(spread)
             text = (f"Trick {trick_num}, {pos_name}: {best_name} of {best_sn} "
-                    f"beats alternatives by {spread:.1f}")
+                    f"{desc} beats all alternatives")
             cat = "timing"
             why = "The agent found this to be the clear best play here"
 
@@ -1251,23 +1281,26 @@ def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
                 continue
             if best_bid == "PASS" and worst_bid.startswith("B"):
                 wv = worst_bid[1:]
+                desc = _spread_desc(spread)
                 insights.append(_make(
-                    f"Passing scores {spread:.1f} better than bidding {wv} with this hand shape. Defense wins here",
+                    f"Passing {desc} outperforms bidding {wv} with this hand shape. Defense wins here",
                     "defense", 1, episodes,
                     why="This hand looks biddable but consistently fails to deliver"
                 ))
             elif best_bid.startswith("B") and worst_bid == "PASS":
                 bv = best_bid[1:]
+                desc = _spread_desc(spread)
                 insights.append(_make(
-                    f"Bidding {bv} scores {spread:.1f} better than passing. This hand delivers reliably",
+                    f"Bidding {bv} {desc} outperforms passing. This hand delivers reliably",
                     "bidding", 1, episodes,
                     why="The agent learned to commit when hand shape supports it"
                 ))
             elif best_bid.startswith("B") and worst_bid.startswith("B"):
                 bv = best_bid[1:]
                 wv = worst_bid[1:]
+                desc = _spread_desc(spread)
                 insights.append(_make(
-                    f"Bid {bv} beats bid {wv} by {spread:.1f} points. Precise bid level matters",
+                    f"Bid {bv} {desc} beats bid {wv}. Precise bid level matters",
                     "bidding", 1, episodes,
                     why="Over or under-bidding both cost points, precision is learned"
                 ))
