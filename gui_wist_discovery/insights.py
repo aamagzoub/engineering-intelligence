@@ -102,6 +102,9 @@ def generate_insights(agent) -> list:
     new_insights.extend(_mine_bid_patterns(bid_q, episodes))
     new_insights.extend(_mine_counter_intuitive(play_items, episodes))
     new_insights.extend(_mine_deep_patterns(play_items, episodes))
+    new_insights.extend(_mine_leading_vs_following(play_items, episodes))
+    new_insights.extend(_mine_per_suit_rank(play_items, episodes))
+    new_insights.extend(_mine_hand_size_suit_interaction(play_items, episodes))
 
     # Snapshot comparison insights (at milestones: 50K, 100K, 500K, 1M, etc.).
     new_insights.extend(_check_and_take_snapshot(agent))
@@ -567,8 +570,10 @@ def _mine_counter_intuitive(play_items, episodes) -> list:
 
 
 def _dedup_merge(insights) -> list:
-    """Merge insights by core idea — max 2 per concept."""
+    """Merge insights by core idea — allow up to 20 per concept."""
     seen = {}
+    concept_counts = {}  # Track how many per concept.
+    MAX_PER_CONCEPT = 20
 
     for ins in insights:
         text = ins.get("text", "").lower()
@@ -601,19 +606,31 @@ def _dedup_merge(insights) -> list:
         elif "defend" in text:
             sig_parts.append("defense")
         else:
-            words = [w for w in text.split() if len(w) > 4][:3]
+            # Use more of the text as signature — allows more diversity.
+            words = [w for w in text.split() if len(w) > 4][:5]
             sig_parts.append("_".join(words))
 
-        sig = "|".join(sig_parts)
+        base_sig = "|".join(sig_parts)
 
-        if sig in seen:
-            alt_sig = sig + "_alt"
-            if alt_sig not in seen:
-                seen[alt_sig] = ins
+        # Allow up to MAX_PER_CONCEPT per concept.
+        count = concept_counts.get(base_sig, 0)
+        if count < MAX_PER_CONCEPT:
+            # Check exact text dedup (no two with identical text).
+            unique_key = base_sig + f"_{count}"
+            if text not in [s.get("text", "").lower() for s in seen.values()]:
+                seen[unique_key] = ins
+                concept_counts[base_sig] = count + 1
             else:
-                seen[sig]["confidence"] = seen[sig].get("confidence", 1) + 1
+                # Exact duplicate — just bump confidence.
+                for k, v in seen.items():
+                    if v.get("text", "").lower() == text:
+                        v["confidence"] = v.get("confidence", 1) + 1
+                        break
         else:
-            seen[sig] = ins
+            # Over limit — bump confidence on the first one.
+            first_key = base_sig + "_0"
+            if first_key in seen:
+                seen[first_key]["confidence"] = seen[first_key].get("confidence", 1) + 1
 
     return list(seen.values())
 
@@ -831,7 +848,135 @@ def _mine_deep_patterns(play_items, episodes) -> list:
                     why="one suit consistently scoring higher across all positions suggests the agent knows which suit is trump"
                 ))
 
-    return insights[:15]  # Cap to avoid flooding.
+    return insights[:30]  # Allow more deep insights.
+
+
+def _mine_leading_vs_following(play_items, episodes) -> list:
+    """Compare strategy when leading a trick vs following someone else's lead."""
+    insights = []
+    leading_qs = defaultdict(list)   # tier -> Q when position 0
+    following_qs = defaultdict(list)  # tier -> Q when position 1-3
+
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
+            continue
+        n_cards, pos = parsed
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            tier = _rank_tier(rank)
+            if pos == 0:
+                leading_qs[tier].append(q)
+            else:
+                following_qs[tier].append(q)
+
+    if not leading_qs or not following_qs:
+        return insights
+
+    lead_avgs = {t: sum(v)/len(v) for t, v in leading_qs.items() if len(v) >= 5}
+    follow_avgs = {t: sum(v)/len(v) for t, v in following_qs.items() if len(v) >= 5}
+
+    if lead_avgs and follow_avgs:
+        best_lead = max(lead_avgs, key=lead_avgs.get)
+        best_follow = max(follow_avgs, key=follow_avgs.get)
+        if best_lead != best_follow:
+            insights.append(_make(
+                f"Different cards work best in different roles: {best_lead} cards when leading, {best_follow} cards when following",
+                "timing", 1, episodes,
+                why="The agent has learned that leading and following require different approaches"
+            ))
+
+        # Specific: are low cards better for leading?
+        if best_lead == "low" and best_follow == "high":
+            insights.append(_make(
+                "Lead with low cards to probe, save high cards for following when you can guarantee a win",
+                "timing", 1, episodes,
+                why="Leading low is safe exploration, following high is precise execution"
+            ))
+        elif best_lead == "high" and best_follow == "low":
+            insights.append(_make(
+                "Lead with strength to establish dominance, follow with low to conserve when tricks are decided",
+                "timing", 1, episodes,
+                why="Aggressive opening with conservative support maximizes trick count"
+            ))
+
+    return insights
+
+
+def _mine_per_suit_rank(play_items, episodes) -> list:
+    """Which rank performs best in each specific suit?"""
+    insights = []
+    suit_rank_qs = defaultdict(lambda: defaultdict(list))
+
+    for state, actions in play_items:
+        if len(actions) < 2:
+            continue
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            suit_rank_qs[suit][rank].append(q)
+
+    for suit in suit_rank_qs:
+        rank_avgs = {r: sum(v)/len(v) for r, v in suit_rank_qs[suit].items() if len(v) >= 5}
+        if len(rank_avgs) < 3:
+            continue
+        best_r = max(rank_avgs, key=rank_avgs.get)
+        worst_r = min(rank_avgs, key=rank_avgs.get)
+        spread = rank_avgs[best_r] - rank_avgs[worst_r]
+        if spread < 0.2:
+            continue
+        suit_name = _SUIT_NAMES.get(suit, "?")
+        best_name = _RANK_NAMES.get(best_r, str(best_r))
+        worst_name = _RANK_NAMES.get(worst_r, str(worst_r))
+        insights.append(_make(
+            f"In {suit_name}, {best_name}s perform best while {worst_name}s perform worst",
+            "trump", 1, episodes,
+            why=f"The agent learned that card strength varies by suit, not all suits value the same ranks equally"
+        ))
+
+    return insights
+
+
+def _mine_hand_size_suit_interaction(play_items, episodes) -> list:
+    """Does suit preference change as the hand gets smaller?"""
+    insights = []
+    early_suit = defaultdict(list)  # suit -> Q early
+    late_suit = defaultdict(list)   # suit -> Q late
+
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed or len(actions) < 2:
+            continue
+        n_cards, pos = parsed
+        for key, q in actions.items():
+            a_parsed = _parse_action_key(key)
+            if not a_parsed:
+                continue
+            rank, suit = a_parsed
+            if n_cards >= 10:
+                early_suit[suit].append(q)
+            elif n_cards <= 4:
+                late_suit[suit].append(q)
+
+    early_avgs = {s: sum(v)/len(v) for s, v in early_suit.items() if len(v) >= 10}
+    late_avgs = {s: sum(v)/len(v) for s, v in late_suit.items() if len(v) >= 10}
+
+    if early_avgs and late_avgs:
+        best_early_s = max(early_avgs, key=early_avgs.get)
+        best_late_s = max(late_avgs, key=late_avgs.get)
+        if best_early_s != best_late_s:
+            insights.append(_make(
+                f"Suit preference shifts during the game: {_SUIT_NAMES.get(best_early_s, '?')} is best early but {_SUIT_NAMES.get(best_late_s, '?')} dominates late",
+                "trump", 1, episodes,
+                why="The agent discovers that different suits matter at different stages of each round"
+            ))
+
+    return insights
 
 
 # ─── Snapshot Comparison System ──────────────────────────────────────────────────
