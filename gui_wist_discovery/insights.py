@@ -30,12 +30,35 @@ _POS_NAMES = {0: "first to play", 1: "second to play", 2: "third to play", 3: "l
 
 
 def _parse_action_key(key: str):
-    """Parse action key: {rank_hex}{suit_index} -> (rank_int, suit_int) or None."""
+    """Parse action key: {rank_hex}{suit_index}{is_highest} -> (rank_int, suit_int) or None.
+
+    New format (v3.3.2+): e.g., "e01" = rank 14 (Ace), suit 0, is_highest=1
+    Old format: "e0" = rank 14, suit 0
+    """
     try:
         if len(key) < 2:
             return None
-        rank = int(key[:-1], 16)
-        suit = int(key[-1])
+        if len(key) == 3:
+            # New format: {rank_hex}{suit}{is_highest}
+            rank = int(key[0], 16)
+            suit = int(key[1])
+            if 2 <= rank <= 14 and 0 <= suit <= 3:
+                return (rank, suit)
+            # Try: {rank_hex_2chars}{suit} for ranks >= 10 (a, b, c, d, e)
+            rank = int(key[:2], 16)
+            suit = int(key[2])
+            if 2 <= rank <= 14 and 0 <= suit <= 3:
+                return (rank, suit)
+        elif len(key) == 2:
+            # Old format: {rank_hex}{suit}
+            rank = int(key[0], 16)
+            suit = int(key[1])
+            if 2 <= rank <= 14 and 0 <= suit <= 3:
+                return (rank, suit)
+        # General: try first char(s) as hex rank, last char as suit.
+        # For "e01": rank=0xe=14, suit=0, ignore last char.
+        rank = int(key[0], 16)
+        suit = int(key[1])
         if 2 <= rank <= 14 and 0 <= suit <= 3:
             return (rank, suit)
     except (ValueError, IndexError):
@@ -44,12 +67,17 @@ def _parse_action_key(key: str):
 
 
 def _parse_state_key(key: str):
-    """Parse state key: {n_cards_hex}{position} -> (n_cards, position) or None."""
+    """Parse state key: {n_cards_hex}{position}{led}{my_tricks}{opp_tricks} -> (n_cards, position) or None.
+
+    New format (v3.3.2+): e.g., "d0x00" = 13 cards, position 0, led=x, tricks 0/0
+    Old format: "d0" = 13 cards, position 0
+    """
     try:
         if len(key) < 2:
             return None
-        n_cards = int(key[:-1], 16)
-        pos = int(key[-1])
+        # First char is always n_cards in hex, second is always position.
+        n_cards = int(key[0], 16)
+        pos = int(key[1])
         if 1 <= n_cards <= 13 and 0 <= pos <= 3:
             return (n_cards, pos)
     except (ValueError, IndexError):
