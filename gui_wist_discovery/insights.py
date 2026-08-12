@@ -133,6 +133,7 @@ def generate_insights(agent) -> list:
     new_insights.extend(_mine_leading_vs_following(play_items, episodes))
     new_insights.extend(_mine_per_suit_rank(play_items, episodes))
     new_insights.extend(_mine_hand_size_suit_interaction(play_items, episodes))
+    new_insights.extend(_mine_granular_discoveries(play_items, bid_q, episodes))
 
     # Snapshot comparison insights (at milestones: 50K, 100K, 500K, 1M, etc.).
     new_insights.extend(_check_and_take_snapshot(agent))
@@ -1002,6 +1003,304 @@ def _mine_hand_size_suit_interaction(play_items, episodes) -> list:
                 f"Suit preference shifts during the game: {_SUIT_NAMES.get(best_early_s, '?')} is best early but {_SUIT_NAMES.get(best_late_s, '?')} dominates late",
                 "trump", 1, episodes,
                 why="The agent discovers that different suits matter at different stages of each round"
+            ))
+
+    return insights
+
+
+def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
+    """
+    Mine specific, surprising, data-backed discoveries from Q-table.
+
+    Instead of broad categories, finds SPECIFIC contexts where one action
+    dramatically outperforms others — with real numbers and explanations.
+    """
+    insights = []
+
+    # 1. Find states where one action DOMINATES (best is >2x better than second best).
+    dominant_plays = []
+    for state, actions in play_items:
+        parsed_s = _parse_state_key(state)
+        if not parsed_s or len(actions) < 3:
+            continue
+        n_cards, pos = parsed_s
+        sorted_a = sorted(actions.items(), key=lambda x: -x[1])
+        best_key, best_q = sorted_a[0]
+        second_key, second_q = sorted_a[1]
+        worst_key, worst_q = sorted_a[-1]
+        if best_q <= 0 or second_q <= 0:
+            continue
+        if best_q > second_q * 1.5 and best_q - worst_q > 0.3:
+            best_parsed = _parse_action_key(best_key)
+            if best_parsed:
+                dominant_plays.append((n_cards, pos, best_parsed, best_q, second_q, worst_q, len(actions)))
+
+    # Sort by dominance ratio and pick top discoveries.
+    dominant_plays.sort(key=lambda x: x[3] / max(x[4], 0.01), reverse=True)
+    for n_cards, pos, (rank, suit), best_q, second_q, worst_q, n_options in dominant_plays[:10]:
+        trick_num = 14 - n_cards
+        pos_name = _POS_NAMES.get(pos, "?")
+        rank_name = _RANK_NAMES.get(rank, str(rank))
+        suit_name = _SUIT_NAMES.get(suit, "?")
+        ratio = best_q / max(second_q, 0.01)
+        insights.append(_make(
+            f"On trick {trick_num}, when {pos_name}, the {rank_name} of {suit_name} scores {ratio:.1f}x better than the next best option out of {n_options} choices",
+            "timing", 1, episodes,
+            why=f"This specific card in this exact situation is a discovered dominant play"
+        ))
+
+    # 2. Find REVERSALS: states where low cards beat high cards by a significant margin.
+    reversals = []
+    for state, actions in play_items:
+        parsed_s = _parse_state_key(state)
+        if not parsed_s or len(actions) < 4:
+            continue
+        n_cards, pos = parsed_s
+        # Separate high vs low cards.
+        high_qs = [(k, q) for k, q in actions.items() if _parse_action_key(k) and _parse_action_key(k)[0] >= 12]
+        low_qs = [(k, q) for k, q in actions.items() if _parse_action_key(k) and _parse_action_key(k)[0] <= 6]
+        if not high_qs or not low_qs:
+            continue
+        best_high = max(high_qs, key=lambda x: x[1])[1]
+        best_low = max(low_qs, key=lambda x: x[1])
+        if best_low[1] > best_high + 0.3:
+            low_parsed = _parse_action_key(best_low[0])
+            if low_parsed:
+                reversals.append((n_cards, pos, low_parsed, best_low[1], best_high))
+
+    for n_cards, pos, (rank, suit), low_q, high_q in reversals[:8]:
+        trick_num = 14 - n_cards
+        pos_name = _POS_NAMES.get(pos, "?")
+        rank_name = _RANK_NAMES.get(rank, str(rank))
+        suit_name = _SUIT_NAMES.get(suit, "?")
+        margin = low_q - high_q
+        insights.append(_make(
+            f"Counter-intuitive: on trick {trick_num} when {pos_name}, the {rank_name} of {suit_name} outscores all high cards by {margin:.2f} points",
+            "counter-intuitive", 1, episodes,
+            why="The agent discovered that in this specific situation, playing low wins more than playing high"
+        ))
+
+    # 3. Find SUIT SPECIALIZATION: states where one suit dramatically outperforms.
+    suit_dominance_states = []
+    for state, actions in play_items:
+        parsed_s = _parse_state_key(state)
+        if not parsed_s or len(actions) < 4:
+            continue
+        n_cards, pos = parsed_s
+        suit_avgs = defaultdict(list)
+        for key, q in actions.items():
+            parsed_a = _parse_action_key(key)
+            if parsed_a:
+                suit_avgs[parsed_a[1]].append(q)
+        if len(suit_avgs) < 2:
+            continue
+        s_means = {s: sum(v)/len(v) for s, v in suit_avgs.items() if len(v) >= 2}
+        if len(s_means) < 2:
+            continue
+        best_s = max(s_means, key=s_means.get)
+        worst_s = min(s_means, key=s_means.get)
+        spread = s_means[best_s] - s_means[worst_s]
+        if spread > 0.4:
+            suit_dominance_states.append((n_cards, pos, best_s, worst_s, spread))
+
+    suit_dominance_states.sort(key=lambda x: x[4], reverse=True)
+    for n_cards, pos, best_s, worst_s, spread in suit_dominance_states[:8]:
+        trick_num = 14 - n_cards
+        pos_name = _POS_NAMES.get(pos, "?")
+        best_name = _SUIT_NAMES.get(best_s, "?")
+        worst_name = _SUIT_NAMES.get(worst_s, "?")
+        insights.append(_make(
+            f"On trick {trick_num} when {pos_name}, {best_name} cards score {spread:.2f} points higher than {worst_name} cards",
+            "trump", 1, episodes,
+            why="The agent found that suit choice matters enormously in this context"
+        ))
+
+    # 4. Find POSITION POWER: biggest Q-value differences between positions for same hand size.
+    pos_power = defaultdict(lambda: defaultdict(list))
+    for state, actions in play_items:
+        parsed_s = _parse_state_key(state)
+        if not parsed_s or len(actions) < 2:
+            continue
+        n_cards, pos = parsed_s
+        best_q = max(actions.values())
+        pos_power[n_cards][pos].append(best_q)
+
+    for n_cards, pos_data in pos_power.items():
+        pos_means = {p: sum(v)/len(v) for p, v in pos_data.items() if len(v) >= 3}
+        if len(pos_means) < 2:
+            continue
+        best_p = max(pos_means, key=pos_means.get)
+        worst_p = min(pos_means, key=pos_means.get)
+        diff = pos_means[best_p] - pos_means[worst_p]
+        if diff > 0.3:
+            trick_num = 14 - n_cards
+            insights.append(_make(
+                f"On trick {trick_num}, being {_POS_NAMES.get(best_p, '?')} gives {diff:.2f} more points than being {_POS_NAMES.get(worst_p, '?')}",
+                "timing", 1, episodes,
+                why="Position advantage changes throughout the game as information accumulates"
+            ))
+
+    # 5. Bid-specific findings.
+    if bid_q:
+        bid_items_list = list(bid_q.items())[:3000]
+        bid_scores = defaultdict(list)
+        for state, actions in bid_items_list:
+            for action, q in actions.items():
+                bid_scores[action].append(q)
+        bid_means = {a: sum(v)/len(v) for a, v in bid_scores.items() if len(v) >= 5}
+        if bid_means:
+            sorted_bids = sorted(bid_means.items(), key=lambda x: -x[1])
+            if len(sorted_bids) >= 2:
+                best_bid, best_bq = sorted_bids[0]
+                worst_bid, worst_bq = sorted_bids[-1]
+                if best_bq - worst_bq > 0.2:
+                    insights.append(_make(
+                        f"The most successful bidding action is {best_bid} (avg score {best_bq:.2f}) while {worst_bid} scores worst ({worst_bq:.2f})",
+                        "bidding", 1, episodes,
+                        why="The agent discovered which bid levels consistently lead to better outcomes"
+                    ))
+            # Find bid that improved most over all others.
+            for action, avg in sorted_bids[:3]:
+                if action.startswith("B"):
+                    val = action[1:]
+                    insights.append(_make(
+                        f"Bid {val} averages {avg:.2f} reward across all hand contexts the agent has seen",
+                        "bidding", 1, episodes,
+                        why=f"After hundreds of thousands of games, bid {val} is a learned sweet spot"
+                    ))
+
+    return insights
+
+
+def _mine_granular_discoveries(play_items, bid_q, episodes) -> list:
+    """
+    Granular miner: one insight per SIGNIFICANT Q-table finding.
+    Produces specific, data-backed, wow-worthy discoveries.
+    """
+    insights = []
+
+    # 1. Decisive states: where one action dramatically outperforms.
+    decisive_count = 0
+    for state, actions in play_items:
+        if len(actions) < 3 or decisive_count >= 30:
+            continue
+        parsed = _parse_state_key(state)
+        if not parsed:
+            continue
+        n_cards, pos = parsed
+        sorted_a = sorted(actions.items(), key=lambda x: -x[1])
+        best_key, best_q = sorted_a[0]
+        second_key, second_q = sorted_a[1]
+        worst_key, worst_q = sorted_a[-1]
+        spread = best_q - worst_q
+        if spread < 0.5 or best_q - second_q < 0.2:
+            continue
+        best_p = _parse_action_key(best_key)
+        worst_p = _parse_action_key(worst_key)
+        if not best_p or not worst_p:
+            continue
+        best_rank, best_suit = best_p
+        worst_rank, worst_suit = worst_p
+        pos_name = _POS_NAMES.get(pos, f"position {pos}")
+        best_name = _RANK_NAMES.get(best_rank, str(best_rank))
+        worst_name = _RANK_NAMES.get(worst_rank, str(worst_rank))
+        best_sn = _SUIT_NAMES.get(best_suit, "?")
+        worst_sn = _SUIT_NAMES.get(worst_suit, "?")
+        trick_num = 14 - n_cards
+
+        if best_suit != worst_suit and best_rank <= 7 and worst_rank >= 12:
+            text = (f"Trick {trick_num}, {pos_name}: a low {best_sn} ({best_name}) "
+                    f"scores {spread:.1f} better than a high {worst_sn} ({worst_name})")
+            cat = "counter-intuitive"
+            why = "Suit choice matters more than rank in this situation"
+        elif best_rank >= 13 and pos == 3:
+            text = (f"Trick {trick_num}, playing last: {best_name} of {best_sn} "
+                    f"wins by {spread:.1f} points with full visibility")
+            cat = "timing"
+            why = "Seeing all cards before choosing makes high cards safe bets"
+        elif best_rank <= 5 and pos == 0:
+            text = (f"Trick {trick_num}, leading: the agent leads with {best_name} "
+                    f"of {best_sn}, a low card, with {spread:.1f} advantage")
+            cat = "counter-intuitive"
+            why = "Leading low probes safely and saves high cards for following"
+        elif best_suit != worst_suit:
+            text = (f"Trick {trick_num}, {pos_name}: {best_sn} cards outperform "
+                    f"{worst_sn} by {spread:.1f} points")
+            cat = "trump"
+            why = "One suit is clearly stronger than another in this context"
+        else:
+            text = (f"Trick {trick_num}, {pos_name}: {best_name} of {best_sn} "
+                    f"beats alternatives by {spread:.1f}")
+            cat = "timing"
+            why = "The agent found this to be the clear best play here"
+
+        insights.append(_make(text, cat, 1, episodes, why=why))
+        decisive_count += 1
+
+    # 2. Bid discoveries — specific bid levels that win or lose.
+    if bid_q:
+        bid_count = 0
+        for state, actions in list(bid_q.items())[:2000]:
+            if len(actions) < 2 or bid_count >= 15:
+                continue
+            sorted_b = sorted(actions.items(), key=lambda x: -x[1])
+            best_bid, best_bq = sorted_b[0]
+            worst_bid, worst_bq = sorted_b[-1]
+            spread = best_bq - worst_bq
+            if spread < 0.5:
+                continue
+            if best_bid == "PASS" and worst_bid.startswith("B"):
+                wv = worst_bid[1:]
+                insights.append(_make(
+                    f"Passing scores {spread:.1f} better than bidding {wv} with this hand shape. Defense wins here",
+                    "defense", 1, episodes,
+                    why="This hand looks biddable but consistently fails to deliver"
+                ))
+            elif best_bid.startswith("B") and worst_bid == "PASS":
+                bv = best_bid[1:]
+                insights.append(_make(
+                    f"Bidding {bv} scores {spread:.1f} better than passing. This hand delivers reliably",
+                    "bidding", 1, episodes,
+                    why="The agent learned to commit when hand shape supports it"
+                ))
+            elif best_bid.startswith("B") and worst_bid.startswith("B"):
+                bv = best_bid[1:]
+                wv = worst_bid[1:]
+                insights.append(_make(
+                    f"Bid {bv} beats bid {wv} by {spread:.1f} points. Precise bid level matters",
+                    "bidding", 1, episodes,
+                    why="Over or under-bidding both cost points, precision is learned"
+                ))
+            bid_count += 1
+
+    # 3. Position success rates.
+    pos_stats = defaultdict(lambda: {"pos_total": 0, "pos_wins": 0})
+    for state, actions in play_items:
+        parsed = _parse_state_key(state)
+        if not parsed:
+            continue
+        n_cards, pos = parsed
+        best_q = max(actions.values()) if actions else 0
+        pos_stats[pos]["pos_total"] += 1
+        if best_q > 0.3:
+            pos_stats[pos]["pos_wins"] += 1
+
+    for pos, data in pos_stats.items():
+        if data["pos_total"] < 20:
+            continue
+        rate = data["pos_wins"] / data["pos_total"] * 100
+        pn = _POS_NAMES.get(pos, f"position {pos}")
+        if rate > 70:
+            insights.append(_make(
+                f"When {pn}, the agent succeeds {rate:.0f}% of the time. Dominant position",
+                "timing", 1, episodes,
+                why="More information or control makes this position consistently strong"
+            ))
+        elif rate < 30:
+            insights.append(_make(
+                f"When {pn}, the agent only succeeds {rate:.0f}% of the time. Hardest position",
+                "timing", 1, episodes,
+                why="Limited information forces difficult choices from this seat"
             ))
 
     return insights
