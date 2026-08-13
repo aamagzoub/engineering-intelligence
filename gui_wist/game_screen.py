@@ -1053,32 +1053,9 @@ class GameScreen:
             if isinstance(action, BidAction) and action.value == 13:
                 self._bid_index = len(self._bid_order)
 
-            # First-deal-only special rule: if all 3 regular players pass,
-            # it's automatic Dak — Qabool has NO say (even human).
-            # Only applies on the very first deal of the entire game.
-            if (self._is_first_deal and self._bid_index == 3
-                    and not self._has_opening_bid
-                    and self._bidding_engine.highest_bid is None):
-                passes_count = sum(1 for _, v in self._bid_history if v is None)
-                if passes_count >= 2 and self._bid_index == 3:
-                    self._is_first_deal = False  # Never triggers again.
-                    self._dak_count += 1
-                    if hasattr(self, '_game_stats'):
-                        self._game_stats["daks"] = self._dak_count
-                    self._dak_shake_timer = 30
-                    self._log_game_event("Auto-DAK! 3rd player declared in first shota.")
-
-                    if self.qabool_id == HUMAN_ID:
-                        # Human is Qabool — show explanation, wait for click.
-                        self.phase = "auto_dak_notice"
-                        self._message = ""
-                        self._message_timer = 0
-                    else:
-                        # AI Qabool — also show notice so user sees what happened.
-                        self.phase = "auto_dak_notice"
-                        self._message = ""
-                        self._message_timer = 0
-                    return
+            # All 3 regular players passed without a bid — proceed to
+            # Qabool decision. Qabool always gets to choose (Dak or bid).
+            # No auto-Dak: the Qabool must actively pass to trigger Dak.
 
             self._ai_timer = 30
 
@@ -1323,6 +1300,8 @@ class GameScreen:
         self._trick_played = {}
         self._trick_winner_id = None
         self._trick_winner_timer = 0
+        self._trick_is_whip = False
+        self._trick_is_double_whip = False
         self._rec_locked_for_turn = False  # Unlock recommendation for new trick.
 
         leader = self.round.next_leading_player_id
@@ -1732,8 +1711,8 @@ class GameScreen:
                 and self.round.state.current_trick.leading_suit is not None
                 and self.round.state.current_trick.leading_suit != self.trump_suit
                 and suit == SUIT_SYMBOLS.get(self.trump_suit, "")
-                and len(self.round.state.current_trick.played_cards) > 1):
-            # Only whip if this is NOT the first card (leader can't whip their own lead).
+                and len(self.round.state.current_trick.played_cards) >= 1):
+            # Whip: a trump card played in a non-trump-led trick (not the leader).
             is_whip = True
             self._play_whip_sound()
 
@@ -3804,7 +3783,10 @@ class GameScreen:
                         self.screen.blit(glow, (rect.x - 4, rect.y - 4))
 
                 # For whipping trump cards, render with yellow background.
+                # Only the WINNING trump card gets the whip treatment, not all
+                # trump cards in the trick.
                 is_whip_card = (getattr(self, '_trick_is_whip', False)
+                                and self._trick_winner_id == pid
                                 and self.trump_suit is not None
                                 and s == SUIT_SYMBOLS.get(self.trump_suit, ""))
 
