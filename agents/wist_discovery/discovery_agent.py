@@ -10,14 +10,15 @@ Architecture (fully domain-agnostic, transferable):
 4. Curiosity Bonus — exploration reward for visiting new states
 5. Opponent Modeling — track known opponent voids from observations
 6. Hierarchical Learning — separate bid/play phases with different learning rates
-7. Reward Normalization — scale rewards to standard range
+7. Reward Normalization — scale rewards to standard range (via TIBRAIN)
 8. Per-trick intermediate rewards — faster credit assignment
-9. Neural Network function approximator — generalization across similar states
+9. Neural Network function approximator — generalization across similar states (via TIBRAIN)
 10. Population-based hyperparameter tracking — auto-tune learning parameters
-11. Self-play Elo tracking — measure improvement over time
+11. Self-play Elo tracking — measure improvement over time (via TIBRAIN)
 12. Curriculum learning — progressive difficulty
 13. Opponent prediction — predict opponent actions from patterns
-14. Meta-learning — adapt hyperparameters based on recent performance
+14. Meta-learning — adapt hyperparameters based on recent performance (via TIBRAIN)
+15. Pattern Discovery — recurring patterns in experience data (via TIBRAIN)
 """
 
 import json
@@ -35,12 +36,22 @@ from intelligence.core.action import Action
 from intelligence.core.agent import Agent
 from intelligence.core.cards.rank import Rank
 from intelligence.core.cards.suit import Suit
-from intelligence.core.observation import Observation
 
+# === TIBRAIN imports (generic RL components) ===
+from tibrain.neural_net import Evaluator, QNetwork
+from tibrain.mcts import MCTSEngine
+from tibrain.reward import RewardNormalizer
+from tibrain.evaluation import EloTracker, MetaLearner
+from tibrain.discovery import DiscoveryEngine
+
+# === Wist-specific feature extraction ===
 from agents.wist_discovery.neural_net import (
-    CardEvaluator, QNetwork, state_to_features, state_features, card_features,
+    CardEvaluator, state_to_features, state_features, card_features,
     get_bid_action_idx, NUM_BID_ACTIONS,
 )
+
+# === Insight pipeline (read-only strategic insight generation) ===
+from agents.wist_discovery.insight_pipeline import run_insight_cycle
 
 
 # Domain-agnostic rank ordering.
@@ -53,9 +64,12 @@ SUIT_IDX = {Suit.SPADES: 0, Suit.HEARTS: 1, Suit.CLUBS: 2, Suit.DIAMONDS: 3}
 
 STATE_FEATURE_SIZE = 52  # Fixed feature vector size for neural net.
 
+# Insight pipeline interval — run insight generation every N episodes.
+_INSIGHT_PIPELINE_INTERVAL = 2000
+
 
 # =============================================================================
-# State & Action Encoding
+# State & Action Encoding (Wist-specific)
 # =============================================================================
 
 def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
@@ -121,34 +135,114 @@ def _encode_bid_action(action: Action) -> str:
     return "PASS"
 
 
+# =============================================================================
+# Wist-specific MCTS Simulation Function
+# =============================================================================
+
+def _wist_simulate_fn(state, action):
+    """Wist-specific simulate_fn for TIBRAIN MCTSEngine.
+
+    The state is a tuple: (obs, round_state, players, trump_suit, player_id, my_team)
+    The action is a card object.
+
+    Returns: (next_state, reward, done, legal_actions)
+    """
+    obs, round_state, players, trump_suit, player_id, my_team = state
+
+    from environments.wist.rules import legal_cards, trick_winner, rank_value
+    from agents.wist_discovery.mcts import (
+        _build_simulated_hands, _resolve_trick_winner
+    )
+
+    # Build simulated hands
+    hands = _build_simulated_hands(player_id, action, obs, players)
+
+    # Current trick state
+    current_trick_cards = []
+    leading_suit = None
+    if obs.current_trick and obs.current_trick.played_cards:
+        for pc in obs.current_trick.played_cards:
+            current_trick_cards.append((pc.player_id, pc.card))
+        leading_suit = obs.current_trick.leading_suit
+
+    # Add our card
+    current_trick_cards.append((player_id, action))
+    if leading_suit is None:
+        leading_suit = action.suit
+
+    # Determine who still needs to play in this trick
+    players_in_trick = {pid for pid, _ in current_trick_cards}
+    if obs.current_trick and obs.current_trick.leading_player_id is not None:
+        leader = obs.current_trick.leading_player_id
+    else:
+        leader = player_id
+
+    trick_order = []
+    for i in range(4):
+        pid = (leader + i) % 4
+        if pid not in players_in_trick:
+            trick_order.append(pid)
+
+    # Simulate remaining players in current trick
+    for pid in trick_order:
+        hand = hands.get(pid, [])
+        if not hand:
+            continue
+        playable = legal_cards(hand, leading_suit, None)
+        if playable:
+            chosen = random.choice(playable)
+            current_trick_cards.append((pid, chosen))
+            hands[pid] = [c for c in hand if c is not chosen]
+
+    # Resolve current trick winner
+    team_wins = 0
+    winner = _resolve_trick_winner(current_trick_cards, trump_suit, leading_suit)
+    if winner is not None:
+        winner_team = 0 if winner in (0, 2) else 1
+        if winner_team == my_team:
+            team_wins += 1
+        next_leader = winner
+    else:
+        next_leader = (player_id + 1) % 4
+
+    # Simulate remaining tricks randomly
+    max_remaining = max(len(h) for h in hands.values()) if hands else 0
+    for _ in range(max_remaining):
+        trick_cards = []
+        t_leading_suit = None
+        for i in range(4):
+            pid = (next_leader + i) % 4
+            hand = hands.get(pid, [])
+            if not hand:
+                continue
+            playable = legal_cards(hand, t_leading_suit, None)
+            if not playable:
+                continue
+            chosen = random.choice(playable)
+            trick_cards.append((pid, chosen))
+            hands[pid] = [c for c in hand if c is not chosen]
+            if t_leading_suit is None:
+                t_leading_suit = chosen.suit
+
+        if len(trick_cards) == 4:
+            w = _resolve_trick_winner(trick_cards, trump_suit, t_leading_suit)
+            if w is not None:
+                w_team = 0 if w in (0, 2) else 1
+                if w_team == my_team:
+                    team_wins += 1
+                next_leader = w
+            else:
+                next_leader = (next_leader + 1) % 4
+        else:
+            break
+
+    # Terminal state — return reward as team_wins, done=True, no further actions
+    return state, float(team_wins), True, []
+
 
 # =============================================================================
-# Support Classes
+# Support Classes (Wist-specific)
 # =============================================================================
-
-class RewardNormalizer:
-    """Running normalization — scales rewards to ~[-1, 1] regardless of domain."""
-    def __init__(self):
-        self._mean = 0.0
-        self._var = 1.0
-        self._count = 0
-
-    def normalize(self, reward: float) -> float:
-        self._count += 1
-        old_mean = self._mean
-        self._mean += (reward - self._mean) / self._count
-        self._var += (reward - old_mean) * (reward - self._mean)
-        std = math.sqrt(self._var / max(self._count, 1)) + 1e-8
-        return (reward - self._mean) / std
-
-    def to_dict(self) -> dict:
-        return {"mean": self._mean, "var": self._var, "count": self._count}
-
-    def from_dict(self, d: dict):
-        self._mean = d.get("mean", 0.0)
-        self._var = d.get("var", 1.0)
-        self._count = d.get("count", 0)
-
 
 class PrioritizedReplayBuffer:
     """Experience replay with prioritization based on TD-error (Enhancement #3)."""
@@ -188,71 +282,6 @@ class PrioritizedReplayBuffer:
         return len(self._buffer)
 
 
-class EloTracker:
-    """Self-play Elo tracking — measures improvement over time (Enhancement #4)."""
-    def __init__(self):
-        self.elo = 1000.0
-        self._history: list = []  # (episode, elo)
-
-    def update(self, won: bool, opponent_elo: float = 1000.0):
-        """Update Elo based on game result."""
-        expected = 1.0 / (1.0 + 10 ** ((opponent_elo - self.elo) / 400))
-        actual = 1.0 if won else 0.0
-        k = 32  # K-factor.
-        self.elo += k * (actual - expected)
-
-    def record(self, episode: int):
-        self._history.append((episode, self.elo))
-        # Keep last 100 snapshots.
-        if len(self._history) > 100:
-            self._history = self._history[-100:]
-
-    def to_dict(self) -> dict:
-        return {"elo": self.elo, "history": self._history[-50:]}
-
-    def from_dict(self, d: dict):
-        self.elo = d.get("elo", 1000.0)
-        self._history = d.get("history", [])
-
-
-class MetaLearner:
-    """Tracks performance and auto-adjusts hyperparameters (Enhancement #7)."""
-    def __init__(self):
-        self._recent_scores: deque = deque(maxlen=50)
-        self._adjustment_interval = 200  # Adjust every N episodes.
-        self._last_adjustment = 0
-
-    def record_score(self, score: float):
-        self._recent_scores.append(score)
-
-    def should_adjust(self, episode: int) -> bool:
-        return (episode - self._last_adjustment >= self._adjustment_interval
-                and len(self._recent_scores) >= 30)
-
-    def suggest_adjustments(self, current_epsilon: float, current_alpha: float,
-                           current_lambda: float, episode: int) -> dict:
-        """Suggest hyperparameter changes based on recent performance."""
-        self._last_adjustment = episode
-        avg_score = sum(self._recent_scores) / len(self._recent_scores)
-        recent_10 = list(self._recent_scores)[-10:]
-        avg_recent = sum(recent_10) / len(recent_10)
-
-        adjustments = {}
-
-        # If performance is improving, reduce exploration.
-        if avg_recent > avg_score * 1.1:
-            adjustments["epsilon"] = max(0.02, current_epsilon * 0.95)
-        # If performance is declining, increase exploration.
-        elif avg_recent < avg_score * 0.8 and current_epsilon < 0.3:
-            adjustments["epsilon"] = min(0.3, current_epsilon * 1.1)
-
-        # If learning seems stagnant, increase learning rate.
-        if abs(avg_recent - avg_score) < 0.5 and len(self._recent_scores) >= 50:
-            adjustments["alpha"] = min(0.3, current_alpha * 1.05)
-
-        return adjustments
-
-
 class OpponentPredictor:
     """Predict opponent actions from observed patterns (Enhancement #6)."""
     def __init__(self):
@@ -284,6 +313,20 @@ class WistDiscoveryAgent(Agent):
     """
     Wist Discovery Agent — Advanced RL Architecture v2.
     Transferable learning system. No domain knowledge.
+
+    Delegates generic RL components to TIBRAIN:
+    - Neural network evaluation → tibrain.neural_net.Evaluator
+    - MCTS look-ahead → tibrain.mcts.MCTSEngine
+    - Reward normalization → tibrain.reward.RewardNormalizer
+    - Elo tracking → tibrain.evaluation.EloTracker
+    - Meta-learning → tibrain.evaluation.MetaLearner
+    - Pattern discovery → tibrain.discovery.DiscoveryEngine
+
+    Keeps Wist-specific logic local:
+    - Card evaluation features & state encoding
+    - Bidding strategy & trump suit constraints
+    - Opponent void tracking & card counting
+    - Game-specific observation processing
     """
 
     def __init__(self, epsilon: float = 0.4, alpha: float = 0.2,
@@ -296,11 +339,13 @@ class WistDiscoveryAgent(Agent):
         self.bid_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.bid_q2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
-        # === Neural Network Function Approximator (Enhancement #9) ===
+        # === Neural Network Function Approximator (via TIBRAIN Evaluator) ===
         # CardEvaluator: per-card evaluation (state 52 + card 8 + memory 78 = 138 features → 1 Q-value).
-        self._play_net = CardEvaluator(input_size=138, hidden_size=256, learning_rate=0.0003)
+        # Uses tibrain.neural_net.Evaluator which has the same architecture.
+        self._play_net = Evaluator(input_size=138, hidden_size=256, learning_rate=0.0003)
         self._target_net = self._play_net.copy()  # Target network (frozen, updated every 500 episodes).
         self._target_update_interval = 500
+        # Bid network uses tibrain.neural_net.QNetwork for small fixed action space.
         self._bid_net = QNetwork(STATE_FEATURE_SIZE, hidden_size=64,
                                  output_size=NUM_BID_ACTIONS, learning_rate=0.001)
         self._use_neural = False  # Starts with Q-tables, switches after enough data.
@@ -339,24 +384,30 @@ class WistDiscoveryAgent(Agent):
         self._state_visit_counts: dict[str, int] = defaultdict(int)
         self._curiosity_scale = 0.1
 
-        # === Reward Normalization ===
+        # === Reward Normalization (via TIBRAIN) ===
         self._reward_normalizer = RewardNormalizer()
 
-        # === Opponent Modeling ===
+        # === Opponent Modeling (Wist-specific) ===
         self._known_voids: dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
         # === Card Counting — track all cards seen and suits played globally ===
         self._cards_seen: set = set()  # All cards observed being played.
         self._suits_played: dict = {0: 0, 1: 0, 2: 0, 3: 0}  # SUIT_IDX → count
 
-        # === Opponent Prediction ===
+        # === Opponent Prediction (Wist-specific) ===
         self._opp_predictor = OpponentPredictor()
 
-        # === Self-play Elo Tracking ===
+        # === Self-play Elo Tracking (via TIBRAIN) ===
         self._elo_tracker = EloTracker()
 
-        # === Meta-Learning ===
+        # === Meta-Learning (via TIBRAIN) ===
         self._meta_learner = MetaLearner()
+
+        # === Pattern Discovery (via TIBRAIN) ===
+        self._discovery_engine = DiscoveryEngine(confidence_threshold=0.3)
+
+        # === MCTS Engine (via TIBRAIN) — initialized lazily with Wist simulate_fn ===
+        self._mcts_engine: MCTSEngine | None = None
 
         # === Stats ===
         self.episodes_trained: int = 0
@@ -554,21 +605,34 @@ class WistDiscoveryAgent(Agent):
     def _best_card(self, obs: WistObservation, playable: list) -> object:
         """Combined Q-table + per-card neural net + optional MCTS for card selection.
 
-        MCTS integration (#1, #14): When MCTS is available, use it for card selection
-        AND feed its value estimates back as training targets for the neural net.
+        MCTS integration: When MCTS context is available, delegates to TIBRAIN
+        MCTSEngine with Wist-specific simulate_fn AND feeds value estimates back
+        as training targets for the neural net.
         """
-        # MCTS: if context is available, use simulation-based look-ahead.
+        # MCTS: if context is available, use TIBRAIN MCTSEngine for look-ahead.
         if getattr(self, '_mcts_context', None) and len(playable) > 1:
-            from agents.wist_discovery.mcts import mcts_choose_card, mcts_evaluate_actions
             ctx = self._mcts_context
             num_sims = ctx.get('num_simulations', 80)
 
-            # Get MCTS action values for training (#1).
-            try:
-                mcts_values = mcts_evaluate_actions(
-                    obs, playable, ctx.get('round_state'), ctx.get('players'),
-                    ctx.get('trump_suit'), num_simulations=num_sims
+            # Build MCTS state tuple for the Wist simulate_fn
+            player_id = obs.player_id
+            my_team = 0 if player_id in (0, 2) else 1
+            mcts_state = (obs, ctx.get('round_state'), ctx.get('players'),
+                          ctx.get('trump_suit'), player_id, my_team)
+
+            # Create/reuse TIBRAIN MCTSEngine with Wist simulate_fn
+            if self._mcts_engine is None:
+                self._mcts_engine = MCTSEngine(
+                    simulate_fn=_wist_simulate_fn,
+                    num_simulations=num_sims,
                 )
+
+            try:
+                # Get MCTS action values for training
+                mcts_values = self._mcts_engine.evaluate_actions(
+                    mcts_state, playable, num_simulations=num_sims
+                )
+
                 # Use MCTS values as soft training targets for Q-table.
                 if self.training and mcts_values:
                     state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
@@ -578,13 +642,13 @@ class WistDiscoveryAgent(Agent):
                         action_key = _encode_play_action(card, obs)
                         current = self.play_q[state_str][action_key]
                         self.play_q[state_str][action_key] += mcts_alpha * (mcts_val - current)
-            except (ImportError, Exception):
-                pass
 
-            return mcts_choose_card(
-                obs, playable, ctx.get('round_state'), ctx.get('players'),
-                ctx.get('trump_suit'), num_simulations=num_sims
-            )
+                # Choose action via MCTS
+                return self._mcts_engine.choose_action(
+                    mcts_state, playable, num_simulations=num_sims
+                )
+            except Exception:
+                pass  # Fall through to Q-table + neural net selection
 
         state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
                                       self._partner_bid, self._my_tricks, self._opp_tricks)
@@ -663,16 +727,23 @@ class WistDiscoveryAgent(Agent):
         if not self.training:
             return
 
-        # === Meta-learning: record score ===
+        # === Meta-learning: record score (via TIBRAIN MetaLearner) ===
         self._meta_learner.record_score(score)
 
-        # === Elo tracking ===
+        # === Elo tracking (via TIBRAIN EloTracker) ===
         self._elo_tracker.update(won=(score > 0))
         if self.episodes_trained % 100 == 0:
             self._elo_tracker.record(self.episodes_trained)
 
-        # === Reward Normalization ===
+        # === Reward Normalization (via TIBRAIN RewardNormalizer) ===
         self._reward_normalizer.normalize(score)
+
+        # === Pattern Discovery (via TIBRAIN DiscoveryEngine) ===
+        # Feed episode experiences to discovery engine for pattern detection
+        if self._play_episode:
+            reward_outcome = "win" if score > 0 else "loss"
+            for state, action in self._play_episode[-3:]:  # Last 3 state-actions
+                self._discovery_engine.observe(state, action, reward_outcome)
 
         # === Adaptive learning rate (per-state) ===
         base_alpha = max(0.05, self.alpha * (1.0 / (1.0 + self.episodes_trained / 1000)))
@@ -722,7 +793,7 @@ class WistDiscoveryAgent(Agent):
             # Prioritized replay.
             self._replay_buffer.add(state, action, target, "play", td_error)
 
-            # Train CardEvaluator neural net.
+            # Train TIBRAIN Evaluator neural net.
             if self._use_neural and idx < len(nn_features_reversed):
                 self._play_net.update(nn_features_reversed[idx], target)
 
@@ -753,8 +824,14 @@ class WistDiscoveryAgent(Agent):
         # === Decay eligibility traces ===
         self._decay_traces()
 
-        # === Meta-learning: log performance (no epsilon/alpha override — single decay owns it) ===
-        self._meta_learner.should_adjust(self.episodes_trained)  # Track stats only.
+        # === Meta-learning: check if adjustments are needed (via TIBRAIN) ===
+        if self._meta_learner.should_adjust(self.episodes_trained):
+            adjustments = self._meta_learner.suggest_adjustments(
+                self.epsilon, self.episodes_trained
+            )
+            # Apply suggested adjustments
+            if "epsilon" in adjustments:
+                self.epsilon = adjustments["epsilon"]
 
         # === Curriculum: switch to neural net after enough episodes ===
         if not self._use_neural and self.episodes_trained >= self._neural_switch_threshold:
@@ -770,6 +847,17 @@ class WistDiscoveryAgent(Agent):
         self._nn_play_features.clear()
         self.episodes_trained += 1
 
+        # === Insight Pipeline (read-only — Req 12.1–12.5) ===
+        if self.episodes_trained % _INSIGHT_PIPELINE_INTERVAL == 0:
+            try:
+                run_insight_cycle(
+                    self,
+                    self.episodes_trained,
+                    data_dir=Path(__file__).resolve().parent,
+                )
+            except Exception:
+                pass  # Never crash the training loop for insight generation.
+
     def _do_replay(self, alpha: float):
         """Prioritized experience replay."""
         batch = self._replay_buffer.sample(self._replay_batch_size)
@@ -778,7 +866,7 @@ class WistDiscoveryAgent(Agent):
         for state, action, reward, table_key in batch:
             if table_key == "play":
                 q = self.play_q if random.random() < 0.5 else self.play_q2
-                # CardEvaluator can't replay from string state alone (needs obs).
+                # Evaluator can't replay from string state alone (needs obs).
                 # Only Q-table replay for play actions.
             else:
                 q = self.bid_q if random.random() < 0.5 else self.bid_q2
@@ -801,7 +889,7 @@ class WistDiscoveryAgent(Agent):
                     del traces[state]
 
     # =========================================================================
-    # Opponent Modeling & Prediction
+    # Opponent Modeling & Prediction (Wist-specific)
     # =========================================================================
 
     def _update_voids(self, obs: WistObservation) -> None:
@@ -911,6 +999,7 @@ class WistDiscoveryAgent(Agent):
                 "use_neural": self._use_neural,
                 "play_net": self._play_net.to_dict(),
                 "bid_net": self._bid_net.to_dict(),
+                "discovery": self._discovery_engine.to_dict(),
             }
         except RuntimeError:
             # Dict changed during iteration (background thread). Retry with snapshot.
@@ -930,6 +1019,7 @@ class WistDiscoveryAgent(Agent):
                 "use_neural": self._use_neural,
                 "play_net": self._play_net.to_dict(),
                 "bid_net": self._bid_net.to_dict(),
+                "discovery": self._discovery_engine.to_dict(),
             }
             # Try once more with list() snapshots.
             try:
@@ -979,13 +1069,15 @@ class WistDiscoveryAgent(Agent):
         self._use_neural = data.get("use_neural", False)
 
         if "reward_norm" in data:
-            self._reward_normalizer.from_dict(data["reward_norm"])
+            self._reward_normalizer = RewardNormalizer.from_dict(data["reward_norm"])
         if "elo" in data:
-            self._elo_tracker.from_dict(data["elo"])
+            self._elo_tracker = EloTracker.from_dict(data["elo"])
         if "play_net" in data:
             try:
-                self._play_net = CardEvaluator.from_dict(data["play_net"])
+                self._play_net = Evaluator.from_dict(data["play_net"])
             except (KeyError, ValueError):
-                pass  # Old format — start fresh CardEvaluator.
+                pass  # Old format — start fresh Evaluator.
         if "bid_net" in data:
             self._bid_net = QNetwork.from_dict(data["bid_net"])
+        if "discovery" in data:
+            self._discovery_engine = DiscoveryEngine.from_dict(data["discovery"])
