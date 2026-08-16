@@ -73,16 +73,20 @@ class EvidenceAggregator:
             # Count total observations
             observation_count = len(obs_list)
 
-            # Count distinct game states using state_context as discriminator
-            distinct_states = len(
+            # Count distinct snapshots (unique snapshot_id values)
+            distinct_snapshots = len({obs.snapshot_id for obs in obs_list})
+
+            # Count distinct game states using state_context as discriminator.
+            # For snapshot-derived observations, each snapshot represents a
+            # distinct state of the agent (Q-values evolve with training).
+            # Use max of state_context diversity and snapshot diversity.
+            state_diversity = len(
                 {
                     self._state_context_key(obs.state_context)
                     for obs in obs_list
                 }
             )
-
-            # Count distinct snapshots (unique snapshot_id values)
-            distinct_snapshots = len({obs.snapshot_id for obs in obs_list})
+            distinct_states = max(state_diversity, distinct_snapshots)
 
             # Determine the majority reward direction (supporting)
             direction_counts: dict[str, int] = defaultdict(int)

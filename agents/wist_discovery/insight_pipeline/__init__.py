@@ -523,17 +523,38 @@ def run_insight_cycle(
         return existing_insights
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Step 8: Store observations in ObservationStore
+    # Step 8: Load previous observations from strategy_evidence.json and combine
     # ─────────────────────────────────────────────────────────────────────────
+    all_observations = list(raw_observations)
+    evidence_path = data_dir / "strategy_evidence.json"
+    prev_evidence = _load_json_file(evidence_path)
+    if prev_evidence and isinstance(prev_evidence, dict):
+        prev_obs_list = prev_evidence.get("raw_observations", [])
+        for prev_obs_dict in prev_obs_list:
+            try:
+                prev_obs = RawObservation(
+                    category=prev_obs_dict["category"],
+                    game_phase=prev_obs_dict["game_phase"],
+                    dimension_key=prev_obs_dict["dimension_key"],
+                    reward_direction=prev_obs_dict["reward_direction"],
+                    state_context=prev_obs_dict.get("state_context", {}),
+                    episode=prev_obs_dict.get("episode", 0),
+                    snapshot_id=prev_obs_dict.get("snapshot_id", "0"),
+                    timestamp=prev_obs_dict.get("timestamp", 0.0),
+                )
+                all_observations.append(prev_obs)
+            except (KeyError, TypeError):
+                continue
+
     for obs in raw_observations:
         observation_store.record(obs)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Step 9: Aggregate evidence using EvidenceAggregator
+    # Step 9: Aggregate evidence using ALL historical observations
     # ─────────────────────────────────────────────────────────────────────────
     evidence_aggregator = EvidenceAggregator()
     aggregated_patterns = evidence_aggregator.aggregate(
-        raw_observations, {snapshot_id: snapshot}
+        all_observations, {snapshot_id: snapshot}
     )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -696,7 +717,7 @@ def run_insight_cycle(
     # ─────────────────────────────────────────────────────────────────────────
     # Step 17: Persist evidence to strategy_evidence.json
     # ─────────────────────────────────────────────────────────────────────────
-    _persist_evidence(evidence_aggregator, unique_patterns, raw_observations, data_dir)
+    _persist_evidence(evidence_aggregator, unique_patterns, all_observations, data_dir)
 
     return validated_insights
 

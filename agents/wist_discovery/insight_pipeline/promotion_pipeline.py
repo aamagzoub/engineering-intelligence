@@ -262,24 +262,25 @@ class PromotionPipeline:
         rejected: list[dict] = []
 
         for pattern in patterns:
-            # Create candidate insight with placeholder text
-            # (TextGenerator will fill in real text later)
-            strategy_text = (
-                f"In {pattern.observations[0].game_phase} phase, "
-                f"{pattern.dimension_key} pattern observed across "
-                f"{pattern.distinct_states} states"
-            )
+            # Use TextGenerator to create proper text first.
+            from agents.wist_discovery.insight_pipeline.text_generator import TextGenerator
+            text_gen = TextGenerator()
+            text_result = text_gen.generate(pattern)
+
+            if text_result is None:
+                rejected.append({
+                    "pattern": pattern,
+                    "candidate": None,
+                    "reason": "text_generation: pattern did not pass statistical confirmation gate",
+                })
+                continue
+
+            strategy_text, why_text = text_result
 
             # Determine episode info from observations
             episodes = [obs.episode for obs in pattern.observations]
             first_episode = min(episodes) if episodes else 0
             last_episode = max(episodes) if episodes else 0
-
-            why_text = (
-                f"Observed across {pattern.observation_count} episodes in "
-                f"{pattern.distinct_states} distinct game states with "
-                f"{pattern.confidence:.0%} consistency"
-            )
 
             candidate = StrategicInsight(
                 strategy=strategy_text,
