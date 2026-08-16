@@ -1,8 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "engineering-intelligence"
 version = "0.1.0"
 description = "A research-oriented framework for engineering intelligent decision-making systems."
 requires-python = ">=3.12"
+dependencies = [
+    "tibrain @ {root:uri}/tibrain",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["intelligence"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

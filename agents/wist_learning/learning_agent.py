@@ -1,33 +1,29 @@
 """
-Learning Wist Agent — Enhanced Architecture v2.
+Learning Wist Agent — TIBRAIN-backed Architecture.
 
-Uses TD(λ) with eligibility traces for temporal credit assignment,
-richer state representation with card memory, and finer-grained
-action encoding for better policy discrimination.
-
-Enhancements:
-1. TD(λ) with eligibility traces — credit assignment within a shota
-2. Card memory — tracks played cards for better state awareness
-3. Finer action encoding — distinguishes specific card plays better
-4. Per-trick reward shaping (immediate feedback)
-5. Opponent modeling — tracks opponent void/trump patterns
-6. Prioritized experience replay — revisit high-impact experiences
-7. Strategic pattern detection — seek/void/trump extraction awareness
-8. Double Q-learning — reduces overestimation bias
+Uses TIBRAIN's generic Agent with Double Q-learning, TD(λ), and prioritized
+experience replay. The Wist layer provides domain-specific encoding and
+game-logic while delegating all RL operations to TIBRAIN components.
 
 The agent maintains:
-- play_q / play_q2: double Q-tables for card-play
-- bid_q: bidding Q-table (state → action → value)
+- A TIBRAIN Agent for card-play decisions (Double Q + TD(λ) + replay)
+- A separate bid Q-table (Monte Carlo first-visit updates)
 - card_memory: tracks played cards within a shota
 - opponent_model: learned opponent tendencies
-- replay_buffer: prioritized experience memory
+
+External API is identical to the previous inline implementation.
 """
 
 import json
 import math
 import random
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 from pathlib import Path
+
+from tibrain.agent import Agent as TIBRAINAgent
+from tibrain.q_learning import QLearningEngine
+from tibrain.policy import Policy
+from tibrain.replay_buffer import ReplayBuffer
 
 from environments.wist.actions import BidAction, PassAction, PlayCardAction
 from environments.wist.observation import BiddingObservation, WistObservation
@@ -115,46 +111,6 @@ class OpponentModel:
             return "1"
         else:
             return "2"
-
-
-# ---------------------------------------------------------------
-# Prioritized Experience Replay Buffer
-# ---------------------------------------------------------------
-
-
-class ReplayBuffer:
-    """
-    Stores high-impact experiences (state, action, reward, next_state)
-    and replays them periodically for faster learning.
-    Prioritized by absolute TD error — surprising outcomes get replayed more.
-    """
-
-    def __init__(self, capacity: int = 5000):
-        self.buffer: deque[tuple[str, str, float, str | None, float]] = deque(maxlen=capacity)
-        # Each entry: (state, action, reward, next_state, priority)
-
-    def add(self, state: str, action: str, reward: float,
-            next_state: str | None, td_error: float):
-        priority = abs(td_error) + 0.01  # Never zero priority
-        self.buffer.append((state, action, reward, next_state, priority))
-
-    def sample(self, batch_size: int = 16) -> list[tuple[str, str, float, str | None]]:
-        """Sample experiences weighted by priority."""
-        if len(self.buffer) < batch_size:
-            batch_size = len(self.buffer)
-        if batch_size == 0:
-            return []
-
-        priorities = [entry[4] for entry in self.buffer]
-        total = sum(priorities)
-        probs = [p / total for p in priorities]
-
-        indices = random.choices(range(len(self.buffer)), weights=probs, k=batch_size)
-        return [(self.buffer[i][0], self.buffer[i][1],
-                 self.buffer[i][2], self.buffer[i][3]) for i in indices]
-
-    def __len__(self):
-        return len(self.buffer)
 
 
 # ---------------------------------------------------------------
@@ -316,12 +272,11 @@ def encode_play_action(card: Card, trump: Suit | None, leading_suit: Suit | None
     """
     Enhanced action encoding for card play.
 
-    Encodes the CONTEXT of the play (7 features):
+    Encodes the CONTEXT of the play (4 features):
     - Is it trump? T/N
     - Is it following suit? F/O (follow/off-suit)
     - Rank tier: H(igh: A,K), U(pper-mid: Q,J), M(id: 10,9,8), L(ow: 7-2)
     - Is it the highest remaining in its suit? Y/N
-    - Is it creating/maintaining a void? V/X
     """
     is_trump = "T" if card.suit == trump else "N"
     follows = "F" if (leading_suit and card.suit == leading_suit) else "O"
@@ -414,49 +369,92 @@ def encode_bid_action(action: Action) -> str:
 
 
 # ---------------------------------------------------------------
-# Learning Agent — TD(λ) with eligibility traces
+# Wist-specific Encoders for TIBRAIN Agent
+# ---------------------------------------------------------------
+
+
+class WistPlayStateEncoder:
+    """Encodes a (WistObservation, card_memory, opponent_model) tuple to a string key.
+
+    The TIBRAIN Agent calls this with the state object provided to choose_action/learn.
+    We pass tuples of (obs, card_memory, opponent_model) as the "state".
+    """
+
+    def __call__(self, state) -> str:
+        obs, card_memory, opponent_model = state
+        return encode_play_state(obs, card_memory, opponent_model)
+
+
+class WistPlayActionEncoder:
+    """Encodes a (Card, trump, leading_suit, card_memory) tuple to a string key.
+
+    The TIBRAIN Agent calls this with the action object provided to choose_action/learn.
+    We pass tuples of (card, trump, leading_suit, card_memory) as the "action".
+    """
+
+    def __call__(self, action) -> str:
+        card, trump, leading_suit, card_memory = action
+        return encode_play_action(card, trump, leading_suit, card_memory)
+
+
+# ---------------------------------------------------------------
+# Learning Agent — TIBRAIN-backed
 # ---------------------------------------------------------------
 
 
 class LearningAgent(Agent):
     """
-    Enhanced learning agent for Wist using TD(λ) with:
-    - Double Q-learning (reduces overestimation)
-    - Eligibility traces (temporal credit within a shota)
-    - Opponent modeling (tracks void/trump patterns)
-    - Prioritized experience replay (revisit surprising outcomes)
-    - Card memory (tracks all played cards)
-    - Adaptive exploration (UCB-inspired)
+    Wist learning agent backed by TIBRAIN's generic RL components.
+
+    Delegates Q-learning, policy selection, and experience replay to a
+    TIBRAIN Agent instance. Wist-specific logic (state encoding, action
+    encoding, bidding, card memory, opponent modeling, reward shaping)
+    remains in this layer.
+
+    External API is identical to the previous inline implementation:
+    - act(observation) -> Action
+    - reward_trick(won: bool) -> None
+    - reward_shota(...) -> None
+    - reset_episode() -> None
+    - observe_card_played(card) -> None
+    - decay_epsilon(...) -> None
+    - decay_alpha(...) -> None
+    - save(path) -> None
+    - load(path) -> LearningAgent
+    - q_table_size -> int
     """
 
     def __init__(self, epsilon: float = 0.3, training: bool = True,
                  alpha: float = 0.1, gamma: float = 0.95,
                  lambda_: float = 0.7) -> None:
-        # Double Q-tables for card-play (reduces overestimation bias).
-        self.q_table: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        self.q_table2: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        self.n_table: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        # TIBRAIN Agent for card-play decisions.
+        self._tibrain_agent = TIBRAINAgent(
+            state_encoder=WistPlayStateEncoder(),
+            action_encoder=WistPlayActionEncoder(),
+            alpha=alpha,
+            gamma=gamma,
+            lambda_trace=lambda_,
+            epsilon=epsilon,
+            epsilon_min=0.01,
+            training=training,
+            replay_capacity=8000,
+        )
 
-        # Bid Q-table.
+        # Bid Q-table (kept separate — uses Monte Carlo first-visit updates).
         self.bid_q: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.bid_n: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-        # TD(λ) parameters.
-        self.alpha = alpha        # Learning rate
-        self.gamma = gamma        # Discount factor
-        self.lambda_ = lambda_    # Eligibility trace decay
-
+        # Hyperparameters (exposed for external decay and save/load).
         self.epsilon = epsilon
+        self.alpha = alpha
+        self.gamma = gamma
+        self.lambda_ = lambda_
         self.training = training
 
-        # Eligibility traces for current episode.
-        self._traces: dict[tuple[str, str], float] = {}
-
         # Episode memory.
-        self._play_episode: list[tuple[str, str, float]] = []
         self._bid_episode: list[tuple[str, str]] = []
-        self._last_state: str | None = None
-        self._last_action: str | None = None
+        self._last_state = None
+        self._last_action = None
 
         # Card memory — tracks played cards within a shota.
         self._card_memory: set[tuple[Suit, Rank]] = set()
@@ -466,13 +464,18 @@ class LearningAgent(Agent):
         # Opponent model.
         self._opponent_model = OpponentModel()
 
-        # Prioritized experience replay.
-        self._replay_buffer = ReplayBuffer(capacity=8000)
-        self._replay_interval = 4  # Replay every N tricks
-        self._trick_counter = 0
-
         self.total_updates = 0
         self.episodes_trained = 0
+
+    @property
+    def _q_engine(self) -> QLearningEngine:
+        """Access to the underlying Q-learning engine (for save/load)."""
+        return self._tibrain_agent.q_engine
+
+    @property
+    def _policy(self) -> Policy:
+        """Access to the underlying policy (for epsilon sync)."""
+        return self._tibrain_agent.policy
 
     def act(self, observation: Observation) -> Action:
         if isinstance(observation, BiddingObservation):
@@ -482,7 +485,7 @@ class LearningAgent(Agent):
         raise TypeError(f"Unsupported observation: {type(observation).__name__}")
 
     # ----------------------------------------------------------
-    # Card play with TD learning
+    # Card play with TIBRAIN Agent delegation
     # ----------------------------------------------------------
 
     def _act_play(self, obs: WistObservation) -> Action:
@@ -501,24 +504,37 @@ class LearningAgent(Agent):
 
         if len(playable) == 1:
             card = playable[0]
-        elif self.training and random.random() < self._explore_rate(obs):
-            card = random.choice(playable)
         else:
-            card = self._best_card(obs, playable)
+            # Build state and legal actions in TIBRAIN's expected format.
+            state = (obs, self._card_memory, self._opponent_model)
+            legal_actions = [
+                (c, obs.trump_suit, leading_suit, self._card_memory)
+                for c in playable
+            ]
 
-        # Record state-action and do TD update if training.
+            # Delegate action selection to TIBRAIN Agent.
+            chosen_action = self._tibrain_agent.choose_action(state, legal_actions)
+            card = chosen_action[0]  # Extract the Card from the tuple
+
+        # Record state-action for TD learning.
         if self.training:
-            state = encode_play_state(obs, self._card_memory, self._opponent_model)
-            action_key = encode_play_action(card, obs.trump_suit, leading_suit,
-                                            self._card_memory)
+            state_tuple = (obs, self._card_memory, self._opponent_model)
+            action_tuple = (card, obs.trump_suit, leading_suit, self._card_memory)
 
             # TD update from previous step.
             if self._last_state is not None:
-                self._td_update(self._last_state, self._last_action, 0.0, state)
+                # Learn from the transition: prev_state → 0 reward → current state
+                self._tibrain_agent.learn(
+                    self._last_state,
+                    self._last_action,
+                    0.0,
+                    state_tuple,
+                    [(c, obs.trump_suit, leading_suit, self._card_memory) for c in playable],
+                )
+                self.total_updates += 1
 
-            self._last_state = state
-            self._last_action = action_key
-            self._play_episode.append((state, action_key, 0.0))
+            self._last_state = state_tuple
+            self._last_action = action_tuple
 
         # Update card memory and opponent model from current trick.
         if obs.current_trick:
@@ -531,130 +547,8 @@ class LearningAgent(Agent):
 
         return PlayCardAction(player_id=obs.player_id, card=card)
 
-    def _explore_rate(self, obs: WistObservation) -> float:
-        """
-        Adaptive exploration: explore more in states we haven't seen much.
-        UCB-inspired: increase epsilon for rarely-visited states.
-        """
-        state = encode_play_state(obs, self._card_memory, self._opponent_model)
-        visits = sum(self.n_table[state].values()) if state in self.n_table else 0
-        if visits < 5:
-            return min(0.8, self.epsilon * 2.0)  # Explore heavily in new states
-        elif visits < 20:
-            return self.epsilon * 1.3
-        return self.epsilon
-
-    def _best_card(self, obs: WistObservation, playable: list[Card]) -> Card:
-        """
-        Pick the card whose action-type has the best learned value.
-        Uses Double Q-learning: average of Q1 and Q2 for evaluation.
-        """
-        state = encode_play_state(obs, self._card_memory, self._opponent_model)
-        q1_values = self.q_table[state]
-        q2_values = self.q_table2[state]
-
-        leading_suit = None
-        if obs.current_trick:
-            leading_suit = obs.current_trick.leading_suit
-
-        best_card = playable[0]
-        best_q = float("-inf")
-
-        for card in playable:
-            key = encode_play_action(card, obs.trump_suit, leading_suit,
-                                     self._card_memory)
-            # Double Q: use average of both tables for evaluation.
-            q = (q1_values[key] + q2_values[key]) / 2.0
-
-            # UCB bonus for less-visited actions (only during training).
-            if self.training:
-                n = max(1, self.n_table[state][key])
-                total_visits = max(1, sum(self.n_table[state].values()))
-                ucb_bonus = math.sqrt(2.0 * math.log(total_visits + 1) / n)
-                score = q + 0.15 * ucb_bonus
-            else:
-                score = q
-
-            if score > best_q:
-                best_q = score
-                best_card = card
-
-        return best_card
-
-    def _td_update(self, state: str, action: str, reward: float, next_state: str):
-        """
-        Double Q-learning TD(λ) update with eligibility traces and replay.
-
-        With 50% probability updates Q1 or Q2:
-        - Q1 update: uses Q1 to select best action, Q2 to evaluate it
-        - Q2 update: uses Q2 to select best action, Q1 to evaluate it
-        This reduces overestimation bias common in standard Q-learning.
-        """
-        # Double Q: randomly pick which table to update.
-        if random.random() < 0.5:
-            q_update = self.q_table
-            q_eval = self.q_table2
-        else:
-            q_update = self.q_table2
-            q_eval = self.q_table
-
-        # Get max action from update table, evaluate with eval table.
-        next_actions = q_update[next_state]
-        if next_actions:
-            best_next_action = max(next_actions, key=next_actions.get)
-            max_next_q = q_eval[next_state][best_next_action]
-        else:
-            max_next_q = 0.0
-
-        # TD error.
-        current_q = q_update[state][action]
-        delta = reward + self.gamma * max_next_q - current_q
-
-        # Store in replay buffer if significant.
-        if abs(delta) > 0.1:
-            self._replay_buffer.add(state, action, reward, next_state, delta)
-
-        # Update eligibility trace for current state-action.
-        sa = (state, action)
-        self._traces[sa] = self._traces.get(sa, 0.0) + 1.0
-
-        # Update all traces.
-        to_remove = []
-        for (s, a), trace in self._traces.items():
-            q_update[s][a] += self.alpha * delta * trace
-            self.n_table[s][a] += 1
-            self._traces[(s, a)] = self.gamma * self.lambda_ * trace
-            if self._traces[(s, a)] < 0.01:
-                to_remove.append((s, a))
-            self.total_updates += 1
-
-        for key in to_remove:
-            del self._traces[key]
-
-        # Periodic experience replay.
-        self._trick_counter += 1
-        if self._trick_counter % self._replay_interval == 0:
-            self._do_replay()
-
-    def _do_replay(self, batch_size: int = 8):
-        """Replay past experiences to reinforce important lessons."""
-        experiences = self._replay_buffer.sample(batch_size)
-        for state, action, reward, next_state in experiences:
-            if next_state is None:
-                # Terminal — direct update.
-                self.q_table[state][action] += self.alpha * 0.5 * (
-                    reward - self.q_table[state][action])
-            else:
-                # Non-terminal — standard TD.
-                next_q = self.q_table[next_state]
-                max_next = max(next_q.values()) if next_q else 0.0
-                target = reward + self.gamma * max_next
-                self.q_table[state][action] += self.alpha * 0.5 * (
-                    target - self.q_table[state][action])
-            self.total_updates += 1
-
     # ----------------------------------------------------------
-    # Bidding (learned)
+    # Bidding (learned — kept in Wist layer with Monte Carlo)
     # ----------------------------------------------------------
 
     def _act_bidding(self, obs: BiddingObservation) -> Action:
@@ -781,28 +675,18 @@ class LearningAgent(Agent):
             else:
                 trick_reward = -0.15
 
-        # TD update with the trick reward.
+        # Apply trick reward via TIBRAIN learn (terminal-like step with reward).
         if self._last_state is not None:
-            current_q = self.q_table[self._last_state][self._last_action]
-            delta = trick_reward - current_q * 0.1
-
-            # Store high-impact trick results in replay buffer.
-            if abs(delta) > 0.2:
-                self._replay_buffer.add(
-                    self._last_state, self._last_action, trick_reward, None, delta)
-
-            sa = (self._last_state, self._last_action)
-            self._traces[sa] = self._traces.get(sa, 0.0) + 1.0
-
-            to_remove = []
-            for (s, a), trace in self._traces.items():
-                self.q_table[s][a] += self.alpha * 0.5 * delta * trace
-                self._traces[(s, a)] = self.gamma * self.lambda_ * trace
-                if self._traces[(s, a)] < 0.01:
-                    to_remove.append((s, a))
-
-            for key in to_remove:
-                del self._traces[key]
+            # Use a "terminal" learn step: next state is same as last (no meaningful next).
+            # The reward is the trick shaping signal.
+            self._tibrain_agent.learn(
+                self._last_state,
+                self._last_action,
+                trick_reward,
+                self._last_state,  # pseudo next-state
+                [],  # no next actions (terminal-like for this trick)
+            )
+            self.total_updates += 1
 
     def reward_shota(self, team_won_shota: bool, bid_met: bool,
                      my_tricks: int = 0, opp_tricks: int = 0,
@@ -848,17 +732,16 @@ class LearningAgent(Agent):
         # Clamp to reasonable range.
         G = max(-4.0, min(5.0, G))
 
-        # Final TD update — terminal state.
+        # Final TD update — terminal state with shota reward.
         if self._last_state is not None:
-            current_q = self.q_table[self._last_state][self._last_action]
-            delta = G - current_q
-            sa = (self._last_state, self._last_action)
-            self._traces[sa] = self._traces.get(sa, 0.0) + 1.0
-
-            for (s, a), trace in self._traces.items():
-                self.q_table[s][a] += self.alpha * delta * trace
-                self.n_table[s][a] += 1
-                self.total_updates += 1
+            self._tibrain_agent.learn(
+                self._last_state,
+                self._last_action,
+                G,
+                self._last_state,  # terminal pseudo next-state
+                [],  # no next actions (episode end)
+            )
+            self.total_updates += 1
 
         # Update bid Q-table with Monte Carlo (bids are one-shot).
         self._update_bid_table(G)
@@ -885,16 +768,15 @@ class LearningAgent(Agent):
 
     def _reset_episode_state(self):
         """Clear all episode-specific state."""
-        self._play_episode.clear()
         self._bid_episode.clear()
-        self._traces.clear()
         self._last_state = None
         self._last_action = None
         self._card_memory.clear()
         self._tricks_won_this_shota = 0
         self._tricks_lost_this_shota = 0
         self._opponent_model.reset()
-        self._trick_counter = 0
+        # Reset TIBRAIN agent episode (clears eligibility traces).
+        self._tibrain_agent.reset_episode()
 
     def reset_episode(self) -> None:
         """Clear episode memory (call on Dak / skipped Shota)."""
@@ -910,10 +792,14 @@ class LearningAgent(Agent):
     def decay_epsilon(self, min_epsilon: float = 0.03, decay_rate: float = 0.9997) -> None:
         """Slowly reduce exploration. Decays slower than before for better coverage."""
         self.epsilon = max(min_epsilon, self.epsilon * decay_rate)
+        # Sync epsilon with TIBRAIN policy.
+        self._tibrain_agent.policy.epsilon = self.epsilon
 
     def decay_alpha(self, min_alpha: float = 0.01, decay_rate: float = 0.9999) -> None:
         """Decay learning rate for convergence."""
         self.alpha = max(min_alpha, self.alpha * decay_rate)
+        # Sync alpha with TIBRAIN Q-learning engine.
+        self._tibrain_agent.q_engine.alpha = self.alpha
 
     # ----------------------------------------------------------
     # Persistence
@@ -922,11 +808,15 @@ class LearningAgent(Agent):
     def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Extract Q-table data from TIBRAIN engine.
+        q1_data = self._q_engine.q1.to_dict()
+        q2_data = self._q_engine.q2.to_dict()
+
         data = {
-            "version": 3,  # Schema version for compatibility.
-            "q_table": {k: dict(v) for k, v in self.q_table.items()},
-            "q_table2": {k: dict(v) for k, v in self.q_table2.items()},
-            "n_table": {k: dict(v) for k, v in self.n_table.items()},
+            "version": 4,  # Schema version for TIBRAIN-backed agent.
+            "q_table": q1_data,
+            "q_table2": q2_data,
             "bid_q": {k: dict(v) for k, v in self.bid_q.items()},
             "bid_n": {k: dict(v) for k, v in self.bid_n.items()},
             "epsilon": self.epsilon,
@@ -953,28 +843,46 @@ class LearningAgent(Agent):
             lambda_=data.get("lambda", 0.7),
         )
 
-        for state, actions in data.get("q_table", {}).items():
-            for action_key, value in actions.items():
-                agent.q_table[state][action_key] = value
-        for state, actions in data.get("q_table2", {}).items():
-            for action_key, value in actions.items():
-                agent.q_table2[state][action_key] = value
-        for state, actions in data.get("n_table", {}).items():
-            for action_key, value in actions.items():
-                agent.n_table[state][action_key] = value
+        # Load Q-tables into TIBRAIN engine.
+        from tibrain.q_table import QTable
+        agent._q_engine.q1 = QTable.from_dict(data.get("q_table", {}))
+        agent._q_engine.q2 = QTable.from_dict(data.get("q_table2", {}))
+
+        # Load bid Q-table.
         for state, actions in data.get("bid_q", {}).items():
             for action_key, value in actions.items():
                 agent.bid_q[state][action_key] = value
         for state, actions in data.get("bid_n", {}).items():
             for action_key, value in actions.items():
                 agent.bid_n[state][action_key] = value
+
         agent.total_updates = data.get("total_updates", 0)
         agent.episodes_trained = data.get("episodes_trained", 0)
         return agent
 
     @property
+    def q_table(self) -> dict[str, dict[str, float]]:
+        """Backward-compatible access to play Q-values (averaged Q1 + Q2).
+
+        Returns a dict-of-dicts view suitable for external code that reads
+        Q-values by state key (e.g., GUI advisor panels).
+        """
+        q1_data = self._q_engine.q1.to_dict()
+        q2_data = self._q_engine.q2.to_dict()
+        merged: dict[str, dict[str, float]] = {}
+        all_states = set(q1_data.keys()) | set(q2_data.keys())
+        for state in all_states:
+            actions_1 = q1_data.get(state, {})
+            actions_2 = q2_data.get(state, {})
+            all_actions = set(actions_1.keys()) | set(actions_2.keys())
+            merged[state] = {
+                a: (actions_1.get(a, 0.0) + actions_2.get(a, 0.0)) / 2.0
+                for a in all_actions
+            }
+        return merged
+
+    @property
     def q_table_size(self) -> int:
-        play_size = sum(len(v) for v in self.q_table.values())
-        play2_size = sum(len(v) for v in self.q_table2.values())
+        play_size = self._q_engine.q1.size + self._q_engine.q2.size
         bid_size = sum(len(v) for v in self.bid_q.values())
-        return play_size + play2_size + bid_size
+        return play_size + bid_size

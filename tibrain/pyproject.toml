@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tibrain"
+version = "0.1.0"
+description = "Domain-neutral reinforcement learning library"
+requires-python = ">=3.12"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+test = ["hypothesis"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

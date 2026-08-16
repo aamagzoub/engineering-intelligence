@@ -481,12 +481,13 @@ class Renderer:
                     if y + 14 > disc_rect.bottom - 15:
                         break
 
-                    # Determine color: gold if value changed, except Compute/Since last.
+                    # Determine color: gold if value changed, except always-changing fields.
                     line_color = color
                     if ":" in stripped:
                         key_part = stripped.split(":")[0].strip()
-                        # Skip Compute and Since last from gold treatment.
-                        if key_part not in ("Compute", "Since last"):
+                        # Skip fields that always change between milestones.
+                        _ALWAYS_DIFFERENT = ("Compute", "Since last", "M-Shota", "T-Shotas")
+                        if key_part not in _ALWAYS_DIFFERENT:
                             curr_val = curr_values.get(key_part)
                             prev_val = prev_values.get(key_part)
                             if prev_val is not None and curr_val is not None and curr_val != prev_val:

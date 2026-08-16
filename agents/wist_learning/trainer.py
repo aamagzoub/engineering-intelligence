@@ -1,36 +1,32 @@
 """
 Training loop for the Enhanced Learning Agent.
 
-Runs self-play games with TD(λ) updates per trick and Monte Carlo
-for bidding. Supports curriculum learning with progressive difficulty.
+Uses TIBRAIN's generic training loop with curriculum phases. The Wist
+layer provides domain-specific environment adapters, progress logging,
+and result aggregation while TIBRAIN handles the core RL cycle.
 
 Enhancements over basic trainer:
-- Card memory integration: notifies agent of every card played
+- Card memory integration: handled by WistEnvironmentAdapter
 - Per-trick reward signals (not just end of shota)
-- Curriculum phases: Random → Rule-Based → Self-Play
-- Learning rate annealing for convergence
-- Progress tracking with more metrics
+- Curriculum phases: Random → Rule-Based → Refinement
+- Learning rate annealing via TIBRAIN phase hyperparameters
+- Progress tracking with Wist-specific metrics
 
 Can be used standalone (CLI) or called from the GUI Stats tab.
 """
 
 from pathlib import Path
 
+from tibrain.training import train, TrainingPhase, TrainingResult as TIBRAINTrainingResult
+
 from agents.wist_learning.learning_agent import LearningAgent
+from agents.wist_learning.wist_environment import WistEnvironmentAdapter
 from agents.random.random_agent import RandomAgent
 from agents.wist_rule_based.rule_based_agent import RuleBasedAgent
-from environments.wist.environment import WistEnvironment
-from environments.wist.round import Round
-from environments.wist.rules import trick_winner
-from environments.wist.scoring import detect_seek
-from environments.wist.setup import create_standard_players
-from environments.wist.tasmiya_engine import TasmiyaEngine
-from environments.wist.trick import Trick
-from intelligence.core.agent import Agent
 
 
 class TrainingResult:
-    """Results from a training session."""
+    """Results from a training session (Wist-specific metrics)."""
 
     def __init__(self) -> None:
         self.episodes: int = 0
@@ -46,6 +42,151 @@ class TrainingResult:
         self.bids_failed: int = 0
 
 
+class _WistTIBRAINAgentAdapter:
+    """
+    Adapter that bridges the TIBRAIN training loop's agent interface with
+    the WistEnvironmentAdapter's WistState/WistAction objects.
+
+    The TIBRAIN training loop calls:
+      - choose_action(state, legal_actions)
+      - learn(state, action, reward, next_state, next_legal_actions)
+      - reset_episode()
+      - policy.epsilon (for progress reporting)
+      - q_engine.q1.size + q_engine.q2.size (for progress reporting)
+
+    The WistEnvironmentAdapter provides WistState and WistAction objects.
+    This adapter converts them to the string keys the underlying TIBRAIN
+    agent uses, then delegates to the learner's internal TIBRAIN agent.
+    """
+
+    def __init__(self, learner: LearningAgent) -> None:
+        self._learner = learner
+        # Expose policy and q_engine for TIBRAIN's on_progress callback.
+        self.policy = learner._tibrain_agent.policy
+        self.q_engine = learner._tibrain_agent.q_engine
+
+    def choose_action(self, state, legal_actions):
+        """
+        Choose an action given a WistState and list of WistActions.
+
+        Converts to string keys, uses the Q-engine to select, and returns
+        the original WistAction.
+        """
+        if not legal_actions:
+            raise ValueError("No legal actions available")
+
+        state_key = str(state)
+        action_keys = [str(a) for a in legal_actions]
+
+        if self._learner.training:
+            chosen_key = self.policy.select(
+                self.q_engine.get_values(state_key, action_keys),
+                action_keys,
+            )
+        else:
+            chosen_key = self.policy.select_greedy(
+                self.q_engine.get_values(state_key, action_keys),
+                action_keys,
+            )
+
+        idx = action_keys.index(chosen_key)
+        return legal_actions[idx]
+
+    def learn(self, state, action, reward, next_state, next_legal_actions):
+        """Update Q-values from a transition using string keys."""
+        if not self._learner.training:
+            return
+
+        state_key = str(state)
+        action_key = str(action)
+        next_state_key = str(next_state)
+        next_action_keys = [str(a) for a in next_legal_actions]
+
+        self.q_engine.td_update(
+            state_key, action_key, reward, next_state_key, next_action_keys
+        )
+
+    def reset_episode(self):
+        """Clear eligibility traces for a new episode."""
+        self.q_engine.reset_episode()
+
+
+def _make_opponent_factory(opponent_type: str):
+    """Create an opponent factory function based on the type name."""
+    if opponent_type == "rule_based":
+        return RuleBasedAgent
+    return RandomAgent
+
+
+def _make_environment_factory(opponent_type: str):
+    """
+    Create a factory function that produces WistEnvironmentAdapter instances
+    configured with the given opponent type.
+
+    Used by TIBRAIN's TrainingPhase.environment_factory.
+    """
+    def factory() -> WistEnvironmentAdapter:
+        return WistEnvironmentAdapter(
+            opponent_factory=_make_opponent_factory(opponent_type),
+        )
+    return factory
+
+
+def _make_on_progress_callback(wist_result: TrainingResult, on_progress=None):
+    """
+    Create a TIBRAIN on_progress callback that tracks Wist-specific metrics.
+
+    The TIBRAIN training loop calls on_progress(dict) with:
+      - episode: current episode number
+      - cumulative_reward: reward from the latest episode
+      - epsilon: current exploration rate
+      - q_table_size: number of Q-table entries
+
+    This wrapper accumulates Wist metrics and forwards to the user's callback.
+    """
+    window_wins = [0]
+    window_losses = [0]
+
+    def callback(metrics: dict) -> None:
+        episode = metrics.get("episode", 0)
+        reward = metrics.get("cumulative_reward", 0.0)
+        epsilon = metrics.get("epsilon", 0.0)
+        q_table_size = metrics.get("q_table_size", 0)
+
+        # Infer win/loss from cumulative reward (positive = likely won).
+        if reward > 0:
+            wist_result.wins += 1
+            window_wins[0] += 1
+        else:
+            wist_result.losses += 1
+            window_losses[0] += 1
+
+        wist_result.episodes += 1
+
+        # Compute window win rate.
+        total_window = window_wins[0] + window_losses[0]
+        win_rate = (window_wins[0] / total_window * 100) if total_window > 0 else 0
+
+        wist_result.win_rates.append(win_rate)
+        wist_result.q_table_sizes.append(q_table_size)
+        wist_result.epsilon_history.append(epsilon)
+
+        if on_progress:
+            on_progress(
+                episode,
+                wist_result.wins,
+                wist_result.losses,
+                win_rate,
+                epsilon,
+            )
+
+        # Reset window periodically (every report).
+        window_wins[0] = 0
+        window_losses[0] = 0
+
+    return callback
+
+
 def train_agent(
     episodes: int = 1000,
     opponent: str = "random",
@@ -55,7 +196,7 @@ def train_agent(
     learner: LearningAgent | None = None,
 ) -> tuple[LearningAgent, TrainingResult]:
     """
-    Train a LearningAgent through self-play.
+    Train a LearningAgent through self-play using TIBRAIN's training loop.
 
     The learning agent plays as Team 0 (Players 0 and 2).
     The opponent plays as Team 1 (Players 1 and 3).
@@ -74,148 +215,33 @@ def train_agent(
     if learner is None:
         learner = LearningAgent(epsilon=0.4, training=True)
 
-    def make_opponent():
-        if opponent == "rule_based":
-            return RuleBasedAgent()
-        elif opponent == "self_play":
-            # Self-play: use a frozen copy of the learner (no training).
-            return learner  # Shares Q-table but training flag matters
-        return RandomAgent()
+    # Create the TIBRAIN-compatible Wist environment.
+    environment = WistEnvironmentAdapter(
+        opponent_factory=_make_opponent_factory(opponent),
+    )
 
+    # Build Wist-specific result tracker.
     result = TrainingResult()
-    window_wins = 0
-    window_losses = 0
+    tibrain_callback = _make_on_progress_callback(result, on_progress)
 
-    tasmiya_engine = TasmiyaEngine()
+    # Run the TIBRAIN training loop using a bridge adapter.
+    # The WistEnvironmentAdapter produces WistState/WistAction objects;
+    # the _WistTIBRAINAgentAdapter converts them to string keys for Q-learning.
+    agent_adapter = _WistTIBRAINAgentAdapter(learner)
 
-    for episode in range(episodes):
-        players = create_standard_players()
+    tibrain_result = train(
+        agent=agent_adapter,
+        environment=environment,
+        episodes=episodes,
+        on_progress=tibrain_callback,
+        report_every=report_every,
+    )
 
-        # Team 0 = learning agent, Team 1 = opponent.
-        opp1 = make_opponent()
-        opp2 = make_opponent()
-        agents: list[Agent] = [learner, opp1, learner, opp2]
+    # Sync hyperparameters back to the Wist learner.
+    learner.epsilon = agent_adapter.policy.epsilon
+    learner.alpha = agent_adapter.q_engine.alpha
 
-        round_ = Round(players)
-        round_.deal()
-
-        # Skip card-based Dak hands.
-        if round_.has_card_based_dak():
-            learner.reset_episode()
-            continue
-
-        # Bidding — rotate Qabool each episode.
-        qabool_id = episode % 4
-        tasmiya_result = tasmiya_engine.run(
-            players=players,
-            agents=agents,
-            sahib_al_qabool_id=qabool_id,
-        )
-
-        if tasmiya_result.is_dak:
-            learner.reset_episode()
-            continue
-
-        # Set up for play.
-        round_.state.trump_suit = tasmiya_result.trump_suit
-        round_.state.winning_bidder_id = tasmiya_result.winning_bidder_id
-        round_.next_leading_player_id = tasmiya_result.winning_bidder_id
-
-        environment = WistEnvironment(round_.state)
-
-        # Play 13 tricks with per-trick rewards.
-        team_tricks = {0: 0, 1: 0}
-
-        for trick_num in range(13):
-            leader_id = round_.next_leading_player_id
-            round_.state.current_trick = Trick(leading_player_id=leader_id)
-
-            play_order = [(leader_id + i) % 4 for i in range(4)]
-
-            for player_id in play_order:
-                obs = environment.observe(player_id)
-                action = agents[player_id].act(obs)
-                environment.apply_action(action)
-
-                # Notify learner of every card played (card memory).
-                if hasattr(action, 'card'):
-                    learner.observe_card_played(action.card)
-
-            completed_trick = round_.state.current_trick
-            winner = trick_winner(completed_trick, round_.state.trump_suit)
-
-            round_.state.completed_tricks.append(completed_trick)
-            round_.state.current_trick = None
-            round_.next_leading_player_id = winner
-
-            winner_team = players[winner].team_id
-            team_tricks[winner_team] += 1
-
-            # Per-trick reward signal to the learner.
-            learner_won = (winner_team == 0)
-            learner.reward_trick(won=learner_won)
-
-        # Determine outcomes.
-        playing_team = tasmiya_result.playing_team_id
-        bid = tasmiya_result.winning_bid_value
-        shooter_id = tasmiya_result.winning_bidder_id
-        learner_team = 0
-
-        my_tricks = team_tricks[learner_team]
-        opp_tricks = team_tricks[1]
-        team_won = my_tricks > opp_tricks
-        was_shooter = (playing_team == learner_team)
-        bid_met = (my_tricks >= bid) if was_shooter else False
-
-        # Seek detection.
-        seek = (my_tricks == 13 or opp_tricks == 13)
-
-        # Reward the agent.
-        learner.reward_shota(
-            team_won_shota=team_won,
-            bid_met=bid_met,
-            my_tricks=my_tricks,
-            opp_tricks=opp_tricks,
-            was_shooter=was_shooter,
-            seek=seek,
-        )
-        learner.decay_epsilon()
-        learner.decay_alpha()
-
-        # Track results.
-        result.episodes += 1
-        if team_won:
-            result.wins += 1
-            window_wins += 1
-        else:
-            result.losses += 1
-            window_losses += 1
-
-        if seek:
-            if my_tricks == 13:
-                result.seeks_achieved += 1
-            else:
-                result.seeks_against += 1
-        if was_shooter:
-            if bid_met:
-                result.bids_met += 1
-            else:
-                result.bids_failed += 1
-
-        # Report progress.
-        if (episode + 1) % report_every == 0:
-            total_window = window_wins + window_losses
-            win_rate = (window_wins / total_window * 100) if total_window > 0 else 0
-            result.win_rates.append(win_rate)
-            result.q_table_sizes.append(learner.q_table_size)
-            result.epsilon_history.append(learner.epsilon)
-            result.alpha_history.append(learner.alpha)
-
-            if on_progress:
-                on_progress(episode + 1, result.wins, result.losses, win_rate, learner.epsilon)
-
-            window_wins = 0
-            window_losses = 0
+    result.episodes = tibrain_result.episodes_completed
 
     # Save if requested.
     if save_path:
@@ -229,7 +255,7 @@ def train_curriculum(
     on_progress=None,
 ) -> tuple[LearningAgent, TrainingResult]:
     """
-    Enhanced curriculum training with 3 phases.
+    Enhanced curriculum training with 3 phases using TIBRAIN's training loop.
 
     Phase 1: 3,000 episodes vs Random (learn basic card mechanics)
              High epsilon (0.5), high alpha (0.15)
@@ -240,53 +266,63 @@ def train_curriculum(
     """
     learner = LearningAgent(epsilon=0.5, training=True, alpha=0.15)
 
-    # Phase 1: vs Random — learn basic card mechanics.
-    if on_progress:
-        on_progress(0, 0, 0, 0, learner.epsilon)
+    # Define the 3-phase curriculum using TIBRAIN TrainingPhase objects.
+    phases = [
+        TrainingPhase(
+            episodes=3000,
+            epsilon=0.5,
+            alpha=0.15,
+            environment_factory=_make_environment_factory("random"),
+            label="Phase 1: Random (basic mechanics)",
+        ),
+        TrainingPhase(
+            episodes=8000,
+            epsilon=0.25,
+            alpha=0.1,
+            environment_factory=_make_environment_factory("rule_based"),
+            label="Phase 2: Rule-Based (strategy)",
+        ),
+        TrainingPhase(
+            episodes=4000,
+            epsilon=0.1,
+            alpha=0.05,
+            environment_factory=_make_environment_factory("rule_based"),
+            label="Phase 3: Rule-Based (refinement)",
+        ),
+    ]
 
-    learner, result1 = train_agent(
-        episodes=3000,
-        opponent="random",
-        learner=learner,
-        report_every=100,
-        on_progress=on_progress,
+    # Build Wist-specific result tracker.
+    result = TrainingResult()
+    tibrain_callback = _make_on_progress_callback(result, on_progress)
+
+    # Use a default environment (will be overridden by phase factories).
+    default_env = WistEnvironmentAdapter(
+        opponent_factory=_make_opponent_factory("random"),
     )
 
-    # Phase 2: vs Rule-Based — learn strategic play.
-    learner.epsilon = 0.25
-    learner.alpha = 0.1
+    # Run the TIBRAIN training loop with curriculum phases.
+    # Use a bridge adapter for the WistState/WistAction → string key conversion.
+    agent_adapter = _WistTIBRAINAgentAdapter(learner)
 
-    learner, result2 = train_agent(
-        episodes=8000,
-        opponent="rule_based",
-        learner=learner,
+    tibrain_result = train(
+        agent=agent_adapter,
+        environment=default_env,
+        episodes=0,  # Ignored when phases are provided.
+        phases=phases,
+        on_progress=tibrain_callback,
         report_every=100,
-        on_progress=on_progress,
     )
 
-    # Phase 3: Refinement — lower exploration and learning rate.
-    learner.epsilon = 0.1
-    learner.alpha = 0.05
+    # Sync hyperparameters back to the Wist learner.
+    learner.epsilon = agent_adapter.policy.epsilon
+    learner.alpha = agent_adapter.q_engine.alpha
 
-    _, result3 = train_agent(
-        episodes=4000,
-        opponent="rule_based",
-        learner=learner,
-        save_path=save_path,
-        report_every=100,
-        on_progress=on_progress,
-    )
+    result.episodes = tibrain_result.episodes_completed
 
-    # Merge results.
-    result3.episodes += result1.episodes + result2.episodes
-    result3.wins += result1.wins + result2.wins
-    result3.losses += result1.losses + result2.losses
-    result3.seeks_achieved += result1.seeks_achieved + result2.seeks_achieved
-    result3.seeks_against += result1.seeks_against + result2.seeks_against
-    result3.bids_met += result1.bids_met + result2.bids_met
-    result3.bids_failed += result1.bids_failed + result2.bids_failed
+    # Save the trained model.
+    learner.save(save_path)
 
-    return learner, result3
+    return learner, result
 
 
 # ---------------------------------------------------------------
