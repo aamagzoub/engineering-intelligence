@@ -476,11 +476,7 @@ class Renderer:
                 for line in desc_lines:
                     stripped = line.strip()
                     if not stripped:
-                        # Visible separator: space + thin line + space.
-                        y += 6
-                        pygame.draw.line(self.screen, (60, 80, 60),
-                                         (px + 15, y), (px + panel_w - 15, y), 1)
-                        y += 8
+                        y += 10  # Empty line = vertical space only (no drawn line).
                         continue
                     if y + 14 > disc_rect.bottom - 15:
                         break
@@ -569,12 +565,10 @@ class Renderer:
         body_font = self.fonts["medium"]
         num_font = self.fonts["large"]
 
-        # Grouped filter chips — 5 simple chips instead of 19+ individual categories.
+        # Grouped filter chips — 2 rows, fixed layout.
         active_filter = state.get("insight_filter", None)
         chip_rects = {}
         chip_font = self._cat_font
-        chip_x = 15
-        chip_y = y
 
         all_insights = state.get("insights", [])
 
@@ -584,49 +578,54 @@ class Renderer:
                           "partner_play", "risk", "information"}
 
         _FILTER_GROUPS = [
-            ("ALL", None, (100, 140, 100)),
-            ("NEW", "new", (220, 160, 0)),
-            ("PLAY", "play", (80, 180, 80)),
-            ("STRATEGY", "strategy", (60, 130, 200)),
-            ("SURPRISING", "surprising_pattern", (220, 120, 0)),
+            # Row 1
+            [("ALL", None, (100, 140, 100)),
+             ("NEW", "new", (220, 160, 0)),
+             ("PLAY", "play", (80, 180, 80))],
+            # Row 2
+            [("STRATEGY", "strategy", (60, 130, 200)),
+             ("SURPRISING", "surprising_pattern", (220, 120, 0))],
         ]
 
-        # Count per group.
-        for label, filter_key, color in _FILTER_GROUPS:
-            if filter_key is None:
-                count = len(all_insights)
-            elif filter_key == "new":
-                count = sum(1 for ins in all_insights
-                            if isinstance(ins, dict) and ins.get("new", False))
-            elif filter_key == "play":
-                count = sum(1 for ins in all_insights
-                            if isinstance(ins, dict) and ins.get("category") in _PLAY_CATS)
-            elif filter_key == "strategy":
-                count = sum(1 for ins in all_insights
-                            if isinstance(ins, dict) and ins.get("category") in _STRATEGY_CATS)
-            else:
-                count = sum(1 for ins in all_insights
-                            if isinstance(ins, dict) and ins.get("category") == filter_key)
+        for row in _FILTER_GROUPS:
+            chip_x = 15
+            for label, filter_key, color in row:
+                if filter_key is None:
+                    count = len(all_insights)
+                elif filter_key == "new":
+                    count = sum(1 for ins in all_insights
+                                if isinstance(ins, dict) and ins.get("new", False))
+                elif filter_key == "play":
+                    count = sum(1 for ins in all_insights
+                                if isinstance(ins, dict) and ins.get("category") in _PLAY_CATS)
+                elif filter_key == "strategy":
+                    count = sum(1 for ins in all_insights
+                                if isinstance(ins, dict) and ins.get("category") in _STRATEGY_CATS)
+                else:
+                    count = sum(1 for ins in all_insights
+                                if isinstance(ins, dict) and ins.get("category") == filter_key)
 
-            chip_label = f"{label} ({count})"
-            is_active = (active_filter == filter_key)
-            bg = color if is_active else (30, 30, 30)
+                chip_label = f"{label} ({count})"
+                is_active = (active_filter == filter_key)
+                bg = color if is_active else (30, 30, 30)
 
-            chip_surf = chip_font.render(chip_label, True, (255, 255, 255))
-            cw = chip_surf.get_width() + 10
-            ch = chip_surf.get_height() + 6
-            chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
+                chip_surf = chip_font.render(chip_label, True, (255, 255, 255))
+                cw = chip_surf.get_width() + 10
+                ch = chip_surf.get_height() + 6
+                chip_rect = pygame.Rect(chip_x, y, cw, ch)
 
-            pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
-            pygame.draw.rect(self.screen, color, chip_rect, width=1, border_radius=4)
-            text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
-            text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
-            self.screen.blit(chip_surf, (text_x, text_y))
-            chip_rects[filter_key] = chip_rect
-            chip_x += cw + 3
+                pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
+                pygame.draw.rect(self.screen, color, chip_rect, width=1, border_radius=4)
+                text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
+                text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
+                self.screen.blit(chip_surf, (text_x, text_y))
+                chip_rects[filter_key] = chip_rect
+                chip_x += cw + 3
+
+            y += ch + 3  # Move to next row.
 
         state["_chip_rects"] = chip_rects
-        y = chip_y + ch + 8
+        y += 5
 
         insights = state.get("insights", [])
         if not insights:
