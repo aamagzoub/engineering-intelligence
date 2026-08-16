@@ -41,9 +41,97 @@ def load_milestones():
         ]
         compute_sec = data.get("total_compute_sec", 0.0)
         session_stats = data.get("session_stats", {})
+
+        # Retroactively patch old milestones missing Stage/Mix info.
+        milestones_list = _patch_legacy_milestones(milestones_list)
+
         return achieved, milestones_list, compute_sec, session_stats
     except (FileNotFoundError, Exception):
         return set(), [], 0.0, {}
+
+
+def _patch_legacy_milestones(milestones_list):
+    """Add Stage/Mix info to old milestones that don't have it.
+
+    Infers the stage from 'Curriculum Stage N' milestone entries
+    and applies the correct stage to all milestones between transitions.
+    """
+    _MIX_MAP = {
+        1: "Mix: 100% Self",
+        2: "Mix: 70% Self\n     30% Random",
+        3: "Mix: 50% Self\n     50% Frozen (\u03b5=0.08)",
+        4: "Mix: 60% Best (\u03b5=0.05)\n     40% Self",
+        5: "Mix: 100% Self (\u03b5=low)",
+        6: "Mix: 100% Self (\u03b5=high)",
+        7: "Mix: Conservative (\u03b5=0.02)\n     Aggressive (\u03b5=0.4)\n     Wild (\u03b5=0.3-0.8)\n     Self",
+        8: "Mix: 70% Best (\u03b5=0.0)\n     30% Self (\u03b5=0.0)",
+        9: "Mix: 100% Best (\u03b5=0.0-0.1)",
+        10: "Mix: 100% Best (\u03b5=0.02)",
+        11: "Mix: 30% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.05)\n     20% Self (\u03b5=0.0)\n     30% Random Styles",
+        12: "Mix: 100% Best (\u03b5=0.0)",
+        13: "Mix: 50% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.01)\n     30% Self (\u03b5=mixed)",
+        14: "Mix: 50% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.01)\n     30% Self (\u03b5=mixed)",
+        15: "Mix: 50% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.01)\n     30% Self (\u03b5=mixed)",
+    }
+    _STAGE_NAMES = {
+        1: "Self-Play", 2: "Weak Mix", 3: "Frozen Past", 4: "Adversarial",
+        5: "Conservative", 6: "Aggressive", 7: "Mixed Styles", 8: "Elite",
+        9: "Population", 10: "Counter-Strategy", 11: "Tournament",
+        12: "Pressure", 13: "Endurance", 14: "Grandmaster", 15: "Infinite",
+    }
+
+    # First pass: find stage transitions by scanning milestone titles.
+    # Build a list of (index, stage_number) for each curriculum milestone.
+    stage_transitions = []
+    for i, item in enumerate(milestones_list):
+        if not isinstance(item, tuple) or len(item) < 2:
+            continue
+        title = item[0]
+        if "Curriculum Stage" in title or "stage_" in title:
+            # Extract stage number from title.
+            import re
+            match = re.search(r'(\d+)', title)
+            if match:
+                stage_transitions.append((i, int(match.group(1))))
+
+    # Second pass: patch milestones that don't have Stage: line.
+    patched = []
+    current_stage = 1
+    transition_idx = 0
+
+    for i, item in enumerate(milestones_list):
+        # Check if we've passed a stage transition.
+        while transition_idx < len(stage_transitions) and stage_transitions[transition_idx][0] <= i:
+            current_stage = stage_transitions[transition_idx][1]
+            transition_idx += 1
+
+        if not isinstance(item, tuple) or len(item) < 2:
+            patched.append(item)
+            continue
+
+        title, desc = item[0], item[1]
+
+        # Skip if already has Stage: line (new format).
+        if "Stage:" in desc:
+            patched.append(item)
+            continue
+
+        # Inject Stage and Mix after the blank line (before M-Shota).
+        stage_name = _STAGE_NAMES.get(current_stage, f"Stage {current_stage}")
+        mix_text = _MIX_MAP.get(current_stage, f"Mix: Stage {current_stage}")
+        stage_block = f"Stage: {current_stage} ({stage_name})\n{mix_text}"
+
+        # Find insertion point: after the first blank line in desc.
+        parts = desc.split("\n\n", 1)
+        if len(parts) == 2:
+            new_desc = f"{parts[0]}\n\n{stage_block}\n{parts[1]}"
+        else:
+            # No blank line — prepend stage before stats.
+            new_desc = f"{stage_block}\n{desc}"
+
+        patched.append((title, new_desc))
+
+    return patched
 
 
 # ─── Milestone Detection ────────────────────────────────────────────────────────
