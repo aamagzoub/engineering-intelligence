@@ -476,7 +476,11 @@ class Renderer:
                 for line in desc_lines:
                     stripped = line.strip()
                     if not stripped:
-                        y += 16  # Empty line = visible separator between sections.
+                        # Visible separator: space + thin line + space.
+                        y += 6
+                        pygame.draw.line(self.screen, (60, 80, 60),
+                                         (px + 15, y), (px + panel_w - 15, y), 1)
+                        y += 8
                         continue
                     if y + 14 > disc_rect.bottom - 15:
                         break
@@ -565,108 +569,64 @@ class Renderer:
         body_font = self.fonts["medium"]
         num_font = self.fonts["large"]
 
-        # Category filter chips — after title, tight spacing.
+        # Grouped filter chips — 5 simple chips instead of 19+ individual categories.
         active_filter = state.get("insight_filter", None)
         chip_rects = {}
         chip_font = self._cat_font
-        categories = list(self._CAT_COLORS.keys())
         chip_x = 15
         chip_y = y
 
-        # Count insights per category dynamically.
         all_insights = state.get("insights", [])
-        cat_counts = {}
-        for cat in categories:
-            if cat == "new":
-                # New pipeline uses boolean "new" field; old uses confidence < 5.
-                cat_counts[cat] = sum(1 for ins in all_insights
-                                      if isinstance(ins, dict) and (
-                                          ins.get("new", False) or
-                                          (isinstance(ins.get("confidence", 1), (int, float))
-                                           and ins.get("confidence", 1) < 5
-                                           and ins.get("confidence", 1) > 1.0)))
-            else:
-                cat_counts[cat] = sum(1 for ins in all_insights
-                                      if isinstance(ins, dict) and ins.get("category") == cat)
 
-        for i, cat in enumerate(categories):
-            color = self._CAT_COLORS[cat]
-            count = cat_counts.get(cat, 0)
-            label = f"{cat.upper()} ({count})"
-            is_active = (active_filter == cat)
-            bg = color if is_active else (30, 30, 30)
-            border = color
+        # Define grouped filters.
+        _PLAY_CATS = {"leading", "following", "position", "card_preservation", "endgame"}
+        _STRATEGY_CATS = {"bidding", "trump_management", "suit_management", "defense",
+                          "partner_play", "risk", "information"}
 
-            chip_surf = chip_font.render(label, True, (255, 255, 255))
-            cw = chip_surf.get_width() + 10
-            ch = chip_surf.get_height() + 6
-            chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
-
-            if chip_x + cw > panel_w - 20:
-                chip_y += ch + 3
-                chip_x = 15
-                chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
-
-            pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
-            pygame.draw.rect(self.screen, border, chip_rect, width=1, border_radius=4)
-            text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
-            text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
-            self.screen.blit(chip_surf, (text_x, text_y))
-            chip_rects[cat] = chip_rect
-            chip_x += cw + 3
-
-        state["_chip_rects"] = chip_rects
-        y = chip_y + ch + 8
-
-        # Confidence filter — range chips (new pipeline uses 0.0-1.0 scale).
-        # Note: "NEW" is already shown in the category chips above, so skip it here.
-        conf_filter = state.get("confidence_filter", 0) or 0
-        _CONF_RANGES = [
-            ("LOW", 1, 30),
-            ("MODERATE", 31, 50),
-            ("GOOD", 51, 70),
-            ("STRONG", 71, 90),
-            ("PROVEN", 91, 100),
+        _FILTER_GROUPS = [
+            ("ALL", None, (100, 140, 100)),
+            ("NEW", "new", (220, 160, 0)),
+            ("PLAY", "play", (80, 180, 80)),
+            ("STRATEGY", "strategy", (60, 130, 200)),
+            ("SURPRISING", "surprising_pattern", (220, 120, 0)),
         ]
-        conf_rects = {}
-        conf_x = 15
-        conf_y = y
-        all_insights = state.get("insights", [])
 
-        for label, low, high in _CONF_RANGES:
-            # Convert 0.0-1.0 confidence to 0-100 percentage for range matching.
-            def _conf_pct(ins):
-                raw = ins.get("confidence", 0)
-                if isinstance(raw, float) and raw <= 1.0:
-                    return int(raw * 100)
-                return int(raw) if raw else 0
-            count = sum(1 for ins in all_insights
-                        if isinstance(ins, dict) and low <= _conf_pct(ins) <= high)
+        # Count per group.
+        for label, filter_key, color in _FILTER_GROUPS:
+            if filter_key is None:
+                count = len(all_insights)
+            elif filter_key == "new":
+                count = sum(1 for ins in all_insights
+                            if isinstance(ins, dict) and ins.get("new", False))
+            elif filter_key == "play":
+                count = sum(1 for ins in all_insights
+                            if isinstance(ins, dict) and ins.get("category") in _PLAY_CATS)
+            elif filter_key == "strategy":
+                count = sum(1 for ins in all_insights
+                            if isinstance(ins, dict) and ins.get("category") in _STRATEGY_CATS)
+            else:
+                count = sum(1 for ins in all_insights
+                            if isinstance(ins, dict) and ins.get("category") == filter_key)
+
             chip_label = f"{label} ({count})"
-            is_active = (conf_filter == low)
-            color = (100, 100, 140)
+            is_active = (active_filter == filter_key)
             bg = color if is_active else (30, 30, 30)
 
             chip_surf = chip_font.render(chip_label, True, (255, 255, 255))
             cw = chip_surf.get_width() + 10
             ch = chip_surf.get_height() + 6
-            chip_rect = pygame.Rect(conf_x, conf_y, cw, ch)
-
-            if conf_x + cw > panel_w - 20:
-                conf_y += ch + 3
-                conf_x = 15
-                chip_rect = pygame.Rect(conf_x, conf_y, cw, ch)
+            chip_rect = pygame.Rect(chip_x, chip_y, cw, ch)
 
             pygame.draw.rect(self.screen, bg, chip_rect, border_radius=4)
             pygame.draw.rect(self.screen, color, chip_rect, width=1, border_radius=4)
             text_x = chip_rect.x + (cw - chip_surf.get_width()) // 2
             text_y = chip_rect.y + (ch - chip_surf.get_height()) // 2
             self.screen.blit(chip_surf, (text_x, text_y))
-            conf_rects[low] = chip_rect
-            conf_x += cw + 3
+            chip_rects[filter_key] = chip_rect
+            chip_x += cw + 3
 
-        state["_conf_rects"] = conf_rects
-        y = conf_y + ch + 10
+        state["_chip_rects"] = chip_rects
+        y = chip_y + ch + 8
 
         insights = state.get("insights", [])
         if not insights:
@@ -674,30 +634,23 @@ class Renderer:
             self.screen.set_clip(None)
             return
 
-        # Filter insights by category if a filter is active.
+        # Filter insights by group if a filter is active.
+        _PLAY_CATS = {"leading", "following", "position", "card_preservation", "endgame"}
+        _STRATEGY_CATS = {"bidding", "trump_management", "suit_management", "defense",
+                          "partner_play", "risk", "information"}
         if active_filter:
             if active_filter == "new":
                 insights = [ins for ins in insights
                             if (isinstance(ins, dict) and ins.get("new", False))]
-            else:
+            elif active_filter == "play":
                 insights = [ins for ins in insights
-                            if (isinstance(ins, dict) and ins.get("category") == active_filter)]
-
-        # Filter by confidence range.
-        if conf_filter:
-            # conf_filter is the low end of a range (1-100 scale).
-            _CONF_RANGE_MAP = {1: (1, 30), 31: (31, 50), 51: (51, 70),
-                               71: (71, 90), 91: (91, 100)}
-            low, high = _CONF_RANGE_MAP.get(conf_filter, (conf_filter, 100))
-
-            def _get_conf_pct(ins):
-                raw = ins.get("confidence", 0)
-                if isinstance(raw, float) and raw <= 1.0:
-                    return int(raw * 100)
-                return int(raw) if raw else 0
-
-            insights = [ins for ins in insights
-                        if (isinstance(ins, dict) and low <= _get_conf_pct(ins) <= high)]
+                            if (isinstance(ins, dict) and ins.get("category") in _PLAY_CATS)]
+            elif active_filter == "strategy":
+                insights = [ins for ins in insights
+                            if (isinstance(ins, dict) and ins.get("category") in _STRATEGY_CATS)]
+            elif active_filter == "surprising_pattern":
+                insights = [ins for ins in insights
+                            if (isinstance(ins, dict) and ins.get("category") == "surprising_pattern")]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
