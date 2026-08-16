@@ -607,11 +607,11 @@ class WistDiscoveryWatcher:
 
         Reads insights_cache.json produced by the insight pipeline rather
         than the old generate_insights() function. Falls back to empty list
-        if the file doesn't exist yet (pipeline needs ~6000 episodes to
-        produce first insights).
+        if the file doesn't exist yet (pipeline needs ~4000 episodes to
+        produce first insights with lowered thresholds).
         """
         import json
-        from pathlib import Path
+        import os
 
         current_ep = self.discovery.episodes_trained
         if self._bg_agent:
@@ -620,8 +620,10 @@ class WistDiscoveryWatcher:
         if current_ep - self._last_insight_episode >= 2000 or not self._cached_insights:
             old_count = len(self._cached_insights)
 
-            # Read from the new pipeline's output file.
-            insights_path = Path(__file__).resolve().parent.parent / "agents" / "wist_discovery" / "insights_cache.json"
+            # Read from the same directory as the model file (works in exe and dev).
+            insights_path = os.path.join(
+                os.path.dirname(self.model_path), "insights_cache.json"
+            )
             try:
                 with open(insights_path, "r", encoding="utf-8") as f:
                     raw = json.load(f)

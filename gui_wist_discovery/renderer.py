@@ -476,7 +476,7 @@ class Renderer:
                 for line in desc_lines:
                     stripped = line.strip()
                     if not stripped:
-                        y += 6  # Blank line = spacing before milestone text.
+                        y += 12  # Blank line = visual separator between sections.
                         continue
                     if y + 14 > disc_rect.bottom - 15:
                         break

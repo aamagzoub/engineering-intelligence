@@ -861,7 +861,7 @@ class WistDiscoveryAgent(Agent):
                 run_insight_cycle(
                     self,
                     self.episodes_trained,
-                    data_dir=Path(__file__).resolve().parent,
+                    data_dir="agents/wist_discovery",
                 )
             except Exception:
                 pass  # Never crash the training loop for insight generation.
