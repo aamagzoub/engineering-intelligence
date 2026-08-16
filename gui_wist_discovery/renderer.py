@@ -524,11 +524,23 @@ class Renderer:
     # Category colors for badges.
     _CAT_COLORS = {
         "new": (220, 160, 0),
+        "leading": (80, 180, 80),
+        "following": (60, 150, 60),
+        "position": (100, 160, 200),
+        "card_preservation": (180, 130, 50),
+        "suit_management": (80, 180, 180),
+        "trump_management": (200, 80, 80),
         "bidding": (60, 130, 200),
+        "defense": (160, 80, 180),
+        "partner_play": (80, 180, 80),
+        "risk": (200, 120, 50),
+        "information": (100, 140, 200),
+        "endgame": (180, 150, 50),
+        "surprising_pattern": (220, 120, 0),
+        # Legacy categories (backward compat).
         "trump": (200, 80, 80),
         "timing": (180, 150, 50),
         "partnership": (80, 180, 80),
-        "defense": (160, 80, 180),
         "voids": (80, 180, 180),
         "counter-intuitive": (220, 120, 0),
     }
@@ -566,12 +578,16 @@ class Renderer:
         cat_counts = {}
         for cat in categories:
             if cat == "new":
+                # New pipeline uses boolean "new" field; old uses confidence < 5.
                 cat_counts[cat] = sum(1 for ins in all_insights
-                                      if isinstance(ins, dict) and ins.get("confidence", 1) < 5)
+                                      if isinstance(ins, dict) and (
+                                          ins.get("new", False) or
+                                          (isinstance(ins.get("confidence", 1), (int, float))
+                                           and ins.get("confidence", 1) < 5
+                                           and ins.get("confidence", 1) > 1.0)))
             else:
                 cat_counts[cat] = sum(1 for ins in all_insights
-                                      if isinstance(ins, dict) and ins.get("category") == cat
-                                      and ins.get("confidence", 1) >= 5)
+                                      if isinstance(ins, dict) and ins.get("category") == cat)
 
         for i, cat in enumerate(categories):
             color = self._CAT_COLORS[cat]
@@ -602,16 +618,15 @@ class Renderer:
         state["_chip_rects"] = chip_rects
         y = chip_y + ch + 8
 
-        # Confidence filter — range chips (same style as category chips).
+        # Confidence filter — range chips (new pipeline uses 0.0-1.0 scale).
         # Note: "NEW" is already shown in the category chips above, so skip it here.
         conf_filter = state.get("confidence_filter", 0) or 0
         _CONF_RANGES = [
-            ("CONFIRMED", 5, 19),
-            ("RELIABLE", 20, 49),
-            ("STRONG", 50, 99),
-            ("PROVEN", 100, 499),
-            ("ROCK-SOLID", 500, 999),
-            ("FUNDAMENTAL", 1000, 999999),
+            ("LOW", 1, 30),
+            ("MODERATE", 31, 50),
+            ("GOOD", 51, 70),
+            ("STRONG", 71, 90),
+            ("PROVEN", 91, 100),
         ]
         conf_rects = {}
         conf_x = 15
@@ -619,8 +634,14 @@ class Renderer:
         all_insights = state.get("insights", [])
 
         for label, low, high in _CONF_RANGES:
+            # Convert 0.0-1.0 confidence to 0-100 percentage for range matching.
+            def _conf_pct(ins):
+                raw = ins.get("confidence", 0)
+                if isinstance(raw, float) and raw <= 1.0:
+                    return int(raw * 100)
+                return int(raw) if raw else 0
             count = sum(1 for ins in all_insights
-                        if isinstance(ins, dict) and low <= ins.get("confidence", 1) <= high)
+                        if isinstance(ins, dict) and low <= _conf_pct(ins) <= high)
             chip_label = f"{label} ({count})"
             is_active = (conf_filter == low)
             color = (100, 100, 140)
@@ -657,20 +678,26 @@ class Renderer:
         if active_filter:
             if active_filter == "new":
                 insights = [ins for ins in insights
-                            if (isinstance(ins, dict) and ins.get("confidence", 1) < 5)]
+                            if (isinstance(ins, dict) and ins.get("new", False))]
             else:
                 insights = [ins for ins in insights
-                            if (isinstance(ins, dict) and ins.get("category") == active_filter
-                                and ins.get("confidence", 1) >= 5)]
+                            if (isinstance(ins, dict) and ins.get("category") == active_filter)]
 
         # Filter by confidence range.
         if conf_filter:
-            # conf_filter is the low end of a range. Find the matching range.
-            _CONF_RANGE_MAP = {1: (1, 4), 5: (5, 19), 20: (20, 49), 50: (50, 99),
-                               100: (100, 499), 500: (500, 999), 1000: (1000, 999999)}
-            low, high = _CONF_RANGE_MAP.get(conf_filter, (conf_filter, 999999))
+            # conf_filter is the low end of a range (1-100 scale).
+            _CONF_RANGE_MAP = {1: (1, 30), 31: (31, 50), 51: (51, 70),
+                               71: (71, 90), 91: (91, 100)}
+            low, high = _CONF_RANGE_MAP.get(conf_filter, (conf_filter, 100))
+
+            def _get_conf_pct(ins):
+                raw = ins.get("confidence", 0)
+                if isinstance(raw, float) and raw <= 1.0:
+                    return int(raw * 100)
+                return int(raw) if raw else 0
+
             insights = [ins for ins in insights
-                        if (isinstance(ins, dict) and low <= ins.get("confidence", 1) <= high)]
+                        if (isinstance(ins, dict) and low <= _get_conf_pct(ins) <= high)]
 
         total = len(insights)
         insight_scroll = state.get("insight_scroll", 0)
@@ -692,9 +719,17 @@ class Renderer:
                 why = ""
                 is_new = False
             else:
-                text = ins.get("text", "")
+                # Support both old schema (text, confidence as int 1-100+)
+                # and new pipeline schema (strategy, confidence as float 0-1).
+                text = ins.get("strategy", "") or ins.get("text", "")
                 category = ins.get("category", "")
-                confidence = ins.get("confidence", 1)
+                raw_conf = ins.get("confidence", 1)
+                # New pipeline uses 0.0-1.0; old uses 1-999+. Detect and adapt.
+                if isinstance(raw_conf, float) and raw_conf <= 1.0:
+                    # New schema: map 0.0-1.0 to display value (multiply by 100 for badge logic).
+                    confidence = int(raw_conf * 100)
+                else:
+                    confidence = int(raw_conf) if raw_conf else 1
                 condition = ins.get("condition", "")
                 why = ins.get("why", "")
                 is_new = ins.get("new", False)

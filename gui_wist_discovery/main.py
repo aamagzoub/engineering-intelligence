@@ -31,7 +31,6 @@ from gui_wist_discovery.milestones import (
     save_milestones, load_milestones, check_milestones,
     auto_discover, create_auto_stats,
 )
-from gui_wist_discovery.insights import generate_insights
 from gui_wist_discovery.training import (
     snapshot_brain, create_opponent, create_training_clone,
     run_background_training, STAGE_STAGNATION_THRESHOLD, STAGE_CONFIG,
@@ -602,13 +601,35 @@ class WistDiscoveryWatcher:
     # ─── Insights ───────────────────────────────────────────────────────────────
 
     def _refresh_insights(self):
-        """Refresh cached insights if enough episodes have passed."""
+        """Refresh cached insights from the new insight pipeline output.
+
+        Reads insights_cache.json produced by the insight pipeline rather
+        than the old generate_insights() function. Falls back to empty list
+        if the file doesn't exist yet (pipeline needs ~6000 episodes to
+        produce first insights).
+        """
+        import json
+        from pathlib import Path
+
         current_ep = self.discovery.episodes_trained
         if self._bg_agent:
             current_ep = max(current_ep, self._bg_agent.episodes_trained)
+
         if current_ep - self._last_insight_episode >= 2000 or not self._cached_insights:
             old_count = len(self._cached_insights)
-            self._cached_insights = generate_insights(self.discovery)
+
+            # Read from the new pipeline's output file.
+            insights_path = Path(__file__).resolve().parent.parent / "agents" / "wist_discovery" / "insights_cache.json"
+            try:
+                with open(insights_path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, list):
+                    self._cached_insights = raw
+                else:
+                    self._cached_insights = []
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                self._cached_insights = []
+
             self._last_insight_episode = current_ep
             # If user is scrolled and new insights appeared, bump scroll to stay stable.
             new_count = len(self._cached_insights)
