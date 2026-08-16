@@ -42,6 +42,39 @@ from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
 from environments.wist.environment import WistEnvironment
 
 
+# Stage names for milestone descriptions.
+_STAGE_NAMES = {
+    1: "Self-Play", 2: "Weak Mix", 3: "Frozen Past", 4: "Adversarial",
+    5: "Conservative", 6: "Aggressive", 7: "Mixed Styles", 8: "Elite",
+    9: "Population", 10: "Counter-Strategy", 11: "Tournament",
+    12: "Pressure", 13: "Endurance", 14: "Grandmaster", 15: "Infinite",
+}
+
+# Stage mix descriptions — multi-line for complex mixes.
+_STAGE_MIX = {
+    1:  "Mix: 100% Self",
+    2:  "Mix: 70% Self\n     30% Random",
+    3:  "Mix: 50% Self\n     50% Frozen (\u03b5=0.08)",
+    4:  "Mix: 60% Best (\u03b5=0.05)\n     40% Self",
+    5:  "Mix: 100% Self (\u03b5=low)",
+    6:  "Mix: 100% Self (\u03b5=high)",
+    7:  "Mix: Conservative (\u03b5=0.02)\n     Aggressive (\u03b5=0.4)\n     Wild (\u03b5=0.3-0.8)\n     Self",
+    8:  "Mix: 70% Best (\u03b5=0.0)\n     30% Self (\u03b5=0.0)",
+    9:  "Mix: 100% Best (\u03b5=0.0-0.1)",
+    10: "Mix: 100% Best (\u03b5=0.02)",
+    11: "Mix: 30% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.05)\n     20% Self (\u03b5=0.0)\n     30% Random Styles",
+    12: "Mix: 100% Best (\u03b5=0.0)",
+    13: "Mix: 50% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.01)\n     30% Self (\u03b5=mixed)",
+    14: "Mix: 50% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.01)\n     30% Self (\u03b5=mixed)",
+    15: "Mix: 50% Best (\u03b5=0.0)\n     20% Frozen (\u03b5=0.01)\n     30% Self (\u03b5=mixed)",
+}
+
+
+def _get_stage_mix_text(stage: int) -> str:
+    """Get the opponent mix description for a given stage number."""
+    return _STAGE_MIX.get(stage, f"Mix: Stage {stage}")
+
+
 class WistDiscoveryWatcher:
     """Watch the AI discover Wist strategy from scratch."""
 
@@ -419,10 +452,17 @@ class WistDiscoveryWatcher:
         if self._bg_agent:
             episodes = max(episodes, self._bg_agent.episodes_trained)
 
+        # Stage and opponent mix info.
+        stage_num = self._opponent_stage
+        stage_name = _STAGE_NAMES.get(stage_num, f"Stage {stage_num}")
+        mix_text = _get_stage_mix_text(stage_num)
+
         # Full comma-formatted numbers — no K or M abbreviations.
         desc = (
             f"{base_desc}\n"
             f"\n"
+            f"Stage: {stage_num} ({stage_name})\n"
+            f"{mix_text}\n"
             f"M-Shota: {episodes:,}\n"
             f"T-Shotas: {episodes:,}\n"
             f"Bid accuracy: {bid_accuracy:.1f}%\n"

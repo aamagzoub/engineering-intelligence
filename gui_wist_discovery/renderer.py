@@ -485,8 +485,8 @@ class Renderer:
                     line_color = color
                     if ":" in stripped:
                         key_part = stripped.split(":")[0].strip()
-                        # Skip fields that always change between milestones.
-                        _ALWAYS_DIFFERENT = ("Compute", "Since last", "M-Shota", "T-Shotas")
+                        # Skip fields that always change or are context (not behavioral).
+                        _ALWAYS_DIFFERENT = ("Compute", "Since last", "M-Shota", "T-Shotas", "Stage", "Mix")
                         if key_part not in _ALWAYS_DIFFERENT:
                             curr_val = curr_values.get(key_part)
                             prev_val = prev_values.get(key_part)
