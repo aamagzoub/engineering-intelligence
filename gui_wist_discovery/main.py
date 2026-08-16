@@ -10,6 +10,8 @@ Usage:
     python gui_wist_discovery/main.py
 """
 
+VERSION = "4.0.0"
+
 import sys
 import os
 import time
@@ -417,21 +419,14 @@ class WistDiscoveryWatcher:
         if self._bg_agent:
             episodes = max(episodes, self._bg_agent.episodes_trained)
 
-        # Format: each stat on its own line, blank line, then milestone text.
-        if episodes >= 1000000:
-            ep_str = f"{episodes / 1000000:.1f}M"
-        elif episodes >= 1000:
-            ep_str = f"{episodes // 1000}K"
-        else:
-            ep_str = str(episodes)
-
+        # Full comma-formatted numbers — no K or M abbreviations.
         desc = (
             f"{base_desc}\n"
             f"\n"
-            f"M-Shota: {episodes}\n"
-            f"T-Shotas: {ep_str}\n"
-            f"Bid accuracy: {bid_accuracy:.0f}%\n"
-            f"Win rate: {win_rate:.0f}%\n"
+            f"M-Shota: {episodes:,}\n"
+            f"T-Shotas: {episodes:,}\n"
+            f"Bid accuracy: {bid_accuracy:.1f}%\n"
+            f"Win rate: {win_rate:.1f}%\n"
             f"Compute: {total_str}\n"
             f"Since last: {delta_str}"
         )
@@ -605,12 +600,15 @@ class WistDiscoveryWatcher:
 
     @staticmethod
     def _format_time(seconds: float) -> str:
-        """Format seconds into human-readable short form."""
-        if seconds < 60:
-            return f"{seconds:.0f}s"
-        elif seconds < 3600:
-            return f"{seconds / 60:.1f}m"
-        return f"{seconds / 3600:.1f}h"
+        """Format seconds into DD.HH.MM.SS format."""
+        total = int(seconds)
+        days = total // 86400
+        remaining = total % 86400
+        hours = remaining // 3600
+        remaining = remaining % 3600
+        mins = remaining // 60
+        secs = remaining % 60
+        return f"{days:02d}.{hours:02d}.{mins:02d}.{secs:02d}"
 
     def _get_session_stats(self) -> dict:
         """Build session stats dict for persistence."""

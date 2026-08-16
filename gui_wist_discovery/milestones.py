@@ -451,10 +451,7 @@ def auto_discover(auto_stats, context, trigger_fn):
         if key not in crossed and episodes >= threshold:
             crossed.add(key)
             stats["last_discovery_episode"] = episodes
-            if threshold >= 1000000:
-                label = f"{threshold // 1000000}M"
-            else:
-                label = f"{threshold // 1000}K"
+            label = f"{threshold:,}"
             trigger_fn(f"auto_volume_{threshold}",
                        f"TRAINING VOLUME: Reached {label} shotas learned. The brain keeps growing deeper.")
             return

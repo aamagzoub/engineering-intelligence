@@ -325,12 +325,17 @@ class Renderer:
 
         y = score_rect.top + 8
 
-        # Timer in yellow.
+        # Timer in DD.HH.MM.SS format.
         total_sec = state["compute_time"]
-        hours = int(total_sec // 3600)
-        minutes = int((total_sec % 3600) // 60)
-        seconds = int(total_sec % 60)
-        timer_surf = self.fonts["large"].render(f"{hours:02d}:{minutes:02d}:{seconds:02d}", True, TEXT_GOLD)
+        days = int(total_sec // 86400)
+        remaining = int(total_sec) % 86400
+        hours = remaining // 3600
+        remaining = remaining % 3600
+        minutes = remaining // 60
+        seconds = remaining % 60
+        timer_surf = self.fonts["large"].render(
+            f"{days:02d}.{hours:02d}.{minutes:02d}.{seconds:02d}", True, TEXT_GOLD
+        )
         self.screen.blit(timer_surf, (px + 10, y))
         y += 20
 
@@ -461,7 +466,12 @@ class Renderer:
                 y = self._wrap_text(num_font, title_text, px + 10 + num_w, y, panel_text_w - num_w, num_color, disc_rect.bottom - 20)
                 y += 2
 
-                # Description: render each line separately (stats + blank + milestone text).
+                # Get previous milestone's desc for delta comparison.
+                prev_desc_text = milestones[idx - 1][1] if idx > 0 else ""
+                prev_values = self._parse_milestone_values(prev_desc_text)
+                curr_values = self._parse_milestone_values(desc_text)
+
+                # Description: render each line with gold for changed values.
                 desc_lines = desc_text.split("\n")
                 for line in desc_lines:
                     stripped = line.strip()
@@ -470,7 +480,19 @@ class Renderer:
                         continue
                     if y + 14 > disc_rect.bottom - 15:
                         break
-                    y = self._wrap_text(body_font, stripped, px + 15, y, panel_text_w - 20, color, disc_rect.bottom - 20)
+
+                    # Determine color: gold if value changed, except Compute/Since last.
+                    line_color = color
+                    if ":" in stripped:
+                        key_part = stripped.split(":")[0].strip()
+                        # Skip Compute and Since last from gold treatment.
+                        if key_part not in ("Compute", "Since last"):
+                            curr_val = curr_values.get(key_part)
+                            prev_val = prev_values.get(key_part)
+                            if prev_val is not None and curr_val is not None and curr_val != prev_val:
+                                line_color = TEXT_GOLD
+
+                    y = self._wrap_text(body_font, stripped, px + 15, y, panel_text_w - 20, line_color, disc_rect.bottom - 20)
                     y += 1
 
                 y += 6
@@ -484,6 +506,17 @@ class Renderer:
                     break
 
         self.screen.set_clip(None)
+
+    @staticmethod
+    def _parse_milestone_values(desc_text: str) -> dict:
+        """Parse milestone description into key→value dict for delta comparison."""
+        values = {}
+        for line in desc_text.split("\n"):
+            stripped = line.strip()
+            if ":" in stripped:
+                key, val = stripped.split(":", 1)
+                values[key.strip()] = val.strip()
+        return values
 
     # ─── Left Panel (Insights) ──────────────────────────────────────────────────
 
