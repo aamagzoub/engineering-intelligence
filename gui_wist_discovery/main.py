@@ -457,11 +457,13 @@ class WistDiscoveryWatcher:
         mix_text = _get_stage_mix_text(stage_num)
 
         # Full comma-formatted numbers — no K or M abbreviations.
+        # Empty line between Mix block and M-Shota for visual separation.
         desc = (
             f"{base_desc}\n"
             f"\n"
             f"Stage: {stage_num} ({stage_name})\n"
             f"{mix_text}\n"
+            f"\n"
             f"M-Shota: {episodes:,}\n"
             f"T-Shotas: {episodes:,}\n"
             f"Bid accuracy: {bid_accuracy:.1f}%\n"

@@ -187,7 +187,7 @@ _SUBKEY_PHASE_MAP: dict[str, str] = {
 }
 
 # Threshold for significant Q-value to create an observation
-_MEAN_Q_THRESHOLD: float = 0.5
+_MEAN_Q_THRESHOLD: float = 0.1
 
 
 def _generate_observations_from_snapshot(

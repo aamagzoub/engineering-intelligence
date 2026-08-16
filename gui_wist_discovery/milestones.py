@@ -124,10 +124,10 @@ def _patch_legacy_milestones(milestones_list):
         # Find insertion point: after the first blank line in desc.
         parts = desc.split("\n\n", 1)
         if len(parts) == 2:
-            new_desc = f"{parts[0]}\n\n{stage_block}\n{parts[1]}"
+            new_desc = f"{parts[0]}\n\n{stage_block}\n\n{parts[1]}"
         else:
             # No blank line — prepend stage before stats.
-            new_desc = f"{stage_block}\n{desc}"
+            new_desc = f"{stage_block}\n\n{desc}"
 
         patched.append((title, new_desc))
 

@@ -47,7 +47,7 @@ class TextGenerator:
     CONFIDENCE_THRESHOLD: float = 0.3
     MIN_OBSERVATION_COUNT: int = 3
     MIN_DISTINCT_STATES: int = 2
-    MIN_DISTINCT_SNAPSHOTS: int = 3
+    MIN_DISTINCT_SNAPSHOTS: int = 2
 
     # Template mappings from dimension_key to strategy text
     _STRATEGY_TEMPLATES: dict[str, str] = {

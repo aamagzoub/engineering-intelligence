@@ -38,7 +38,7 @@ class EvidenceAggregator:
     """
 
     CONFIDENCE_THRESHOLD: float = 0.3
-    MIN_SNAPSHOTS: int = 3
+    MIN_SNAPSHOTS: int = 2
 
     def aggregate(
         self,
