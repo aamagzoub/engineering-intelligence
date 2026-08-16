@@ -253,7 +253,6 @@ class Renderer:
                 "Open higher than 11",
                 "Pass on 3rd re-deal if special role",
                 "Use a suit with 8+ cards as trump",
-                "Dak if hand has no picture cards (A/K/Q/J)",
             ]),
             ("What the Agent Knows", [
                 "Cards with rank (2=lowest → 14=Ace) and suit (0-3)",

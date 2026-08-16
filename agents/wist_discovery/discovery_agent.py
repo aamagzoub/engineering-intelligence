@@ -655,7 +655,7 @@ class WistDiscoveryAgent(Agent):
         q1 = self.play_q[state_str]
         q2 = self.play_q2[state_str]
 
-        # Neural net: evaluate each card individually with sequence memory.
+        # Neural net: evaluate all playable cards in one batch.
         nn_values = {}
         if self._use_neural:
             s_feat = state_features(obs, self._get_opponent_voids_count(obs),
@@ -664,10 +664,18 @@ class WistDiscoveryAgent(Agent):
                                     self._my_tricks, self._opp_tricks,
                                     self._partner_bid, 0, 0, 0)
             mem_feat = self._get_memory_features()
+            # Build feature matrix for all cards at once.
+            card_feats = []
+            card_ids = []
             for card in playable:
                 c_feat = card_features(card, obs, playable, rank_value, SUIT_IDX)
-                combined_feat = np.concatenate([s_feat, c_feat, mem_feat])
-                nn_values[id(card)] = self._play_net.predict(combined_feat)
+                card_feats.append(np.concatenate([s_feat, c_feat, mem_feat]))
+                card_ids.append(id(card))
+            # Single batch forward pass instead of N separate calls.
+            batch_array = np.array(card_feats)
+            batch_results = self._play_net.predict_batch(batch_array)
+            for i, cid in enumerate(card_ids):
+                nn_values[cid] = float(batch_results[i])
 
         best_card = playable[0]
         best_q = float("-inf")
