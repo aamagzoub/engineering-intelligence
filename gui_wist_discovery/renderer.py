@@ -253,9 +253,11 @@ class Renderer:
                 "Open higher than 11",
                 "Pass on 3rd re-deal if special role",
                 "Use a suit with 8+ cards as trump",
+                "Dak if hand has no picture cards (A/K/Q/J)",
             ]),
             ("What the Agent Knows", [
-                "Cards with a number (2-14) and suit (0-3)",
+                "Cards with rank (2=lowest → 14=Ace) and suit (0-3)",
+                "Rank order: 2 < 3 < ... < 10 < J(11) < Q(12) < K(13) < A(14)",
                 "Each turn, some cards are playable",
                 "The 13-tricks shota score (+/-)",
                 "During bidding, choose a number or pass",
@@ -361,7 +363,7 @@ class Renderer:
                     self.screen.blit(self.fonts["small"].render("—", True, TEXT_DIM), (sx + 4, y))
             total_val = state["team_scores"][tid]
             tc = (100, 255, 100) if total_val > 0 else (255, 100, 100) if total_val < 0 else TEXT_LIGHT
-            self.screen.blit(self.fonts["small"].render(f"{total_val:+d}", True, tc),
+            self.screen.blit(self.fonts["small"].render(f"{total_val:+,d}", True, tc),
                              (header_x + col_name_w + 5 * col_shota_w, y))
             y += 16
 
@@ -375,11 +377,14 @@ class Renderer:
             label_surf = med_font.render(f"{label}: ", True, TEXT_WHITE)
             self.screen.blit(label_surf, (px + 10, y_pos))
             x = px + 10 + label_surf.get_width()
-            v1_surf = med_font.render(str(val1), True, TEXT_GOLD)
+            # Format numbers with commas (x,xxx,xxx).
+            v1_text = f"{val1:,}" if isinstance(val1, (int, float)) else str(val1)
+            v1_surf = med_font.render(v1_text, True, TEXT_GOLD)
             self.screen.blit(v1_surf, (x, y_pos))
             if val2 is not None:
                 x += v1_surf.get_width()
-                slash_surf = med_font.render(f"/{val2}", True, TEXT_WHITE)
+                v2_text = f"{val2:,}" if isinstance(val2, (int, float)) else str(val2)
+                slash_surf = med_font.render(f"/{v2_text}", True, TEXT_WHITE)
                 self.screen.blit(slash_surf, (x, y_pos))
 
         _STAGE_NAMES = {
@@ -565,9 +570,9 @@ class Renderer:
         y = chip_y + ch + 8
 
         # Confidence filter — range chips (same style as category chips).
+        # Note: "NEW" is already shown in the category chips above, so skip it here.
         conf_filter = state.get("confidence_filter", 0) or 0
         _CONF_RANGES = [
-            ("NEW", 1, 4),
             ("CONFIRMED", 5, 19),
             ("RELIABLE", 20, 49),
             ("STRONG", 50, 99),
