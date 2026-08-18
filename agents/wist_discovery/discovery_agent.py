@@ -117,14 +117,45 @@ def _encode_bid_state(obs: BiddingObservation) -> str:
     Encodes:
     - Whether someone already bid (Y/N)
     - Current highest bid level (0 if none)
-    - Number of suits in hand with 1-4 cards (observable hand shape)
+    - Hand strength tier (high card points: 0=weak, 1=medium, 2=strong, 3=very strong)
+    - Longest suit length bucket (S=short 1-3, M=medium 4-5, L=long 6+)
+    - Number of aces+kings in hand (0-4)
+    - Is Sahib Al-Qabool (Q/R for qabool/regular)
     """
     has_bid = "Y" if obs.current_highest_bid else "N"
     bid_level = str(min(obs.current_highest_bid, 13)) if obs.current_highest_bid else "0"
-    # Count how many suits have 1-4 cards (valid trump candidates — observable).
+
+    # Hand strength: count high cards (A=4, K=3, Q=2, J=1 points).
+    from intelligence.core.cards.rank import Rank
+    hcp_values = {Rank.ACE: 4, Rank.KING: 3, Rank.QUEEN: 2, Rank.JACK: 1}
+    hcp = sum(hcp_values.get(c.rank, 0) for c in obs.hand)
+    if hcp >= 20:
+        strength = "3"
+    elif hcp >= 12:
+        strength = "2"
+    elif hcp >= 6:
+        strength = "1"
+    else:
+        strength = "0"
+
+    # Longest suit length.
     suit_counts = Counter(c.suit for c in obs.hand)
-    short_suits = sum(1 for c in suit_counts.values() if 1 <= c <= 4)
-    return f"{has_bid}{bid_level}s{short_suits}"
+    longest = max(suit_counts.values()) if suit_counts else 0
+    if longest >= 6:
+        length_code = "L"
+    elif longest >= 4:
+        length_code = "M"
+    else:
+        length_code = "S"
+
+    # Count aces and kings.
+    ak_count = sum(1 for c in obs.hand if c.rank in (Rank.ACE, Rank.KING))
+    ak_code = str(min(ak_count, 4))
+
+    # Qabool or regular bidder.
+    role = "Q" if obs.is_sahib_al_qabool else "R"
+
+    return f"{has_bid}{bid_level}{strength}{length_code}{ak_code}{role}"
 
 
 def _encode_bid_action(action: Action) -> str:

@@ -91,7 +91,7 @@ class MetaLearner:
 
         # Performance improving > 10% → reduce exploration
         if avg_recent > avg_score * 1.1:
-            adjustments["epsilon"] = max(0.02, current_epsilon * 0.95)
+            adjustments["epsilon"] = max(0.005, current_epsilon * 0.95)
         # Performance declining > 20% → increase exploration
         elif avg_recent < avg_score * 0.8 and current_epsilon < 0.3:
             adjustments["epsilon"] = min(0.3, current_epsilon * 1.1)
