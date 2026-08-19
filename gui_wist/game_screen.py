@@ -223,6 +223,7 @@ class GameScreen:
         self._ai_gameplay_agent: object | None = None
         self._ai_recommendation: str = ""
         self._ai_rec_card: tuple | None = None
+        self._ai_confidence: int = 50
         self._ai_mode = "discovery"  # "discovery" or "basic"
         self._ai_mode_label = ""     # Display label.
         self._ai_dismiss_rect: pygame.Rect | None = None  # X button rect.
@@ -490,6 +491,58 @@ class GameScreen:
             self._ai_advisor_type = None
             self._ai_recommendation = f"Load failed: {str(e)[:30]}"
 
+    def _compute_ai_confidence(self, obs):
+        """Compute AI confidence as percentage (0-100).
+
+        Uses the Q-value spread: if the best card is much better than the
+        second-best, confidence is high. If all cards are similar, confidence
+        is low (the AI is guessing).
+
+        Returns int 0-100.
+        """
+        try:
+            if not self._ai_advisor or not hasattr(self._ai_advisor, 'play_q'):
+                return 50
+
+            from environments.wist.rules import legal_cards
+            hand = obs.hand
+            leading_suit = obs.current_trick.leading_suit if obs.current_trick else None
+            must_trump = obs.trump_suit if obs.must_lead_trump else None
+            playable = legal_cards(hand, leading_suit, must_trump)
+
+            if len(playable) <= 1:
+                return 99  # Only one legal card = certain.
+
+            # Get Q-values for all playable cards from the agent.
+            from agents.wist_discovery.discovery_agent import _encode_play_state, _encode_play_action
+            state_str = _encode_play_state(obs)
+            q1 = self._ai_advisor.play_q.get(state_str, {})
+            q2 = self._ai_advisor.play_q2.get(state_str, {})
+
+            q_values = []
+            for card in playable:
+                key = _encode_play_action(card, obs)
+                val = (q1.get(key, 0.0) + q2.get(key, 0.0)) / 2
+                q_values.append(val)
+
+            if not q_values or all(v == 0.0 for v in q_values):
+                return 50  # No data = guessing.
+
+            q_values.sort(reverse=True)
+            best = q_values[0]
+            second = q_values[1] if len(q_values) > 1 else 0.0
+
+            # Spread: how much better is the best vs second?
+            # Normalize to 50-99 range (never 100 because there's always uncertainty).
+            spread = best - second
+            if spread <= 0:
+                return 50
+            # Map spread to confidence: spread of 1.0 = ~80%, spread of 3.0+ = ~95%.
+            confidence = min(99, int(50 + spread * 15))
+            return confidence
+        except Exception:
+            return 50
+
     def _get_ai_recommendation(self):
         """Query for a recommendation. Uses model if loaded, otherwise rule-based."""
         if not self.players:
@@ -515,6 +568,10 @@ class GameScreen:
                         action = self._ai_advisor.act(obs)
                         self._ai_advisor._mcts_context = None
                         self._ai_advisor.epsilon = saved_epsilon
+
+                        # Compute confidence: how sure is the AI about this choice?
+                        # Uses the Q-value spread between best and second-best card.
+                        self._ai_confidence = self._compute_ai_confidence(obs)
                     elif self._ai_advisor and getattr(self, '_ai_advisor_type', None) == "learning":
                         from agents.wist_learning.learning_agent import encode_play_state
                         state = encode_play_state(obs, set())
@@ -1435,6 +1492,10 @@ class GameScreen:
         if self._message_timer > 0:
             self._message_timer -= 1
 
+        # Decrement AI disagree feedback timer.
+        if getattr(self, '_ai_disagree_timer', 0) > 0:
+            self._ai_disagree_timer -= 1
+
         # AI recommendation — query ONCE per human turn, then lock result.
         if self._pulse_frame % 30 == 0:
             if not getattr(self, '_rec_locked_for_turn', False):
@@ -1674,6 +1735,15 @@ class GameScreen:
             "trick": self.trick_number,
             "shota": self.shota_number,
         })
+
+        # Show brief feedback when human disagrees with AI.
+        if not matched:
+            confidence = getattr(self, '_ai_confidence', 50)
+            self._ai_disagree_msg = f"AI would play {ar}{a_s} ({confidence}% sure)"
+            self._ai_disagree_timer = 90  # Show for 1.5 seconds at 60fps.
+        else:
+            self._ai_disagree_msg = ""
+            self._ai_disagree_timer = 0
 
     def _start_play_animation(self, pid: int, rank: str, suit: str):
         """Start a card play animation with swoosh scale effect (Feature 17)."""
@@ -2663,6 +2733,28 @@ class GameScreen:
             # "REC" label below.
             rec_lbl = self.fonts["small"].render("REC", True, TEXT_GREEN)
             self.screen.blit(rec_lbl, rec_lbl.get_rect(centerx=rc_x + rc_w // 2, y=bg_rect.bottom + 2))
+            # Confidence percentage below REC.
+            confidence = getattr(self, '_ai_confidence', 50)
+            if confidence >= 80:
+                conf_color = (100, 255, 100)  # Green = very sure.
+            elif confidence >= 60:
+                conf_color = (255, 220, 100)  # Yellow = moderately sure.
+            else:
+                conf_color = (255, 150, 100)  # Orange = guessing.
+            conf_lbl = self.fonts["small"].render(f"{confidence}%", True, conf_color)
+            self.screen.blit(conf_lbl, conf_lbl.get_rect(centerx=rc_x + rc_w // 2, y=bg_rect.bottom + 14))
+
+        # Show AI disagreement feedback after human plays differently.
+        disagree_timer = getattr(self, '_ai_disagree_timer', 0)
+        if disagree_timer > 0:
+            disagree_msg = getattr(self, '_ai_disagree_msg', '')
+            if disagree_msg:
+                alpha = min(255, disagree_timer * 4)
+                disagree_font = pygame.font.SysFont("Segoe UI", 14)
+                disagree_surf = disagree_font.render(disagree_msg, True, (255, 200, 100))
+                dx = TABLE_WIDTH // 2 - disagree_surf.get_width() // 2
+                dy = SCREEN_HEIGHT - CARD_LARGE_H - 65
+                self.screen.blit(disagree_surf, (dx, dy))
 
         # ========== SHOTA SCOREBOARD TABLE (always visible) ==========
         self.screen.blit(header_font.render("Shota Scores", True, TEXT_WHITE),
