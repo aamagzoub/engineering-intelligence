@@ -77,22 +77,75 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
     """Rich observable state encoding — everything a human can see.
 
     Encodes:
-    - Hand size (how many cards remain)
+    - Hand size (how many cards remain, hex 1-d)
     - Position in trick (0-3: how many have played before me)
     - Led suit index (what suit was played first this trick, or 'x' if leading)
-    - My team tricks won (0-13)
-    - Opponent team tricks won (0-13)
-    All observable facts — no domain knowledge.
+    - My team tricks won (0-13, hex)
+    - Opponent team tricks won (0-13, hex)
+    - Trick winner context: P=partner winning, O=opponent winning, N=nobody/leading
+    - Highest rank bucket on table: 0=none, 1=low(2-7), 2=mid(8-10), 3=high(J-K), 4=ace
+    - Trump played in this trick: T=yes, F=no
     """
     hand = obs.hand
     n_cards = len(hand)
     pos = 0
     led = "x"
+    trick_winner = "N"  # Nobody yet (leading).
+    highest_bucket = "0"  # No cards on table.
+    trump_in_trick = "F"
+
     if obs.current_trick and obs.current_trick.played_cards:
         pos = len(obs.current_trick.played_cards)
         if obs.current_trick.leading_suit:
             led = str(SUIT_IDX.get(obs.current_trick.leading_suit, 0))
-    return f"{n_cards:x}{pos}{led}{my_tricks:x}{opp_tricks:x}"
+
+        # Determine who's currently winning and highest rank on table.
+        my_pid = getattr(obs, 'player_id', 0)
+        partner_pid = (my_pid + 2) % 4
+        trump_suit = getattr(obs, 'trump_suit', None)
+
+        best_rank = 0
+        best_is_trump = False
+        best_pid = -1
+
+        for pc in obs.current_trick.played_cards:
+            rv = RANK_VAL[pc.card.rank]
+            is_trump = (pc.card.suit == trump_suit) if trump_suit else False
+
+            # Check if this card is currently winning.
+            if is_trump and not best_is_trump:
+                best_rank = rv
+                best_is_trump = True
+                best_pid = pc.player_id
+            elif is_trump and best_is_trump and rv > best_rank:
+                best_rank = rv
+                best_pid = pc.player_id
+            elif not is_trump and not best_is_trump:
+                if pc.card.suit == obs.current_trick.leading_suit and rv > best_rank:
+                    best_rank = rv
+                    best_pid = pc.player_id
+
+            # Track if trump has been played.
+            if is_trump:
+                trump_in_trick = "T"
+
+        # Who's winning?
+        if best_pid == my_pid or best_pid == partner_pid:
+            trick_winner = "P"  # Partner (or self) winning.
+        elif best_pid >= 0:
+            trick_winner = "O"  # Opponent winning.
+
+        # Highest rank bucket.
+        if best_rank >= 14:
+            highest_bucket = "4"  # Ace.
+        elif best_rank >= 11:
+            highest_bucket = "3"  # J/Q/K.
+        elif best_rank >= 8:
+            highest_bucket = "2"  # 8/9/10.
+        elif best_rank >= 2:
+            highest_bucket = "1"  # 2-7.
+
+    return f"{n_cards:x}{pos}{led}{my_tricks:x}{opp_tricks:x}{trick_winner}{highest_bucket}{trump_in_trick}"
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
@@ -360,7 +413,7 @@ class WistDiscoveryAgent(Agent):
     - Game-specific observation processing
     """
 
-    def __init__(self, epsilon: float = 0.4, alpha: float = 0.2,
+    def __init__(self, epsilon: float = 0.2, alpha: float = 0.2,
                  gamma: float = 0.97, lambda_trace: float = 0.7,
                  training: bool = True) -> None:
 
@@ -730,8 +783,9 @@ class WistDiscoveryAgent(Agent):
     def _combined_q(self, q1_val: float, q2_val: float, nn_val: float = 0.0) -> float:
         """Combine Q-table and neural net estimates."""
         if self._use_neural:
-            # Blend: 60% Q-table average, 40% neural net.
-            return 0.6 * (q1_val + q2_val) / 2 + 0.4 * nn_val
+            # Blend: 40% Q-table average, 60% neural net.
+            # Neural net sees richer features (trick cards, partner identity).
+            return 0.4 * (q1_val + q2_val) / 2 + 0.6 * nn_val
         return (q1_val + q2_val) / 2
 
     # =========================================================================
