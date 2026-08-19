@@ -336,6 +336,31 @@ def check_milestones(context, trigger_fn):
         if defense_streak >= 20:
             trigger_fn("defense_wall_20", "IRON WALL: Opponents failed their bid 20 times in a row. Nobody gets past.")
 
+    # === PARTNER AWARENESS (requires enriched state encoding v5+) ===
+    partner_low_plays = context.get("partner_low_when_winning", 0)
+    if partner_low_plays >= 5:
+        trigger_fn("partner_aware_5", "PARTNER AWARENESS: Played low 5 times when partner was winning. Learning to trust the team.")
+    if partner_low_plays >= 20:
+        trigger_fn("partner_aware_20", "TEAM PLAYER: Played low 20 times when partner was winning. Consistent partnership understanding.")
+    if partner_low_plays >= 100:
+        trigger_fn("partner_aware_100", "PARTNERSHIP MASTERY: 100 times chose to preserve cards when partner had the trick. Deep trust.")
+
+    # Partner high plays when opponent winning.
+    partner_high_plays = context.get("partner_high_when_losing", 0)
+    if partner_high_plays >= 5:
+        trigger_fn("contest_aware_5", "CONTESTING: Played high 5 times when opponent was winning. Learning when to fight.")
+    if partner_high_plays >= 50:
+        trigger_fn("contest_aware_50", "COMPETITIVE: 50 times played high to contest opponent tricks. Knows when to fight vs fold.")
+
+    # Learning speed milestone.
+    q_table_size = context.get("q_table_size", 0)
+    if q_table_size >= 100000:
+        trigger_fn("q_100k", "EXPERIENCE: Q-table reached 100K states. The agent has seen many distinct game situations.")
+    if q_table_size >= 500000:
+        trigger_fn("q_500k", "VAST EXPERIENCE: Q-table reached 500K states. Deep understanding of game state space.")
+    if q_table_size >= 1000000:
+        trigger_fn("q_1m", "MILLION STATES: Q-table exceeded 1M entries. Encyclopedic game knowledge from pure experience.")
+
 
 # ─── Auto-Discovery (Statistical Threshold Crossings) ───────────────────────────
 

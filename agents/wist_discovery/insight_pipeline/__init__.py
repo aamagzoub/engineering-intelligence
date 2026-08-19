@@ -303,6 +303,98 @@ def _generate_observations_from_snapshot(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Naive Baseline Comparisons (for surprising_pattern detection)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Naive expectations a beginner human would assume.
+# Each entry: (sub_key_higher, sub_key_lower, dimension, description)
+# "higher SHOULD outperform lower" — if reversed, it's surprising.
+_NAIVE_EXPECTATIONS = [
+    # High cards should outperform low cards.
+    ("leading_high", "leading_low", "card_strength_by_role",
+     "Low cards outperform high cards when leading"),
+    ("following_high", "following_low", "card_strength_by_role",
+     "Low cards outperform high cards when following"),
+    # Trump should outperform non-trump.
+    ("trump", "nontrump", "trump_vs_nontrump",
+     "Non-trump plays outperform trump in certain contexts"),
+    # Leading should be advantageous over following.
+    ("leading", "following", "leading_vs_following",
+     "Following positions outperform leading positions"),
+    # Attacking should outperform defending.
+    ("attacking", "defensive", "defensive_vs_attacking",
+     "Defensive play outperforms attacking play"),
+    # Late game should reward committed play more than early.
+    ("late", "early", "phase_behaviour",
+     "Early-phase caution outperforms late-phase commitment"),
+]
+
+
+def _generate_surprising_observations(
+    snapshot: dict[str, Any],
+    current_episode: int,
+    snapshot_id: str,
+) -> list[RawObservation]:
+    """Generate observations when Q-values contradict naive expectations.
+
+    Compares pairs of dimensions where common sense says one should be
+    better than the other. When the agent's learned values show the
+    opposite, creates a surprising_pattern observation.
+
+    These observations have built-in contradiction (the expectation itself
+    is the counter-evidence), satisfying the surprising_pattern requirements.
+    """
+    observations: list[RawObservation] = []
+    timestamp = time.time()
+
+    for higher_key, lower_key, dimension, description in _NAIVE_EXPECTATIONS:
+        dim_data = snapshot.get(dimension)
+        if not isinstance(dim_data, dict):
+            continue
+
+        higher_data = dim_data.get(higher_key)
+        lower_data = dim_data.get(lower_key)
+
+        if higher_data is None or lower_data is None:
+            continue
+        if not isinstance(higher_data, dict) or not isinstance(lower_data, dict):
+            continue
+
+        higher_q = higher_data.get("mean_q", 0.0)
+        lower_q = lower_data.get("mean_q", 0.0)
+        higher_count = higher_data.get("count", 0)
+        lower_count = lower_data.get("count", 0)
+
+        # Both need sufficient data.
+        if higher_count < 10 or lower_count < 10:
+            continue
+
+        # Surprise: the "lower" expectation OUTPERFORMS the "higher" one.
+        if lower_q > higher_q and (lower_q - higher_q) > 0.1:
+            obs = RawObservation(
+                category="surprising_pattern",
+                game_phase="mid",
+                dimension_key=f"surprise_{dimension}_{lower_key}_beats_{higher_key}",
+                reward_direction="positive",
+                state_context={
+                    "dimension": dimension,
+                    "expected_winner": higher_key,
+                    "actual_winner": lower_key,
+                    "expected_q": higher_q,
+                    "actual_q": lower_q,
+                    "difference": lower_q - higher_q,
+                    "description": description,
+                },
+                episode=current_episode,
+                snapshot_id=snapshot_id,
+                timestamp=timestamp,
+            )
+            observations.append(obs)
+
+    return observations
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Supporting/Contradicting Observation Matching
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -516,6 +608,12 @@ def run_insight_cycle(
     raw_observations = _generate_observations_from_snapshot(
         snapshot, current_episode, snapshot_id
     )
+
+    # Also generate surprising observations from naive baseline comparisons.
+    surprising_obs = _generate_surprising_observations(
+        snapshot, current_episode, snapshot_id
+    )
+    raw_observations.extend(surprising_obs)
 
     if not raw_observations:
         logger.info("No significant observations generated from snapshot.")

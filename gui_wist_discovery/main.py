@@ -272,6 +272,10 @@ class WistDiscoveryWatcher:
         self._team_tricks[self._players[winner].team_id] += 1
         self.discovery.trick_reward(won=(winner_team == 0))
 
+        # Track partner-awareness: did the agent (team 0) play low when
+        # partner was winning, or high when opponent was winning?
+        self._track_partner_awareness(trick_cards, winner)
+
         self.current_trick_cards = trick_cards
         self.last_winner = winner
         self._update_hands()
@@ -282,6 +286,38 @@ class WistDiscoveryWatcher:
 
         if self.trick_num > 13:
             self._finish_shota()
+
+    def _track_partner_awareness(self, trick_cards, winner):
+        """Track when the discovery agent plays low when partner wins or high when losing."""
+        from intelligence.core.cards.rank import Rank
+        rank_val = {Rank.TWO: 2, Rank.THREE: 3, Rank.FOUR: 4, Rank.FIVE: 5,
+                    Rank.SIX: 6, Rank.SEVEN: 7, Rank.EIGHT: 8, Rank.NINE: 9,
+                    Rank.TEN: 10, Rank.JACK: 11, Rank.QUEEN: 12, Rank.KING: 13, Rank.ACE: 14}
+
+        # Discovery agent is player 0 (team 0). Partner is player 2.
+        agent_card = None
+        for pid, card in trick_cards:
+            if pid == 0:
+                agent_card = card
+                break
+
+        if agent_card is None:
+            return
+
+        agent_rank = rank_val.get(agent_card.rank, 7)
+        winner_team = self._players[winner].team_id
+
+        # Partner won the trick and agent played low (≤7) → good partner awareness.
+        if winner_team == 0 and winner != 0 and agent_rank <= 7:
+            if not hasattr(self, '_partner_low_when_winning'):
+                self._partner_low_when_winning = 0
+            self._partner_low_when_winning += 1
+
+        # Opponent winning and agent played high (≥11) → contesting.
+        if winner_team == 1 and agent_rank >= 11:
+            if not hasattr(self, '_partner_high_when_losing'):
+                self._partner_high_when_losing = 0
+            self._partner_high_when_losing += 1
 
     def _finish_shota(self):
         """Score the completed shota and check milestones."""
@@ -390,6 +426,9 @@ class WistDiscoveryWatcher:
             "episodes": self.discovery.episodes_trained,
             "prev_shota_tricks_0": getattr(self, "_prev_shota_tricks_0", 0),
             "defense_streak": getattr(self, "_defense_streak", 0),
+            "partner_low_when_winning": getattr(self, "_partner_low_when_winning", 0),
+            "partner_high_when_losing": getattr(self, "_partner_high_when_losing", 0),
+            "q_table_size": len(self.discovery.play_q),
         }
 
         # Track previous shota tricks for back-to-back seek detection.

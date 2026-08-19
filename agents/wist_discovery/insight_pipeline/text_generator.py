@@ -115,6 +115,31 @@ class TextGenerator:
             "Attacking play maximises trick capture to meet"
             " contract obligations efficiently"
         ),
+        # Surprising pattern templates (naive baseline violations).
+        "surprise_card_strength_by_role_leading_low_beats_leading_high": (
+            "Leading with low cards can outperform high cards because"
+            " preserving strength creates better options later"
+        ),
+        "surprise_card_strength_by_role_following_low_beats_following_high": (
+            "Following with low cards when appropriate preserves"
+            " high cards for tricks you can actually win"
+        ),
+        "surprise_trump_vs_nontrump_nontrump_beats_trump": (
+            "Non-trump plays can outperform trump when trump"
+            " resources are better saved for critical moments"
+        ),
+        "surprise_leading_vs_following_following_beats_leading": (
+            "Following position can be more valuable than leading"
+            " because information advantage outweighs initiative"
+        ),
+        "surprise_defensive_vs_attacking_defensive_beats_attacking": (
+            "Defensive restraint can outperform aggressive attack"
+            " when overcommitting wastes resources on lost causes"
+        ),
+        "surprise_phase_behaviour_early_beats_late": (
+            "Conservative early play can yield better outcomes"
+            " than aggressive late-game commitment"
+        ),
     }
 
     def generate(self, pattern: RepeatedPattern) -> tuple[str, str] | None:
@@ -260,12 +285,36 @@ class TextGenerator:
 
         # Include category as game mechanic reference so quality gate passes.
         category_phrase = pattern.category.replace("_", " ")
-        text = (
-            f"In {category_phrase} situations, observed across {count} game states"
-            f" with {confidence:.0%} consistency"
-            f" ({distinct_snapshots} training snapshots,"
-            f" {distinct_states} distinct states)"
-        )
+
+        # For surprising patterns, include Q-value comparison in the why.
+        if pattern.category == "surprising_pattern" and pattern.observations:
+            first_obs = pattern.observations[0]
+            ctx = first_obs.state_context
+            if "expected_q" in ctx and "actual_q" in ctx:
+                diff = ctx["actual_q"] - ctx["expected_q"]
+                desc = ctx.get("description", "unexpected pattern")
+                text = (
+                    f"In {category_phrase} situations: {desc}."
+                    f" Expected approach scores {ctx['expected_q']:.2f},"
+                    f" actual winner scores {ctx['actual_q']:.2f}"
+                    f" (advantage: +{diff:.2f})."
+                    f" Observed across {count} states,"
+                    f" {distinct_snapshots} snapshots"
+                )
+            else:
+                text = (
+                    f"In {category_phrase} situations, observed across {count} game states"
+                    f" with {confidence:.0%} consistency"
+                    f" ({distinct_snapshots} training snapshots,"
+                    f" {distinct_states} distinct states)"
+                )
+        else:
+            text = (
+                f"In {category_phrase} situations, observed across {count} game states"
+                f" with {confidence:.0%} consistency"
+                f" ({distinct_snapshots} training snapshots,"
+                f" {distinct_states} distinct states)"
+            )
 
         # Enforce max length
         if len(text) > self.MAX_WHY_LENGTH:
