@@ -481,7 +481,7 @@ class Renderer:
                     if y + 14 > disc_rect.bottom - 15:
                         break
 
-                    # Determine color: gold if value changed, except always-changing fields.
+                    # Determine color: gold=increased, coral=decreased, white=unchanged.
                     line_color = color
                     if ":" in stripped:
                         key_part = stripped.split(":")[0].strip()
@@ -491,7 +491,16 @@ class Renderer:
                             curr_val = curr_values.get(key_part)
                             prev_val = prev_values.get(key_part)
                             if prev_val is not None and curr_val is not None and curr_val != prev_val:
-                                line_color = TEXT_GOLD
+                                # Extract numeric part for directional comparison.
+                                try:
+                                    curr_num = float(curr_val.replace("%", "").replace(",", "").strip())
+                                    prev_num = float(prev_val.replace("%", "").replace(",", "").strip())
+                                    if curr_num > prev_num:
+                                        line_color = TEXT_GOLD  # Increased = gold.
+                                    else:
+                                        line_color = (255, 100, 100)  # Decreased = coral red.
+                                except (ValueError, AttributeError):
+                                    line_color = TEXT_GOLD  # Non-numeric change = gold.
 
                     y = self._wrap_text(body_font, stripped, px + 15, y, panel_text_w - 20, line_color, disc_rect.bottom - 20)
                     y += 1
