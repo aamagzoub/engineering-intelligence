@@ -36,6 +36,7 @@ from gui_wist_discovery.training import (
     run_background_training, STAGE_STAGNATION_THRESHOLD, STAGE_CONFIG,
 )
 from gui_wist_discovery.renderer import Renderer
+from gui_wist_discovery.behaviour_tracker import BehaviourTracker
 
 from agents.wist_discovery.discovery_agent import WistDiscoveryAgent
 from environments.wist.environment import WistEnvironment
@@ -163,6 +164,7 @@ class WistDiscoveryWatcher:
 
         # Auto-discovery stats.
         self._auto_stats = create_auto_stats()
+        self._behaviour_tracker = BehaviourTracker(window_size=1000)
 
         # Opponent curriculum.
         # _opponent_stage is loaded from session_stats above.
@@ -298,9 +300,11 @@ class WistDiscoveryWatcher:
 
         # Discovery agent is player 0 (team 0). Partner is player 2.
         agent_card = None
-        for pid, card in trick_cards:
+        agent_was_leading = False
+        for i, (pid, card) in enumerate(trick_cards):
             if pid == 0:
                 agent_card = card
+                agent_was_leading = (i == 0)
                 break
 
         if agent_card is None:
@@ -308,15 +312,28 @@ class WistDiscoveryWatcher:
 
         agent_rank = rank_val.get(agent_card.rank, 7)
         winner_team = self._players[winner].team_id
+        partner_winning = (winner_team == 0 and winner != 0)
+        opponent_winning = (winner_team == 1)
 
-        # Partner won the trick and agent played low (≤7) → good partner awareness.
-        if winner_team == 0 and winner != 0 and agent_rank <= 7:
+        # Feed the behaviour tracker.
+        trump_suit = getattr(self._round.state, 'trump_suit', None) if self._round else None
+        is_trump = (agent_card.suit == trump_suit) if trump_suit else False
+        self._behaviour_tracker.observe_card_play(
+            rank=agent_rank,
+            is_leading=agent_was_leading,
+            partner_winning=partner_winning,
+            opponent_winning=opponent_winning,
+            trick_number=self.trick_num,
+            is_trump=is_trump,
+        )
+
+        # Legacy milestone counters.
+        if partner_winning and agent_rank <= 7:
             if not hasattr(self, '_partner_low_when_winning'):
                 self._partner_low_when_winning = 0
             self._partner_low_when_winning += 1
 
-        # Opponent winning and agent played high (≥11) → contesting.
-        if winner_team == 1 and agent_rank >= 11:
+        if opponent_winning and agent_rank >= 11:
             if not hasattr(self, '_partner_high_when_losing'):
                 self._partner_high_when_losing = 0
             self._partner_high_when_losing += 1
@@ -655,12 +672,10 @@ class WistDiscoveryWatcher:
     # ─── Insights ───────────────────────────────────────────────────────────────
 
     def _refresh_insights(self):
-        """Refresh cached insights from the new insight pipeline output.
+        """Generate insights from behaviour tracker + pipeline output.
 
-        Reads insights_cache.json produced by the insight pipeline rather
-        than the old generate_insights() function. Falls back to empty list
-        if the file doesn't exist yet (pipeline needs ~4000 episodes to
-        produce first insights with lowered thresholds).
+        Uses the behaviour tracker (real gameplay stats) as the primary
+        source. Falls back to insight pipeline output from insights_cache.json.
         """
         import json
         import os
@@ -672,7 +687,11 @@ class WistDiscoveryWatcher:
         if current_ep - self._last_insight_episode >= 2000 or not self._cached_insights:
             old_count = len(self._cached_insights)
 
-            # Read from the same directory as the model file (works in exe and dev).
+            # Primary source: behaviour tracker (real observed behaviour).
+            behaviour_insights = self._behaviour_tracker.generate_insights(current_ep)
+
+            # Secondary source: insight pipeline output file.
+            pipeline_insights = []
             insights_path = os.path.join(
                 os.path.dirname(self.model_path), "insights_cache.json"
             )
@@ -680,14 +699,14 @@ class WistDiscoveryWatcher:
                 with open(insights_path, "r", encoding="utf-8") as f:
                     raw = json.load(f)
                 if isinstance(raw, list):
-                    self._cached_insights = raw
-                else:
-                    self._cached_insights = []
+                    pipeline_insights = raw
             except (FileNotFoundError, json.JSONDecodeError, OSError):
-                self._cached_insights = []
+                pass
+
+            # Combine: behaviour insights first (more natural), then pipeline.
+            self._cached_insights = behaviour_insights + pipeline_insights
 
             self._last_insight_episode = current_ep
-            # If user is scrolled and new insights appeared, bump scroll to stay stable.
             new_count = len(self._cached_insights)
             if self._insight_scroll_offset > 0 and new_count > old_count:
                 self._insight_scroll_offset += (new_count - old_count)
