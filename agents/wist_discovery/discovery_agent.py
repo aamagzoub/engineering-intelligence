@@ -183,14 +183,32 @@ def _encode_play_action(card, obs: WistObservation) -> str:
     Contains:
     - Raw rank number (2-14) — the card's face value
     - Suit index (0-3) — which suit
-    - Is highest of its suit in hand (1/0) — observable by looking at your own cards
+    - Is highest of its suit in hand (1/0)
+    - Is trump suit (T/F) — observable from known trump
+    - Relative strength: H=highest in hand for suit, M=middle, L=lowest
     """
     rv = RANK_VAL[card.rank]
     si = SUIT_IDX[card.suit]
+
     # Is this the highest card of its suit in my hand?
-    same_suit_ranks = [RANK_VAL[c.rank] for c in obs.hand if c.suit == card.suit]
+    same_suit_ranks = sorted([RANK_VAL[c.rank] for c in obs.hand if c.suit == card.suit])
     is_highest = "1" if rv == max(same_suit_ranks) else "0"
-    return f"{rv:x}{si}{is_highest}"
+
+    # Is this the trump suit?
+    trump_suit = getattr(obs, 'trump_suit', None)
+    is_trump = "T" if (trump_suit and card.suit == trump_suit) else "F"
+
+    # Relative strength within suit: H=highest, L=lowest, M=middle.
+    if len(same_suit_ranks) <= 1:
+        rel_strength = "H"
+    elif rv == same_suit_ranks[-1]:
+        rel_strength = "H"
+    elif rv == same_suit_ranks[0]:
+        rel_strength = "L"
+    else:
+        rel_strength = "M"
+
+    return f"{rv:x}{si}{is_highest}{is_trump}{rel_strength}"
 
 
 def _encode_bid_state(obs: BiddingObservation) -> str:
@@ -684,9 +702,27 @@ class WistDiscoveryAgent(Agent):
         if len(playable) == 1:
             card = playable[0]
         elif self.training and random.random() < self.epsilon:
-            # Curiosity-driven exploration: prefer unvisited states.
-            if random.random() < 0.3:
-                # Pick action that leads to least-visited state.
+            # Smart exploration: 40% uncertainty-based, 30% curiosity, 30% random.
+            roll = random.random()
+            if roll < 0.4:
+                # Uncertainty exploration: pick card where Q1 and Q2 disagree most.
+                state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
+                                              self._partner_bid, self._my_tricks, self._opp_tricks,
+                                              self._trump_remaining, self._my_team_bid,
+                                              self._get_partner_after_me(obs))
+                max_disagree = -1.0
+                uncertain_card = random.choice(playable)
+                for c in playable:
+                    key = _encode_play_action(c, obs)
+                    q1_val = self.play_q[state_str].get(key, 0.0)
+                    q2_val = self.play_q2[state_str].get(key, 0.0)
+                    disagree = abs(q1_val - q2_val)
+                    if disagree > max_disagree:
+                        max_disagree = disagree
+                        uncertain_card = c
+                card = uncertain_card
+            elif roll < 0.7:
+                # Curiosity: pick least-visited action.
                 state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
                                               self._partner_bid, self._my_tricks, self._opp_tricks,
                                               self._trump_remaining, self._my_team_bid,
@@ -840,34 +876,49 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """Record trick observation + apply card-waste micro-penalty.
+        """Record trick observation + multi-step micro-rewards.
 
-        If team won the trick and the agent's last played card was high
-        (rank >= 11) BUT partner was already winning, apply a small negative
-        signal to discourage wasting royals on won tricks.
+        Micro-signals applied per-trick (don't distort end-of-shota reward):
+        1. Card waste penalty: -0.05 for playing royal when partner was winning.
+        2. Needed trick bonus: +0.03 for winning when attacking and behind schedule.
+        3. Defensive stop bonus: +0.03 for stopping opponent when they need tricks.
         """
         # Store observable trick data for memory features.
         self._trick_memory.append((
-            0.5,   # avg rank (placeholder)
-            0.5,   # led suit normalized
-            0.5,   # winner position normalized
-            1.0 if won else 0.0,  # did my team win this trick
+            0.5, 0.5, 0.5,
+            1.0 if won else 0.0,
         ))
 
-        # Card waste micro-penalty: if we won but agent played high card
-        # when partner was already winning (tracked via last state encoding).
-        if won and self._play_episode and self.training:
+        if self._play_episode and self.training:
             last_state, last_action = self._play_episode[-1]
-            # Decode rank from action key (first char is hex rank).
             try:
                 rank = int(last_action[0], 16)
-                # Check if partner was winning (state contains 'P' for partner winning).
                 partner_was_winning = 'P' in last_state[5:8] if len(last_state) > 7 else False
-                if partner_was_winning and rank >= 11:
-                    # Small penalty for wasting a royal when partner had it.
-                    waste_penalty = -0.05
-                    current = self.play_q[last_state].get(last_action, 0.0)
-                    self.play_q[last_state][last_action] = current + waste_penalty
+
+                # 1. Card waste penalty.
+                if won and partner_was_winning and rank >= 11:
+                    self.play_q[last_state][last_action] = (
+                        self.play_q[last_state].get(last_action, 0.0) - 0.05
+                    )
+
+                # 2. Needed trick bonus (attacking and behind).
+                if won and self._my_team_bid:
+                    # Behind schedule if tricks won < expected pace.
+                    tricks_needed = self._partner_bid if self._partner_bid > 0 else 7
+                    tricks_so_far = self._my_tricks + 1  # Including this one.
+                    tricks_remaining = 13 - (self._my_tricks + self._opp_tricks)
+                    if tricks_so_far <= tricks_needed and tricks_remaining <= tricks_needed - tricks_so_far + 3:
+                        self.play_q[last_state][last_action] = (
+                            self.play_q[last_state].get(last_action, 0.0) + 0.03
+                        )
+
+                # 3. Defensive stop bonus.
+                if not won and not self._my_team_bid:
+                    # Opponent needed this trick and we stopped them.
+                    self.play_q[last_state][last_action] = (
+                        self.play_q[last_state].get(last_action, 0.0) + 0.02
+                    )
+
             except (ValueError, IndexError):
                 pass
 
@@ -975,6 +1026,13 @@ class WistDiscoveryAgent(Agent):
         # === Prioritized Experience Replay ===
         self._do_replay(base_alpha)
 
+        # === Hindsight Experience Replay ===
+        # Re-evaluate early decisions with knowledge of how the shota ended.
+        # If we lost and played high cards early, penalize those early-high plays.
+        # If we won and played low cards conservatively, reward conservation.
+        if self._play_episode and abs(score) > 1:
+            self._do_hindsight_replay(score, play_alpha)
+
         # === Decay eligibility traces ===
         self._decay_traces()
 
@@ -1020,8 +1078,6 @@ class WistDiscoveryAgent(Agent):
         for state, action, reward, table_key in batch:
             if table_key == "play":
                 q = self.play_q if random.random() < 0.5 else self.play_q2
-                # Evaluator can't replay from string state alone (needs obs).
-                # Only Q-table replay for play actions.
             else:
                 q = self.bid_q if random.random() < 0.5 else self.bid_q2
                 if self._use_neural:
@@ -1029,6 +1085,37 @@ class WistDiscoveryAgent(Agent):
                     self._bid_net.update(features, get_bid_action_idx(action), reward)
             current_q = q[state][action]
             q[state][action] += replay_alpha * (reward - current_q)
+
+    def _do_hindsight_replay(self, score: float, alpha: float):
+        """Hindsight experience replay — re-evaluate early decisions with outcome knowledge.
+
+        After knowing the shota result:
+        - If we LOST and played high cards early (first 4 tricks), those high-card
+          decisions get extra negative signal (should have saved them).
+        - If we WON and played low cards early, those conservative decisions get
+          extra positive signal (conservation worked).
+        """
+        hindsight_alpha = alpha * 0.1  # Subtle influence, don't overwhelm main learning.
+        episode_len = len(self._play_episode)
+        early_cutoff = min(4, episode_len)  # First 4 decisions = "early game."
+
+        for idx in range(early_cutoff):
+            state, action = self._play_episode[idx]
+            try:
+                rank = int(action[0], 16)
+            except (ValueError, IndexError):
+                continue
+
+            if score < 0:
+                # We lost. If we played high cards early, penalize.
+                if rank >= 12:  # Q, K, A played early in a losing shota.
+                    current = self.play_q[state].get(action, 0.0)
+                    self.play_q[state][action] = current - hindsight_alpha * abs(score) * 0.1
+            elif score > 0:
+                # We won. If we played low cards early, reward conservation.
+                if rank <= 7:  # Low card played early in a winning shota.
+                    current = self.play_q[state].get(action, 0.0)
+                    self.play_q[state][action] = current + hindsight_alpha * score * 0.05
 
     def _decay_traces(self):
         """Decay eligibility traces."""
