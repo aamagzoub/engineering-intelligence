@@ -548,6 +548,9 @@ class WistDiscoveryAgent(Agent):
         self._partner_bid: int = 0  # Observable: what did partner bid?
         self._my_tricks: int = 0    # Observable: tricks won by my team so far.
         self._opp_tricks: int = 0   # Observable: tricks won by opponents so far.
+        self._my_team_bid: bool = False  # Whether my team holds the contract.
+        self._trump_remaining: int = 13  # Trump cards unseen.
+        self._partner_after_me: bool = False  # Partner plays after me.
 
         # === Per-state adaptive alpha (#5) ===
         self._state_update_counts: dict[str, int] = defaultdict(int)
