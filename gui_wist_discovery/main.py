@@ -169,6 +169,8 @@ class WistDiscoveryWatcher:
         self._last_discovery_episode_for_stage = 0
         self._frozen_snapshot = None
         self._best_snapshot = None
+        self._snapshot_pool: list = []  # Historical snapshots for diverse opponents.
+        self._last_snapshot_save_ep = 0
 
         # Insights cache.
         self._cached_insights = []
@@ -577,7 +579,8 @@ class WistDiscoveryWatcher:
 
             agent = create_training_clone(self.discovery)
             opp = create_opponent(self.discovery, self._opponent_stage,
-                                  self._frozen_snapshot, self._best_snapshot)
+                                  self._frozen_snapshot, self._best_snapshot,
+                                  self._snapshot_pool)
             self._bg_agent = agent
 
             # Bind agent to avoid closure issues across loop iterations.
@@ -635,6 +638,16 @@ class WistDiscoveryWatcher:
                                 self._get_session_stats())
             except Exception:
                 pass
+
+            # Save snapshot to pool every 100K episodes for diverse opponents.
+            ep = self.discovery.episodes_trained
+            if ep - self._last_snapshot_save_ep >= 100000:
+                self._last_snapshot_save_ep = ep
+                snap = snapshot_brain(self.discovery)
+                self._snapshot_pool.append(snap)
+                # Keep max 10 historical snapshots.
+                if len(self._snapshot_pool) > 10:
+                    self._snapshot_pool.pop(0)
 
         self._bg_active = False
         self._bg_agent = None

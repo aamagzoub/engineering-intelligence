@@ -73,8 +73,10 @@ _INSIGHT_PIPELINE_INTERVAL = 2000
 # =============================================================================
 
 def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
-                       partner_bid: int = 0, my_tricks: int = 0, opp_tricks: int = 0) -> str:
-    """Rich observable state encoding — everything a human can see.
+                       partner_bid: int = 0, my_tricks: int = 0, opp_tricks: int = 0,
+                       trump_remaining: int = -1, my_team_bid: bool = False,
+                       partner_after_me: bool = False) -> str:
+    """Rich observable state encoding — everything a focused human tracks.
 
     Encodes:
     - Hand size (how many cards remain, hex 1-d)
@@ -85,6 +87,10 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
     - Trick winner context: P=partner winning, O=opponent winning, N=nobody/leading
     - Highest rank bucket on table: 0=none, 1=low(2-7), 2=mid(8-10), 3=high(J-K), 4=ace
     - Trump played in this trick: T=yes, F=no
+    - Team bid role: A=attacking (my team bid), D=defending (opponent bid)
+    - Trump cards remaining unseen: bucket (0=none, 1=few(1-3), 2=some(4-7), 3=many(8+))
+    - Partner position: B=before me (already played), A=after me (plays later)
+    - Opponent voids known: 0-3 (capped)
     """
     hand = obs.hand
     n_cards = len(hand)
@@ -145,7 +151,30 @@ def _encode_play_state(obs: WistObservation, opp_voids: int = 0,
         elif best_rank >= 2:
             highest_bucket = "1"  # 2-7.
 
-    return f"{n_cards:x}{pos}{led}{my_tricks:x}{opp_tricks:x}{trick_winner}{highest_bucket}{trump_in_trick}"
+    # Team bid role: attacking (my team bid) or defending.
+    bid_role = "A" if my_team_bid else "D"
+
+    # Trump remaining bucket.
+    if trump_remaining < 0:
+        trump_bucket = "2"  # Unknown, assume middle.
+    elif trump_remaining == 0:
+        trump_bucket = "0"
+    elif trump_remaining <= 3:
+        trump_bucket = "1"
+    elif trump_remaining <= 7:
+        trump_bucket = "2"
+    else:
+        trump_bucket = "3"
+
+    # Partner position relative to me.
+    partner_pos = "A" if partner_after_me else "B"
+
+    # Opponent voids (capped at 3).
+    void_code = str(min(opp_voids, 3))
+
+    return (f"{n_cards:x}{pos}{led}{my_tricks:x}{opp_tricks:x}"
+            f"{trick_winner}{highest_bucket}{trump_in_trick}"
+            f"{bid_role}{trump_bucket}{partner_pos}{void_code}")
 
 
 def _encode_play_action(card, obs: WistObservation) -> str:
@@ -461,7 +490,7 @@ class WistDiscoveryAgent(Agent):
         self._bid_traces: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
         # === Prioritized Experience Replay ===
-        self._replay_buffer = PrioritizedReplayBuffer(capacity=20000)
+        self._replay_buffer = PrioritizedReplayBuffer(capacity=50000)
         self._replay_batch_size = 64
 
         # === Curiosity Bonus ===
@@ -638,6 +667,16 @@ class WistDiscoveryAgent(Agent):
         self._update_voids(obs)
         self._observe_opponents(obs)
 
+        # Infer team bid role from observation context.
+        # If must_lead_trump is set on first trick, this player's team bid.
+        if obs.must_lead_trump:
+            self._my_team_bid = True
+        # Also check if winning_bidder_id is on our team (if available).
+        if hasattr(obs, 'winning_bidder_id'):
+            my_pid = obs.player_id
+            my_team = {my_pid, (my_pid + 2) % 4}
+            self._my_team_bid = obs.winning_bidder_id in my_team
+
         leading_suit = obs.current_trick.leading_suit if obs.current_trick else None
         must_trump = obs.trump_suit if obs.must_lead_trump else None
         playable = legal_cards(obs.hand, leading_suit, must_trump)
@@ -649,7 +688,9 @@ class WistDiscoveryAgent(Agent):
             if random.random() < 0.3:
                 # Pick action that leads to least-visited state.
                 state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
-                                              self._partner_bid, self._my_tricks, self._opp_tricks)
+                                              self._partner_bid, self._my_tricks, self._opp_tricks,
+                                              self._trump_remaining, self._my_team_bid,
+                                              self._get_partner_after_me(obs))
                 min_visits = float("inf")
                 curiosity_card = random.choice(playable)
                 for c in playable:
@@ -667,7 +708,9 @@ class WistDiscoveryAgent(Agent):
 
         if self.training:
             state = _encode_play_state(obs, self._get_opponent_voids_count(obs),
-                                       self._partner_bid, self._my_tricks, self._opp_tricks)
+                                       self._partner_bid, self._my_tricks, self._opp_tricks,
+                                       self._trump_remaining, self._my_team_bid,
+                                       self._get_partner_after_me(obs))
             action_key = _encode_play_action(card, obs)
             self._play_episode.append((state, action_key))
             self._play_traces[state][action_key] += 1.0
@@ -720,7 +763,9 @@ class WistDiscoveryAgent(Agent):
                 # Use MCTS values as soft training targets for Q-table.
                 if self.training and mcts_values:
                     state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
-                                                  self._partner_bid, self._my_tricks, self._opp_tricks)
+                                                  self._partner_bid, self._my_tricks, self._opp_tricks,
+                                                  self._trump_remaining, self._my_team_bid,
+                                                  self._get_partner_after_me(obs))
                     mcts_alpha = self._mcts_value_weight * 0.01
                     for card, mcts_val in mcts_values.items():
                         action_key = _encode_play_action(card, obs)
@@ -735,7 +780,9 @@ class WistDiscoveryAgent(Agent):
                 pass  # Fall through to Q-table + neural net selection
 
         state_str = _encode_play_state(obs, self._get_opponent_voids_count(obs),
-                                      self._partner_bid, self._my_tricks, self._opp_tricks)
+                                      self._partner_bid, self._my_tricks, self._opp_tricks,
+                                      self._trump_remaining, self._my_team_bid,
+                                      self._get_partner_after_me(obs))
         q1 = self.play_q[state_str]
         q2 = self.play_q2[state_str]
 
@@ -793,23 +840,37 @@ class WistDiscoveryAgent(Agent):
     # =========================================================================
 
     def trick_reward(self, won: bool) -> None:
-        """Record trick observation (no learning signal — only stores what was seen).
+        """Record trick observation + apply card-waste micro-penalty.
 
-        The agent records observable facts about each completed trick:
-        - What rank was dominant
-        - What suit was led
-        - Who won (position)
-        - Whether I won
-        This builds trick memory for the neural net to learn from.
+        If team won the trick and the agent's last played card was high
+        (rank >= 11) BUT partner was already winning, apply a small negative
+        signal to discourage wasting royals on won tricks.
         """
         # Store observable trick data for memory features.
-        # Approximate values (exact card data would need trick reference).
         self._trick_memory.append((
-            0.5,   # avg rank (placeholder — refined when we have full trick data)
+            0.5,   # avg rank (placeholder)
             0.5,   # led suit normalized
             0.5,   # winner position normalized
             1.0 if won else 0.0,  # did my team win this trick
         ))
+
+        # Card waste micro-penalty: if we won but agent played high card
+        # when partner was already winning (tracked via last state encoding).
+        if won and self._play_episode and self.training:
+            last_state, last_action = self._play_episode[-1]
+            # Decode rank from action key (first char is hex rank).
+            try:
+                rank = int(last_action[0], 16)
+                # Check if partner was winning (state contains 'P' for partner winning).
+                partner_was_winning = 'P' in last_state[5:8] if len(last_state) > 7 else False
+                if partner_was_winning and rank >= 11:
+                    # Small penalty for wasting a royal when partner had it.
+                    waste_penalty = -0.05
+                    current = self.play_q[last_state].get(last_action, 0.0)
+                    self.play_q[last_state][last_action] = current + waste_penalty
+            except (ValueError, IndexError):
+                pass
+
         if won:
             self._my_tricks += 1
         else:
@@ -1001,6 +1062,10 @@ class WistDiscoveryAgent(Agent):
             self._cards_seen.add(played_card.card)
             suit_idx = SUIT_IDX.get(played_card.card.suit, 0)
             self._suits_played[suit_idx] = min(13, self._suits_played.get(suit_idx, 0) + 1)
+            # Trump counting — track how many trump cards have been seen.
+            trump_suit = getattr(obs, 'trump_suit', None)
+            if trump_suit and played_card.card.suit == trump_suit:
+                self._trump_remaining = max(0, self._trump_remaining - 1)
 
     def _observe_opponents(self, obs: WistObservation) -> None:
         """Track opponent play patterns for prediction."""
@@ -1021,6 +1086,17 @@ class WistDiscoveryAgent(Agent):
         my_team = 0 if obs.player_id in (0, 2) else 1
         opp_ids = [1, 3] if my_team == 0 else [0, 2]
         return sum(len(self._known_voids.get(pid, set())) for pid in opp_ids)
+
+    def _get_partner_after_me(self, obs: WistObservation) -> bool:
+        """Check if partner plays after me in the current trick."""
+        if not obs.current_trick or not obs.current_trick.played_cards:
+            # Leading — partner hasn't played yet, plays after me.
+            return True
+        my_pid = obs.player_id
+        partner_pid = (my_pid + 2) % 4
+        # Check if partner has already played in this trick.
+        played_pids = {pc.player_id for pc in obs.current_trick.played_cards}
+        return partner_pid not in played_pids
 
     def _get_memory_features(self) -> np.ndarray:
         """Trick memory — raw observable data from previous tricks.
@@ -1069,6 +1145,9 @@ class WistDiscoveryAgent(Agent):
         self._suits_played = {0: 0, 1: 0, 2: 0, 3: 0}
         self._my_tricks = 0
         self._opp_tricks = 0
+        self._my_team_bid = False  # Whether my team holds the contract.
+        self._trump_remaining = 13  # Trump cards unseen (decrements as seen).
+        self._partner_after_me = False  # Partner plays after me in this trick.
 
     # =========================================================================
     # Persistence

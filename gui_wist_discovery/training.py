@@ -52,7 +52,7 @@ def snapshot_brain(agent):
         return {"play_q": {}, "play_q2": {}, "bid_q": {}, "bid_q2": {}}
 
 
-def create_opponent(agent, stage, frozen_snapshot=None, best_snapshot=None):
+def create_opponent(agent, stage, frozen_snapshot=None, best_snapshot=None, snapshot_pool=None):
     """
     Create an opponent based on current curriculum stage (1-15).
     """
@@ -180,11 +180,15 @@ def create_opponent(agent, stage, frozen_snapshot=None, best_snapshot=None):
             opp.bid_q2 = agent.bid_q2
             opp.epsilon = 0.0
     elif stage >= 13:
-        # Grandmaster/Endurance/Infinite: diverse elite.
+        # Grandmaster/Endurance/Infinite: diverse elite with historical pool.
         roll = random.random()
-        if best_snapshot and roll < 0.5:
+        if snapshot_pool and roll < 0.3:
+            # Use a random historical snapshot for diversity.
+            hist_snap = random.choice(snapshot_pool)
+            _load_snapshot(opp, hist_snap, epsilon=random.choice([0.0, 0.01, 0.03]))
+        elif best_snapshot and roll < 0.6:
             _load_snapshot(opp, best_snapshot, epsilon=0.0)
-        elif frozen_snapshot and roll < 0.7:
+        elif frozen_snapshot and roll < 0.8:
             _load_snapshot(opp, frozen_snapshot, epsilon=0.01)
         else:
             opp.play_q = agent.play_q
